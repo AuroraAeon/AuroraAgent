@@ -3,7 +3,7 @@
  * 运行: npm test
  */
 import { spawn } from 'node:child_process';
-import { writeFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { writeFileSync, mkdtempSync, rmSync, existsSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +13,7 @@ import { ProviderStore, ProviderError, parseCapacity, formatCapacity, normalizeE
 import { buildChatRequest, anthropicFrame } from '../util/wire.mjs';
 import { agentEvent, sseFrame } from '../util/agent/events.mjs';
 import { HARNESSES, getHarness, harnessSummaries, DEFAULT_HARNESS } from '../util/agent/harness.mjs';
+import { SessionStore } from '../util/agent/session.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MOCK_PORT = 18901;
@@ -300,6 +301,33 @@ await test('Harness：三档契约与未知 id 回退', () => {
   for (const h of HARNESSES) {
     assert(h.systemPrompt.length > 10, `${h.id} 必须有系统提示`);
     assert(!/\p{Extended_Pictographic}/u.test(h.systemPrompt + h.summary + h.label), 'Harness 文案零 emoji');
+  }
+});
+
+await test('会话存储：创建 / 追加 / 投影 / 更新 / 删除', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mt-session-'));
+  try {
+    const store = new SessionStore(dir);
+    const s = store.create({ model: 'm1', harness: 'standard' });
+    assert(s.id && s.name === '新会话', '创建应带默认名');
+    eq(s.workspace, join(dir, 'workspace'), '工作目录缺省在数据目录下');
+    eq(store.list().length, 1);
+    store.append(s.id, { t: 'user', text: '你好' });
+    store.append(s.id, { t: 'assistant', text: '你好！' });
+    appendFileSync(join(dir, 'sessions', `${s.id}.jsonl`), '{坏行\n');
+    store.append(s.id, { t: 'tool_call', id: 'tc1', name: 'read_file', args: { path: 'a.txt' } });
+    const got = store.get(s.id);
+    eq(got.records.length, 3, '坏行应被跳过，有效记录 3 条');
+    eq(got.records[0].t, 'user');
+    assert(got.records[0].at, '记录应带时间戳');
+    const patched = store.patch(s.id, { name: '改名', turns: 1, cost: 0.01 });
+    eq(patched.name, '改名');
+    eq(store.get(s.id).meta.cost, 0.01, '用量累计应落元信息');
+    eq(store.remove(s.id), true);
+    eq(store.get(s.id), null, '删除后读不到');
+    eq(store.remove('不存在'), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
