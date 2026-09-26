@@ -113,7 +113,7 @@
   .msel-chev { color:var(--dim); display:inline-flex; transition:transform .2s var(--ease); }
   .msel-trigger[aria-expanded="true"] .msel-chev { transform:rotate(180deg); }
   .msel-menu {
-    position:fixed; z-index:60; min-width:230px; max-width:300px;
+    position:fixed; z-index:60; min-width:230px; max-width:300px; max-height:calc(100vh - 24px); overflow-y:auto;
     background:rgb(27 31 42 / 96%); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
     border:1px solid #333b52; border-radius:13px; padding:6px;
     box-shadow:0 16px 48px rgb(0 0 0 / 45%), 0 2px 8px rgb(0 0 0 / 3 0%);
@@ -381,7 +381,6 @@
           <span class="msel-tag" id="modelTag" hidden></span>
           <span class="msel-chev"></span>
         </button>
-        <div class="msel-menu" id="modelMenu" role="menu" aria-label="选择模型" hidden></div>
       </div>
       <button id="stopBtn" class="cbtn danger" title="停止生成" hidden aria-label="停止生成"></button>
       <button id="send" title="发送" aria-label="发送"></button>
@@ -390,6 +389,10 @@
   <div class="hint">Enter 发送，Shift+Enter 换行 · 可粘贴 / 拖拽图片，或 /img 图片路径 · 生成中 /stop 停止 · /model 切换模型 · 美团 LongCat 限时价 输入 ¥2 / 输出 ¥8 每百万 tokens</div>
   <div class="hint" id="pvHint" hidden></div>
 </footer>
+
+<!-- 模型菜单必须是 body 直接子元素：footer 的 backdrop-filter 会成为 position:fixed 的包含块，
+     菜单留在 footer 内会被拽到视口外（历史回归：点开选择器却看不到）。定位逻辑见 placeMenu()。 -->
+<div class="msel-menu" id="modelMenu" role="menu" aria-label="选择模型" hidden></div>
 
 <dialog id="settingsDlg" closedby="any" aria-labelledby="dlgTitle">
   <div class="dlg-head">
@@ -755,31 +758,37 @@ function selectModel(id) {
 modelTrigger.onclick = function () { openMenu(); };
 
 // Escape 优先关闭弹层（并阻止冒泡，避免触发停止生成）；↑/↓ 循环移动焦点
-modelSel.addEventListener('keydown', function (e) {
-  if (e.key === 'Escape' && !modelMenu.hidden) {
+// 菜单是 body 直接子元素（不在 modelSel 内），键盘监听同时挂两个容器，焦点在哪侧都能响应
+function menuKeys(e) {
+  if (modelMenu.hidden) return;
+  if (e.key === 'Escape') {
     e.preventDefault();
     e.stopPropagation();
     closeMenu(true);
     return;
   }
-  if (!modelMenu.hidden && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     e.preventDefault();
     moveFocus(e.key === 'ArrowDown' ? 1 : -1);
   }
-});
+}
+modelSel.addEventListener('keydown', menuKeys);
+modelMenu.addEventListener('keydown', menuKeys);
 
-// 点击弹层外部关闭
+// 点击弹层外部关闭（触发器与菜单自身都算内部）
 document.addEventListener('mousedown', function (e) {
-  if (!modelMenu.hidden && !modelSel.contains(e.target)) closeMenu(false);
+  if (!modelMenu.hidden && !modelSel.contains(e.target) && !modelMenu.contains(e.target)) closeMenu(false);
 });
 
-// 焦点离开选择器时关闭
-modelSel.addEventListener('focusout', function (e) {
+// 焦点离开触发器或菜单时关闭（两个容器互不隶属，都挂监听）
+function menuFocusOut(e) {
   if (modelMenu.hidden) return;
   var to = e.relatedTarget;
   if (to && (modelSel.contains(to) || modelMenu.contains(to))) return;
   closeMenu(false);
-});
+}
+modelSel.addEventListener('focusout', menuFocusOut);
+modelMenu.addEventListener('focusout', menuFocusOut);
 
 // ---------- 滚动 ----------
 function nearBottom() { return chatBox.scrollHeight - chatBox.scrollTop - chatBox.clientHeight < 140; }
@@ -998,7 +1007,7 @@ stopBtnTop.onclick = stopGeneration;
 stopBtn.addEventListener('pointerdown', function () { if (sending) stopGeneration(); });
 stopBtnTop.addEventListener('pointerdown', function () { if (sending) stopGeneration(); });
 document.addEventListener('keydown', function (e) {
-  if (e.key === 'Escape' && abortCtrl && dlg.open === false) stopGeneration();
+  if (e.key === 'Escape' && abortCtrl && dlg.open === false && modelMenu.hidden) stopGeneration();
 });
 
 // ---------- 输入交互 ----------

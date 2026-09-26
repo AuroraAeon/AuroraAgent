@@ -302,6 +302,11 @@ try {
     assert(html.includes('id="providersSec"') && html.includes('id="pvRows"'), '页面缺少提供方设置区');
     assert(html.includes('id="pvPickDlg"') && html.includes('id="pvDelDlg"'), '页面缺少提供方弹层');
     assert(html.includes('href="/providers.css"'), '页面未引用提供方样式');
+    // 回归防护：模型菜单一旦回到 footer 内，footer 的 backdrop-filter 会变成 position:fixed 的包含块，把菜单拽出视口
+    const fStart = html.indexOf('<footer>'), fEnd = html.indexOf('</footer>');
+    assert(fStart > -1 && fEnd > fStart, '页面缺少 footer');
+    assert(!html.slice(fStart, fEnd).includes('id="modelMenu"'), '模型菜单仍位于 footer 内（backdrop-filter 包含块会使其脱离视口）');
+    assert(html.slice(fEnd).includes('id="modelMenu"'), '模型菜单未移到 footer 之后成为 body 直接子元素');
   });
   await test('提供方界面包含 dsh 对齐后的关键结构（容量折叠/aria 同步/弹层说明）', async () => {
     const js = await (await fetch(`${BASE}/providers.mjs`)).text();
