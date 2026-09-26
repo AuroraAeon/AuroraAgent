@@ -764,7 +764,7 @@ const toolFrames = (name, args) => [
 ];
 
 /** 一次性 loop 运行环境：临时数据目录 + stub fetch + 事件收集 */
-async function runLoopOnce({ framesByCall, harness = getHarness('standard'), permission = 'allow', seedRecords = [], providerExtra = {}, input = '开始' }) {
+async function runLoopOnce({ framesByCall, harness = getHarness('standard'), permission = 'allow', seedRecords = [], providerExtra = {}, input = '开始', planMode = false, planDecision = 'approve' }) {
   const dir = mkdtempSync(join(tmpdir(), 'mt-loop-'));
   const ws = join(dir, 'workspace');
   mkdirSync(ws, { recursive: true });
@@ -794,6 +794,8 @@ async function runLoopOnce({ framesByCall, harness = getHarness('standard'), per
     emit: (type, payload) => events.push({ type, ...payload }),
     controller,
     requestPermission: async () => { permCalls++; return permission; },
+    planMode,
+    requestPlanDecision: async () => planDecision,
     log: () => {},
   }).finally(() => { globalThis.fetch = realFetch; });
   return { dir, ws, store, usage, session, events, requests, result, permCalls };
@@ -944,6 +946,39 @@ await test('Loop：触顶轮次上限以 max_rounds 收尾', async () => {
   eq(result.tools, 2, '应跑满 2 轮各 1 次工具');
   const done = events.find((e) => e.type === 'turn_completed');
   eq(done.finishReason, 'max_rounds');
+});
+
+await test('Loop：计划模式批准后进入执行（计划轮只读工具）', async () => {
+  const { events, result, requests } = await runLoopOnce({
+    framesByCall: (call) => (call === 0 ? textFrames('计划：先读后改') : textFrames('已按计划完成')),
+    planMode: true,
+  });
+  const types = events.map((e) => e.type);
+  assert(types.includes('plan_proposed'), '应有 plan_proposed 事件');
+  assert(types.includes('plan_approved'), '批准后应有 plan_approved 事件');
+  assert(!types.includes('plan_rejected'), '批准不应出现 plan_rejected');
+  eq(result.text, '已按计划完成', '终稿来自执行轮');
+  const planTools = (requests[0].body.tools || []).map((t) => (t.function ? t.function.name : t.name));
+  assert(planTools.length > 0 && planTools.every((n) => ['read_file', 'list_dir', 'grep', 'glob', 'web_fetch', 'todo', 'skill'].includes(n)), '计划轮只能用只读 / 检索 / 待办工具');
+  const execMsgs = requests[1].body.messages.map((m) => String(m.content || ''));
+  assert(execMsgs.some((c) => c.includes('【已批准的计划】') && c.includes('计划：先读后改')), '执行轮应注入已批准的计划');
+  assert(requests[0].body.messages.some((m) => m.role === 'system' && String(m.content).includes('计划模式')), '计划轮系统提示应带计划模式附加块');
+  assert(!requests[1].body.messages.some((m) => m.role === 'system' && String(m.content).includes('当前为计划模式')), '执行轮系统提示不应再带计划模式附加块');
+});
+
+await test('Loop：计划模式驳回后不执行', async () => {
+  const { events, result, requests } = await runLoopOnce({
+    framesByCall: [textFrames('计划：先读后改')],
+    planMode: true,
+    planDecision: 'reject',
+  });
+  const types = events.map((e) => e.type);
+  assert(types.includes('plan_proposed') && types.includes('plan_rejected'), '应有提议与驳回事件');
+  assert(!types.includes('plan_approved'), '驳回不应有批准事件');
+  eq(result.planRejected, true, '结果应标记 planRejected');
+  eq(requests.length, 1, '驳回后不应再请求上游');
+  const done = events.find((e) => e.type === 'turn_completed');
+  eq(done.finishReason, 'plan_rejected', '应以 plan_rejected 收尾');
 });
 
 await test('Loop：未知工具与坏参数不中断循环', async () => {
@@ -1608,6 +1643,58 @@ await test('Agent turn：edit_file 回传 diff 结构化负载', async () => {
   assert(rec.extra && rec.extra.diff.length > 0, '转录应留 diff extra');
   const toolMsg = detail.records.find((x) => x.t === 'tool_result' && x.name === 'edit_file');
   assert(toolMsg.output.includes('+    2  new 内容'), '模型可见输出含紧凑 diff');
+});
+
+await test('Agent turn：计划模式批准后进入执行', async () => {
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_PLAN 规划一下', planMode: true }),
+  });
+  const stream = openAgentStream(resp);
+  const head = await drainAgentStream(stream, { until: (ev) => ev.type === 'plan_proposed' });
+  const planEv = head.find((e) => e.type === 'plan_proposed');
+  assert(planEv && planEv.plan.includes('计划：'), '应先收到计划事件');
+  const planReq = JSON.parse(mock.state.requests.at(-1).body);
+  const planTools = (planReq.tools || []).map((t) => (t.function ? t.function.name : t.name));
+  assert(planTools.length > 0 && planTools.every((n) => ['read_file', 'list_dir', 'grep', 'glob', 'web_fetch', 'todo', 'skill'].includes(n)), '计划轮只能用只读 / 检索 / 待办工具');
+  const approved = await fetch(`${AGENT}/plan`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, decision: 'approve' }),
+  });
+  eq(approved.status, 200);
+  const tail = await drainAgentStream(stream);
+  const all = [...head, ...tail];
+  assert(all.some((e) => e.type === 'plan_approved'), '应有 plan_approved 事件');
+  const done = all.find((e) => e.type === 'turn_completed');
+  assert(done && done.finishReason === 'stop', '批准后应正常执行收尾');
+  const detail = await (await fetch(`${AGENT}/sessions/${s.id}`)).json();
+  assert(detail.records.some((r) => r.t === 'assistant' && String(r.text).includes('计划：')), '计划文本应落转录');
+  assert(detail.records.some((r) => r.t === 'user' && String(r.text).includes('【已批准的计划】')), '批准注入应落转录');
+});
+
+await test('Agent turn：计划模式驳回后不执行', async () => {
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_PLAN 再规划一次', planMode: true }),
+  });
+  const stream = openAgentStream(resp);
+  const head = await drainAgentStream(stream, { until: (ev) => ev.type === 'plan_proposed' });
+  await fetch(`${AGENT}/plan`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, decision: 'reject' }),
+  });
+  const tail = await drainAgentStream(stream);
+  const all = [...head, ...tail];
+  assert(all.some((e) => e.type === 'plan_rejected'), '应有 plan_rejected 事件');
+  const done = all.find((e) => e.type === 'turn_completed');
+  eq(done && done.finishReason, 'plan_rejected', '驳回以 plan_rejected 收尾');
+  const again = await fetch(`${AGENT}/plan`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, decision: 'approve' }),
+  });
+  eq((await again.json()).ok, false, '无等待中的计划请求应返回 ok:false');
 });
 
 await test('Agent turn：空输入 400、未知会话 404', async () => {

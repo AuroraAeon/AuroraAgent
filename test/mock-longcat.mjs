@@ -52,13 +52,15 @@ export function startMock(port = 18901) {
         const isSkillRound = lastText.includes('USE_SKILL') && !hasToolResult;
         const isTodoRound = lastText.includes('USE_TODO') && !hasToolResult;
         const isEditRound = lastText.includes('USE_EDIT') && !hasToolResult;
+        // 计划模式两轮：计划轮（USE_PLAN 且未见批准注入）只回计划文本不调工具；批准后执行轮回终稿
+        const isPlanRound = lastText.includes('USE_PLAN') && !lastText.includes('【已批准的计划】');
         const isToolRound = (lastText.includes('USE_TOOL') || isSkillRound || isTodoRound || isEditRound) && !hasToolResult;
         const toolName = isSkillRound ? 'skill' : isTodoRound ? 'todo' : isEditRound ? 'edit_file' : lastText.includes('USE_TOOL_WRITE') ? 'write_file' : 'read_file';
         const toolArgs = isSkillRound ? { name: 'code-review' }
           : isTodoRound ? { action: 'add', item: 'mock 待办事项' }
           : isEditRound ? { path: 'edit_me.txt', old_string: 'old', new_string: 'new' }
           : toolName === 'write_file' ? { path: 'written_by_agent.txt', content: 'AGENT_WROTE' } : { path: 'mock.txt' };
-        const answer = isToolRound ? '' : hasToolResult ? `工具结果已收到：${toolEcho}` : isImg ? '图中有一个蓝色的圆形。' : `你好！我是 ${j.model}。`;
+        const answer = isToolRound ? '' : hasToolResult ? `工具结果已收到：${toolEcho}` : isImg ? '图中有一个蓝色的圆形。' : isPlanRound ? '计划：先读取目标文件确认现状，再用 edit_file 精确替换，最后汇报差异。' : lastText.includes('【已批准的计划】') ? '已按批准的计划执行完毕。' : `你好！我是 ${j.model}。`;
         // FLAKY：首次请求直接掐断 socket，模拟网络层失败（用于测试连接期重试）
         if (lastText.includes('FLAKY') && !state.flakyDone) {
           state.flakyDone = true;
