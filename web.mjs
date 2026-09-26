@@ -16,6 +16,7 @@ import { SERVICE_LOG, servicePid, isManaged, autostartInstalled } from './util/s
 import { ProviderStore, ProviderError, handleProviderApi } from './util/providers.mjs';
 import { pumpSse, pumpTranslated } from './util/stream.mjs';
 import { buildChatRequest, anthropicFrame, upstreamHint, fetchUpstream } from './util/wire.mjs';
+import { createAgentApi } from './util/agent/http.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // 数据目录三级回退：MODELTESTER_DATA_DIR（启动器 / LaunchAgent 显式指定）→
@@ -41,6 +42,17 @@ const providers = new ProviderStore(DATA_DIR, {
   apiKey: () => loadConfig().apiKey,
   model: () => loadConfig().model,
 }, () => modelCatalog.models);
+
+// Agent 运行时 HTTP 面（/api/agent/*）：实现拆在 util/agent/http.mjs，此处只按前缀委派
+const agentApi = createAgentApi({
+  dataDir: DATA_DIR,
+  usage,
+  resolveChatProvider,
+  loadConfig,
+  pickModel: (raw, fallback) => (MODEL_RE.test(String(raw || '')) ? String(raw) : fallback),
+  log: (level, msg, extra) => log(level, msg, extra),
+  builtinPrice: PRICE,
+});
 
 /** 脱敏后的单个提供方（供保存后回显，形状与 /api/providers 列表一致） */
 function redactProvider(p) {
@@ -414,6 +426,8 @@ const server = createServer(async (req, res) => {
     });
     return;
   }
+
+  if (url.startsWith('/api/agent')) { await agentApi(req, res, url); return; }
 
   res.writeHead(404, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ error: { message: 'not found' } }));

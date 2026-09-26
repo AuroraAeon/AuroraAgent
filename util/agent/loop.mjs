@@ -162,8 +162,10 @@ export async function runAgentTurn(ctx) {
             output = '权限策略拒绝执行该操作。';
             emit('tool_event', { sessionId, turnId, phase: 'rejected', toolId, toolName: call.name, params: safeArgs(call.arguments) });
           } else if (effect === 'ask') {
-            emit('tool_event', { sessionId, turnId, phase: 'confirmation_needed', toolId, toolName: call.name, params: safeArgs(call.arguments), resource });
-            const decision = await askPermission({ sessionId, turnId, toolId, toolName: call.name, params: safeArgs(call.arguments), resource, action: call.name });
+            // requestId 由运行器生成并随事件透出，客户端凭它回传决策（POST /api/agent/permission）
+            const requestId = randomUUID();
+            emit('tool_event', { sessionId, turnId, phase: 'confirmation_needed', toolId, toolName: call.name, params: safeArgs(call.arguments), resource, requestId });
+            const decision = await askPermission({ requestId, sessionId, turnId, toolId, toolName: call.name, params: safeArgs(call.arguments), resource, action: call.name });
             if (decision === 'deny') {
               ok = false;
               output = '用户拒绝了这次操作，未做任何改动。';

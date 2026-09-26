@@ -1142,6 +1142,217 @@ try {
     assert(!j2.models.some((m) => m.provider === 'mock-gw'), '删除后模型仍留在目录');
   });
 
+// ---------- e2e: Agent 运行时 ----------
+console.log('\nAgent 运行时端到端测试');
+const AGENT = `${BASE}/api/agent`;
+
+async function createAgentSession(extra = {}) {
+  const j = await (await fetch(`${AGENT}/sessions`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: '测试会话', ...extra }),
+  })).json();
+  return j.session;
+}
+
+/** 打开 Agent SSE 流：next() 逐事件读，流不主动关闭，调用方决定何时 cancel */
+function openAgentStream(resp) {
+  const reader = resp.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  return {
+    async next() {
+      for (;;) {
+        const idx = buf.indexOf('\n\n');
+        if (idx >= 0) {
+          const raw = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          const m = /^event: (.+)\ndata: (.*)$/s.exec(raw);
+          if (m) return { type: m[1], ...JSON.parse(m[2]) };
+          continue;
+        }
+        const { done, value } = await reader.read();
+        if (done) return null;
+        buf += dec.decode(value, { stream: true });
+      }
+    },
+    cancel() { try { reader.cancel(); } catch {} },
+  };
+}
+
+/** 读到流结束或 until 命中（命中时保留流，可继续 drain） */
+async function drainAgentStream(stream, { until, onEvent } = {}) {
+  const events = [];
+  for (;;) {
+    const ev = await stream.next();
+    if (!ev) return events;
+    events.push(ev);
+    if (onEvent) await onEvent(ev);
+    if (until && until(ev)) return events;
+  }
+}
+
+await test('GET /api/agent/harnesses 返回三档模式', async () => {
+  const j = await (await fetch(`${AGENT}/harnesses`)).json();
+  eq(j.harnesses.length, 3);
+  eq(j.default, 'standard');
+  eq(j.harnesses[0].id, 'minimal');
+});
+
+await test('Agent 会话：创建 / 列表 / 详情 / 删除', async () => {
+  const s = await createAgentSession();
+  assert(s.id && s.harness === 'standard', '创建应带默认 harness');
+  eq(s.workspace, join(tmpDataDir, 'workspace'), '工作目录默认在数据目录下');
+  const list = await (await fetch(`${AGENT}/sessions`)).json();
+  assert(list.sessions.some((x) => x.id === s.id), '列表应含新会话');
+  const detail = await (await fetch(`${AGENT}/sessions/${s.id}`)).json();
+  assert(detail.meta && Array.isArray(detail.records), '详情应含元信息与转录');
+  const del = await (await fetch(`${AGENT}/sessions/${s.id}`, { method: 'DELETE' })).json();
+  eq(del.deleted, true);
+  eq((await fetch(`${AGENT}/sessions/${s.id}`)).status, 404, '删除后详情 404');
+});
+
+await test('Agent turn：只读工具默认放行，无需确认即执行', async () => {
+  const ws = join(tmpDataDir, 'workspace');
+  mkdirSync(ws, { recursive: true });
+  writeFileSync(join(ws, 'mock.txt'), 'MOCK_FILE_OK');
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_TOOL 请读 mock.txt' }),
+  });
+  const stream = openAgentStream(resp);
+  const events = await drainAgentStream(stream);
+  const phases = events.filter((e) => e.type === 'tool_event').map((e) => e.phase);
+  assert(!phases.includes('confirmation_needed'), '只读工具不应询问');
+  assert(phases.includes('completed'), '工具应执行完成');
+  const completed = events.find((e) => e.type === 'tool_event' && e.phase === 'completed');
+  assert(completed.output.includes('MOCK_FILE_OK'), '工具结果应含文件内容');
+  const texts = events.filter((e) => e.type === 'text_chunk').map((e) => e.text).join('');
+  assert(texts.includes('MOCK_FILE_OK'), '终稿应带回工具结果');
+});
+
+await test('Agent turn：写工具经权限允许后落盘并回填', async () => {
+  const ws = join(tmpDataDir, 'workspace');
+  mkdirSync(ws, { recursive: true });
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_TOOL_WRITE 请写个文件' }),
+  });
+  const stream = openAgentStream(resp);
+  const head = await drainAgentStream(stream, { until: (ev) => ev.type === 'tool_event' && ev.phase === 'confirmation_needed' });
+  const ask = head.find((e) => e.phase === 'confirmation_needed');
+  assert(ask.requestId, '确认事件应带 requestId');
+  const r = await (await fetch(`${AGENT}/permission`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId: ask.requestId, decision: 'allow' }),
+  })).json();
+  eq(r.ok, true);
+  const tail = await drainAgentStream(stream);
+  const all = [...head, ...tail];
+  const phases = all.filter((e) => e.type === 'tool_event').map((e) => e.phase);
+  assert(phases.includes('confirmed') && phases.includes('completed'), '允许后应确认并执行');
+  assert(all.at(-1).type === 'turn_completed', '应以 turn_completed 收尾');
+  eq(readFileSync(join(ws, 'written_by_agent.txt'), 'utf8'), 'AGENT_WROTE', '工具应真实写盘');
+  const detail = await (await fetch(`${AGENT}/sessions/${s.id}`)).json();
+  assert(detail.records.some((x) => x.t === 'tool_call' && x.name === 'write_file'), '工具调用应落转录');
+  assert(detail.records.some((x) => x.t === 'tool_result' && x.ok), '工具结果应落转录');
+  const usageRec = (await (await fetch(`${BASE}/api/usage`)).json()).recent.find((x) => x.kind === 'agent');
+  assert(usageRec, '账本应记 agent 请求');
+  eq(usageRec.sessionId, s.id);
+});
+
+await test('Agent turn：权限拒绝后循环继续且不落盘', async () => {
+  const written = join(tmpDataDir, 'workspace', 'written_by_agent.txt');
+  if (existsSync(written)) rmSync(written, { force: true });
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_TOOL_WRITE 写个文件' }),
+  });
+  const stream = openAgentStream(resp);
+  const head = await drainAgentStream(stream, { until: (ev) => ev.type === 'tool_event' && ev.phase === 'confirmation_needed' });
+  await fetch(`${AGENT}/permission`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId: head.find((e) => e.phase === 'confirmation_needed').requestId, decision: 'deny' }),
+  });
+  const tail = await drainAgentStream(stream);
+  const phases = [...head, ...tail].filter((e) => e.type === 'tool_event').map((e) => e.phase);
+  assert(phases.includes('rejected'), '应有 rejected 阶段');
+  assert(!phases.includes('completed'), '拒绝后不应执行');
+  assert(!existsSync(join(tmpDataDir, 'workspace', 'written_by_agent.txt')), '拒绝后不应落盘');
+  assert(tail.some((e) => e.type === 'turn_completed'), '拒绝后仍应正常收尾');
+});
+
+await test('Agent turn：空输入 400、未知会话 404', async () => {
+  const s = await createAgentSession();
+  const empty = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: '  ' }),
+  });
+  eq(empty.status, 400);
+  const noSess = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: '00000000-0000-0000-0000-000000000000', input: 'hi' }),
+  });
+  eq(noSess.status, 404);
+});
+
+await test('Agent turn：权限等待期间并发发起返回 409', async () => {
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_TOOL_WRITE 占位' }),
+  });
+  const stream = openAgentStream(resp);
+  const head = await drainAgentStream(stream, { until: (ev) => ev.type === 'tool_event' && ev.phase === 'confirmation_needed' });
+  assert(head.some((e) => e.phase === 'confirmation_needed'), '应进入权限等待');
+  const second = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: '第二个' }),
+  });
+  eq(second.status, 409, '已有活跃 turn 时应 409');
+  // 收尾：拒绝权限让第一个 turn 跑完，再正常结束流
+  await fetch(`${AGENT}/permission`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId: head.find((e) => e.phase === 'confirmation_needed').requestId, decision: 'deny' }),
+  });
+  const tail = await drainAgentStream(stream);
+  assert(tail.some((e) => e.type === 'turn_completed'), '拒绝后第一个 turn 应收尾');
+});
+
+await test('Agent turn：中断保留已生成内容且会话可继续', async () => {
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'SLOW 慢慢说' }),
+  });
+  const stream = openAgentStream(resp);
+  const head = await drainAgentStream(stream, { until: (ev) => ev.type === 'text_chunk' });
+  assert(head.some((e) => e.type === 'text_chunk'), '应已产生部分文本');
+  const ab = await (await fetch(`${AGENT}/abort`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id }),
+  })).json();
+  eq(ab.aborted, true);
+  const tail = await drainAgentStream(stream);
+  assert(tail.some((e) => e.type === 'turn_cancelled'), '应发 turn_cancelled');
+  const again = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: '你好' }),
+  });
+  eq(again.status, 200, '中断后会话应可继续');
+  await drainAgentStream(openAgentStream(again));
+});
+
+await test('Agent 权限：未知 requestId 返回 ok:false', async () => {
+  const r = await (await fetch(`${AGENT}/permission`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId: 'nope', decision: 'allow' }),
+  })).json();
+  eq(r.ok, false);
+});
+
   await test('未知路径 404', async () => {
     const r = await fetch(`${BASE}/nope`);
     eq(r.status, 404);

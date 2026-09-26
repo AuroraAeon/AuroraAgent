@@ -50,6 +50,8 @@ export function startMock(port = 18901) {
         const hasToolResult = Array.isArray(j.messages) && j.messages.some((m) => m.role === 'tool');
         const toolEcho = hasToolResult ? j.messages.filter((m) => m.role === 'tool').map((m) => (typeof m.content === 'string' ? m.content : '')).join(' | ') : '';
         const isToolRound = lastText.includes('USE_TOOL') && !hasToolResult;
+        const toolName = lastText.includes('USE_TOOL_WRITE') ? 'write_file' : 'read_file';
+        const toolArgs = toolName === 'write_file' ? { path: 'written_by_agent.txt', content: 'AGENT_WROTE' } : { path: 'mock.txt' };
         const answer = isToolRound ? '' : hasToolResult ? `工具结果已收到：${toolEcho}` : isImg ? '图中有一个蓝色的圆形。' : `你好！我是 ${j.model}。`;
         // FLAKY：首次请求直接掐断 socket，模拟网络层失败（用于测试连接期重试）
         if (lastText.includes('FLAKY') && !state.flakyDone) {
@@ -58,9 +60,9 @@ export function startMock(port = 18901) {
           return;
         }
         const frames = isToolRound ? [
-          { id: 'x', choices: [{ index: 0, delta: { reasoning_content: '需要读文件，' } }], lastOne: false },
-          { id: 'x', choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_mock_1', type: 'function', function: { name: 'read_file', arguments: '{"path":' } }] } }], lastOne: false },
-          { id: 'x', choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '"mock.txt"}' } }] } }], lastOne: false },
+          { id: 'x', choices: [{ index: 0, delta: { reasoning_content: '需要调用工具，' } }], lastOne: false },
+          { id: 'x', choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_mock_1', type: 'function', function: { name: toolName, arguments: JSON.stringify(toolArgs).slice(0, 8) } }] } }], lastOne: false },
+          { id: 'x', choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: JSON.stringify(toolArgs).slice(8) } }] } }], lastOne: false },
           { id: 'x', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }], lastOne: false,
             usage: { prompt_tokens: 20, completion_tokens: 15, total_tokens: 35, completion_tokens_details: { reasoning_tokens: 42 } } },
         ] : [
@@ -72,7 +74,7 @@ export function startMock(port = 18901) {
         ];
         if (!j.stream) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          const msg = isToolRound ? { role: 'assistant', content: '', tool_calls: [{ id: 'call_mock_1', type: 'function', function: { name: 'read_file', arguments: '{"path":"mock.txt"}' } }] } : { role: 'assistant', content: answer };
+          const msg = isToolRound ? { role: 'assistant', content: '', tool_calls: [{ id: 'call_mock_1', type: 'function', function: { name: toolName, arguments: JSON.stringify(toolArgs) } }] } : { role: 'assistant', content: answer };
           return res.end(JSON.stringify({ choices: [{ message: msg, finish_reason: isToolRound ? 'tool_calls' : 'stop' }], usage: frames[3].usage }));
         }
         res.writeHead(200, { 'Content-Type': 'text/event-stream' });
