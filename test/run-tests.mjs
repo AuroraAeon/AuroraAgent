@@ -11,6 +11,8 @@ import { SseParser, estimateTokens } from '../util/sse.mjs';
 import { startMock } from './mock-longcat.mjs';
 import { ProviderStore, ProviderError, parseCapacity, formatCapacity, normalizeEndpoint, validateProviderDraft, chatUrl, modelsUrl, messagesUrl } from '../util/providers.mjs';
 import { buildChatRequest, anthropicFrame } from '../util/wire.mjs';
+import { agentEvent, sseFrame } from '../util/agent/events.mjs';
+import { HARNESSES, getHarness, harnessSummaries, DEFAULT_HARNESS } from '../util/agent/harness.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MOCK_PORT = 18901;
@@ -273,6 +275,32 @@ await test('anthropicFrame 翻译文本、思考、用量与错误事件', () =>
   eq(f({ type: 'ping' }), null);
   eq(f({ type: 'message_stop' }), null);
   eq(anthropicFrame({ data: 'not-json' }), null);
+});
+
+// ---------- 单元测试: Agent 事件协议与 Harness ----------
+console.log('\nAgent 核心单元测试');
+await test('事件协议：类型白名单与 SSE 帧形状', () => {
+  const frame = sseFrame('text_chunk', { sessionId: 's1', text: '你好' });
+  assert(frame.startsWith('event: text_chunk\ndata: '), '帧应以 event 行打头');
+  assert(frame.endsWith('\n\n'), '帧应以空行结尾');
+  const data = JSON.parse(frame.slice(frame.indexOf('data: ') + 6));
+  eq(data.type, 'text_chunk');
+  eq(data.text, '你好');
+  let threw = false;
+  try { agentEvent('not_a_type'); } catch { threw = true; }
+  assert(threw, '未知事件类型必须抛错，防止协议漂移');
+});
+await test('Harness：三档契约与未知 id 回退', () => {
+  eq(HARNESSES.length, 3, 'v1 实现 Minimal / Standard / Ultimate');
+  eq(getHarness('minimal').tools.length, 0, 'Minimal 不挂工具');
+  eq(getHarness('ultimate').maxRounds > getHarness('standard').maxRounds, true, 'Ultimate 轮次上限更高');
+  eq(getHarness('nope').id, 'standard', '未知 id 回退 standard');
+  const ids = harnessSummaries().map((h) => h.id);
+  eq(ids.join(','), 'minimal,standard,ultimate');
+  for (const h of HARNESSES) {
+    assert(h.systemPrompt.length > 10, `${h.id} 必须有系统提示`);
+    assert(!/\p{Extended_Pictographic}/u.test(h.systemPrompt + h.summary + h.label), 'Harness 文案零 emoji');
+  }
 });
 
 // ---------- e2e ----------
