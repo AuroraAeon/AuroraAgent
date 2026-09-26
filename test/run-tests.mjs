@@ -27,6 +27,7 @@ import { UsageLedger } from '../util/usage.mjs';
 import { runTuiToolkitTests } from './tui-toolkit.mjs';
 import { runGuardTests } from './guards.mjs';
 import { runLlmTests } from './llm.mjs';
+import { runHighlightTests } from './highlight.mjs';
 import { runConfigTests } from './config.mjs';
 import { runTuiComponentTests } from './tui-components.mjs';
 import { runPickTests } from './pick.mjs';
@@ -78,6 +79,7 @@ async function readStream(resp) {
 
 await runTuiToolkitTests(test, assert, eq);
 await runLlmTests(test, assert, eq);
+await runHighlightTests(test, assert, eq);
 await runConfigTests(test, assert, eq);
 await runTuiComponentTests(test, assert, eq);
   await runPickTests(test, assert, eq);
@@ -1272,6 +1274,12 @@ try {
     assert(app.includes('respondPlan') && app.includes('plan_proposed') && app.includes('plan_approved'), 'App 应接线计划决策回传与计划事件');
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'tokens.css'), 'utf8');
     assert(css.includes('--diff-add:') && css.includes('--diff-del:'), 'tokens.css 应有 diff 语义令牌');
+  });
+  await test('代码高亮源码契约：Markdown 代码块接入零依赖高亮器', () => {
+    const md = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'markdown.tsx'), 'utf8');
+    assert(md.includes("from './highlight'") && md.includes('highlightCode(buf.join'), '代码块应走高亮器');
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    assert(css.includes('.md pre .c-key') && css.includes('.md pre .c-str') && css.includes('.md pre .c-com'), '高亮 token 应有语义样式');
   });
   await test('技能界面源码契约：斜杠调色板与设置技能目录在场', () => {
     const pal = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SkillPalette.tsx'), 'utf8');

@@ -7,6 +7,7 @@
 import { createElement, type ReactNode } from 'react';
 import { MathView } from './latex';
 import { isDisplayMathStart, splitMathSegments, takeDisplayMath } from './math-split.mjs';
+import { highlightCode } from './highlight';
 
 const BOLD_LINK_RE = /\*\*([^*\n]+)\*\*|\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g;
 
@@ -63,9 +64,12 @@ export function Markdown({ text }: { text: string }) {
       i++;
       while (i < lines.length && !/^```\s*$/.test(lines[i])) { buf.push(lines[i]); i++; }
       i++;
+      const tokens = highlightCode(buf.join('\n'), lang);
       blocks.push(
-        <pre key={k++}>
-          <code className={lang ? `lang-${lang}` : undefined}>{buf.join('\n')}</code>
+        <pre key={k++} className={lang ? `lang-${lang}` : undefined}>
+          <code>
+            {tokens.map((t, ti) => (t.cls ? <span key={ti} className={t.cls}>{t.text}</span> : <span key={ti}>{t.text}</span>))}
+          </code>
         </pre>,
       );
       continue;
