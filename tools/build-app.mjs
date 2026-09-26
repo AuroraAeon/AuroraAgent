@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 把 LongCat 打包为独立 macOS Application（默认 ~/Applications/ModelTester.app）。
+ * 把 AuroraAgent 打包为独立 macOS Application（默认 ~/Applications/ModelTester.app，Bundle ID 不变）。
  *   node tools/build-app.mjs                   构建
  *   node tools/build-app.mjs --dest /some/dir  自定义落地目录
  *
@@ -93,7 +93,7 @@ console.log(`  图标已生成: ${icns}`);
 
 // 5) 启动器（Contents/MacOS/ModelTester）
 const launcher = `#!/bin/zsh
-# ModelTester.app 启动器：服务已在运行就直接打开浏览器；否则后台拉起服务再打开。
+# ModelTester.app（AuroraAgent）启动器：服务已在运行就直接打开浏览器；否则后台拉起服务再打开。
 # 自定位目录，整个 Bundle 可随意搬移。
 set -u
 HERE="\${0:A:h}"
@@ -133,12 +133,12 @@ writeFileSync(join(CONTENTS, 'Info.plist'), `<?xml version="1.0" encoding="UTF-8
 <plist version="1.0">
 <dict>
   <key>CFBundleDevelopmentRegion</key><string>zh_CN</string>
-  <key>CFBundleDisplayName</key><string>ModelTester</string>
+  <key>CFBundleDisplayName</key><string>AuroraAgent</string>
   <key>CFBundleExecutable</key><string>ModelTester</string>
   <key>CFBundleIconFile</key><string>AppIcon.icns</string>
   <key>CFBundleIdentifier</key><string>com.modeltester.app</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-  <key>CFBundleName</key><string>ModelTester</string>
+  <key>CFBundleName</key><string>AuroraAgent</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>
