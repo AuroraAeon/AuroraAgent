@@ -4,8 +4,6 @@
 
 **当前接入厂商：美团 LongCat-2.5-Preview**（2026-09-25 上线，万亿参数级 Agentic 模型，1M 上下文、128K 输出，OpenAI / Anthropic 双协议兼容）。Base URL、模型目录、Key 均为配置项，接入新厂商不改架构。
 
-> AI 编码 agent：动手前必须先读并遵守仓库根目录的 `AGENTS.md`——第一铁律：每个通过测试的小改动都要主动 `git commit & push`。
-
 ## 它是什么
 
 - **Agent Loop**（`util/agent/loop.mjs`）：一轮用户输入驱动「模型请求 → 工具调用 → 结果回填 → 再请求」的循环，直到模型不再调用工具或触顶模式轮次上限；中断保留已生成内容，SSE 断开即中止上游，不浪费额度
@@ -181,17 +179,6 @@ Bundle 结构：
 - 实测建议：涉及颜色判断时，给图片加参照物/纹理/文字标注，避免纯色大图
 
 学术图与完整数据见 `Contents/Resources/docs/figures/`（`fig1-solid-color-misidentification` 三面板：刺激图像板 / 混淆矩阵 / 分类别准确率；`fig2-determinism-and-collapse` 两面板：45 次逐轮原始回答表 / 回答分布；另附 `caption.md` 图注与统计说明、`color-raw-3rounds.csv`、`color-summary-3rounds.csv`、`round1-3.json`；PDF / PNG / SVG 三种格式，600dpi TIFF 源图已按仓库体积要求移除）。
-
-## Computer Use（CUA）结论
-
-按"抛弃 IAB、直接驱动真实 Chrome"的思路，对本机网页端做过完整链路验证（以下坐标与细节为旧版前端时期测得，方法仍适用）：
-
-- **可用（完整闭环）**：`cua.getApp("com.google.Chrome")` → 点击输入框 → `paste()` 中文提示词 → `pressKey("Return")` 发送 → 流式返回。中文与 URL 均可靠（`typeText` 会丢字符，必须用 `paste`）
-- **坐标系**：`app.click([x, y])` 用 2x 视网膜像素、窗口相对坐标
-- **停止链路曾全面失效（已定位并修复）**：根因是旧版前端以 `type="module"` 加载（严格模式），而 `stopped` 用 `var` 声明在 `send()` 函数体内，`stopGeneration()` 首句抛 `ReferenceError`，整条中止逻辑在第一步就中断——服务端从未收到 `/api/abort`。修复：`stopped` 提升为模块级作用域 + 读取循环补 `Promise.race([reader.read(), abortRace])`
-- **对策（已落地）**：`POST /api/abort` 按 `requestId` 中止，前端双保险调用；自动化场景也可直接 `curl -XPOST localhost:8787/api/abort -H 'Content-Type: application/json' -d '{"requestId":"..."}'`
-- **已知坑**：Chrome 页面会缓存旧页面，改动前端后必须真正重导航才生效；Mac 锁屏后 CUA 全部动作失效，需人工解锁
-- **当前状态**：Computer Use 浏览器面被 admin 安全策略阻断（"admin-enforced policy could not be verified"），未绕行；视觉验证暂以 curl + 静态检查替代
 
 ## 当前状态（实测打通）
 
