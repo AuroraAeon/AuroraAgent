@@ -1,23 +1,23 @@
 #!/usr/bin/env node
 /**
- * 把 AuroraAgent 打包为独立 macOS Application（默认 ~/Applications/ModelTester.app，Bundle ID 不变）。
+ * 把 AuroraAgent 打包为独立 macOS Application（默认 ~/Applications/AuroraAgent.app）。
  *   node tools/build-app.mjs                   构建
  *   node tools/build-app.mjs --dest /some/dir  自定义落地目录
  *
  * 产物结构：
- *   ModelTester.app/Contents/
- *     MacOS/ModelTester       启动器（已在运行就直接开浏览器，否则后台拉起服务）
+ *   AuroraAgent.app/Contents/
+ *     MacOS/AuroraAgent      启动器（已在运行就直接开浏览器，否则后台拉起服务）
  *     Resources/app/         全部代码（web.mjs / public / util / test / tools ...）
  *     Resources/docs/        学术图与图表生成脚本
  *     AppIcon.icns           美团厂商图标（由 public/icon.svg 栅格化生成）
  *     Info.plist
- *   ~/Library/Application Support/ModelTester/   modeltester.config.json + usage.jsonl（数据与 Bundle 解耦）
+ *   ~/Library/Application Support/AuroraAgent/   auroraagent.config.json + usage.jsonl（数据与 Bundle 解耦）
  *
  * 构建后重新注册服务（指向 Bundle 内路径）：
- *   MODELTESTER_DATA_DIR="$HOME/Library/Application Support/ModelTester" \
- *     node "$PWD/ModelTester.app/Contents/Resources/app/tools/install-service.mjs"
+ *   AURORAAGENT_DATA_DIR="$HOME/Library/Application Support/AuroraAgent" \
+ *     node "$PWD/AuroraAgent.app/Contents/Resources/app/tools/install-service.mjs"
  */
-import { cpSync, mkdirSync, rmSync, existsSync, writeFileSync, readFileSync, chmodSync } from 'node:fs';
+import { cpSync, mkdirSync, rmSync, existsSync, writeFileSync, readFileSync, chmodSync, renameSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,7 +26,7 @@ import { execSync, spawnSync } from 'node:child_process';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const destIdx = process.argv.indexOf('--dest');
 const DEST = destIdx > 0 ? process.argv[destIdx + 1] : join(homedir(), 'Applications');
-const APP = join(DEST, 'ModelTester.app');
+const APP = join(DEST, 'AuroraAgent.app');
 const CONTENTS = join(APP, 'Contents');
 const BUNDLE_APP = join(CONTENTS, 'Resources', 'app');
 
@@ -36,11 +36,11 @@ if (ROOT === BUNDLE_APP || ROOT.startsWith(BUNDLE_APP + sep)) {
   console.error('构建会先删除整个 .app；请先把 Resources/app 完整拷贝到 Bundle 之外的目录，再在那里执行。');
   process.exit(1);
 }
-const DATA_DIR = join(homedir(), 'Library', 'Application Support', 'ModelTester');
-const LOG = join(homedir(), 'Library', 'Logs', 'com.modeltester.app.log');
+const DATA_DIR = join(homedir(), 'Library', 'Application Support', 'AuroraAgent');
+const LOG = join(homedir(), 'Library', 'Logs', 'com.auroraagent.app.log');
 const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
 const ICON_SVG = join(ROOT, 'public', 'icon.svg');
-const TMP = join(tmpdir(), 'modeltester-build');
+const TMP = join(tmpdir(), 'auroraagent-build');
 
 const sh = (cmd) => execSync(cmd, { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf8' });
 const run = (cmd, args) => {
@@ -49,7 +49,11 @@ const run = (cmd, args) => {
   return r.stdout;
 };
 
-// 1) 清理旧 Bundle 与临时目录（数据目录不动）
+// 1) 清理旧 Bundle 与临时目录（数据目录不动）；旧命名 App 让位，避免两个 App 抢 8787
+const LEGACY_APP = join(DEST, 'ModelTester.app');
+if (existsSync(LEGACY_APP) && LEGACY_APP !== APP) {
+  try { renameSync(LEGACY_APP, `${LEGACY_APP}.legacy`); console.log(`  旧版 App 已让位: ${LEGACY_APP}.legacy`); } catch {}
+}
 if (existsSync(APP)) rmSync(APP, { recursive: true, force: true });
 if (existsSync(TMP)) rmSync(TMP, { recursive: true, force: true });
 mkdirSync(BUNDLE_APP, { recursive: true });
@@ -66,11 +70,11 @@ for (const d of ['util', 'public', 'test', 'tools']) {
 cpSync(join(ROOT, 'docs'), join(CONTENTS, 'Resources', 'docs'), { recursive: true });
 console.log('  代码与文档已拷贝');
 
-// 3) 数据迁移（config / usage 不存在才拷贝，绝不覆盖已有数据）
-for (const f of ['modeltester.config.json', 'usage.jsonl']) {
-  const target = join(DATA_DIR, f);
-  if (!existsSync(target) && existsSync(join(ROOT, f))) {
-    cpSync(join(ROOT, f), target);
+// 3) 数据迁移（config / usage 不存在才拷贝，绝不覆盖已有数据；旧名 config 按新名落盘）
+for (const [from, to] of [['auroraagent.config.json', 'auroraagent.config.json'], ['usage.jsonl', 'usage.jsonl'], ['modeltester.config.json', 'auroraagent.config.json']]) {
+  const target = join(DATA_DIR, to);
+  if (!existsSync(target) && existsSync(join(ROOT, from))) {
+    cpSync(join(ROOT, from), target);
     console.log(`  数据已迁移: ${target}`);
   } else {
     console.log(`  数据已存在，跳过: ${target}`);
@@ -91,15 +95,15 @@ const icns = join(CONTENTS, 'Resources', 'AppIcon.icns');
 run('iconutil', ['-c', 'icns', iconset, '-o', icns]);
 console.log(`  图标已生成: ${icns}`);
 
-// 5) 启动器（Contents/MacOS/ModelTester）
+// 5) 启动器（Contents/MacOS/AuroraAgent）
 const launcher = `#!/bin/zsh
-# ModelTester.app（AuroraAgent）启动器：服务已在运行就直接打开浏览器；否则后台拉起服务再打开。
+# AuroraAgent.app 启动器：服务已在运行就直接打开浏览器；否则后台拉起服务再打开。
 # 自定位目录，整个 Bundle 可随意搬移。
 set -u
 HERE="\${0:A:h}"
 APP_DIR="$HERE/../Resources/app"
-DATA_DIR="$HOME/Library/Application Support/ModelTester"
-LOG="$HOME/Library/Logs/com.modeltester.app.log"
+DATA_DIR="$HOME/Library/Application Support/AuroraAgent"
+LOG="$HOME/Library/Logs/com.auroraagent.app.log"
 mkdir -p "$DATA_DIR"
 
 NODE_BIN=""
@@ -114,14 +118,14 @@ if curl -sf -m 1 http://localhost:8787/api/health >/dev/null 2>&1; then
 fi
 
 cd "$APP_DIR"
-MODELTESTER_DATA_DIR="$DATA_DIR" NO_OPEN=1 nohup "$NODE_BIN" web.mjs >>"$LOG" 2>&1 &
+AURORAAGENT_DATA_DIR="$DATA_DIR" NO_OPEN=1 nohup "$NODE_BIN" web.mjs >>"$LOG" 2>&1 &
 for i in {1..40}; do
   curl -sf -m 1 http://localhost:8787/api/health >/dev/null 2>&1 && break
   sleep 0.25
 done
 open http://localhost:8787
 `;
-const launcherPath = join(CONTENTS, 'MacOS', 'ModelTester');
+const launcherPath = join(CONTENTS, 'MacOS', 'AuroraAgent');
 mkdirSync(dirname(launcherPath), { recursive: true });
 writeFileSync(launcherPath, launcher);
 chmodSync(launcherPath, 0o755);
@@ -134,9 +138,9 @@ writeFileSync(join(CONTENTS, 'Info.plist'), `<?xml version="1.0" encoding="UTF-8
 <dict>
   <key>CFBundleDevelopmentRegion</key><string>zh_CN</string>
   <key>CFBundleDisplayName</key><string>AuroraAgent</string>
-  <key>CFBundleExecutable</key><string>ModelTester</string>
+  <key>CFBundleExecutable</key><string>AuroraAgent</string>
   <key>CFBundleIconFile</key><string>AppIcon.icns</string>
-  <key>CFBundleIdentifier</key><string>com.modeltester.app</string>
+  <key>CFBundleIdentifier</key><string>com.auroraagent.app</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>AuroraAgent</string>
   <key>CFBundlePackageType</key><string>APPL</string>
@@ -155,4 +159,4 @@ console.log(`打包完成: ${APP}`);
 console.log(`数据目录:   ${DATA_DIR}`);
 console.log('');
 console.log('下一步（注册服务，指向 Bundle）:');
-console.log(`  MODELTESTER_DATA_DIR="${DATA_DIR}" node "${join(BUNDLE_APP, 'tools', 'install-service.mjs')}"`);
+console.log(`  AURORAAGENT_DATA_DIR="${DATA_DIR}" node "${join(BUNDLE_APP, 'tools', 'install-service.mjs')}"`);
