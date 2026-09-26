@@ -23,6 +23,8 @@ import { runAgentTurn } from '../util/agent/loop.mjs';
 import { UsageLedger } from '../util/usage.mjs';
 import { runTuiToolkitTests } from './tui-toolkit.mjs';
 import { runGuardTests } from './guards.mjs';
+import { runLlmTests } from './llm.mjs';
+import { runConfigTests } from './config.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MOCK_PORT = 18901;
@@ -69,6 +71,8 @@ async function readStream(resp) {
 }
 
 await runTuiToolkitTests(test, assert, eq);
+await runLlmTests(test, assert, eq);
+await runConfigTests(test, assert, eq);
 await runGuardTests(test, assert);
 
 // ---------- 单元测试: SseParser ----------

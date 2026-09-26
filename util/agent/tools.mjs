@@ -7,6 +7,7 @@
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { resolve, sep, dirname } from 'node:path';
+import { toOpenAIFunction, toAnthropicTool } from '../llm/tool.mjs';
 
 const MAX_OUTPUT = 32 * 1024;   // 单次工具回给模型的文本上限
 const MAX_FETCH = 64 * 1024;    // web_fetch 正文上限
@@ -208,13 +209,13 @@ export function getTool(name) {
 /** OpenAI function calling 形状的 tools 参数 */
 export function toolSchemas(names) {
   const picked = names.length ? TOOLS.filter((t) => names.includes(t.name)) : [];
-  return picked.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }));
+  return picked.map((t) => toOpenAIFunction(t));
 }
 
 /** Anthropic Messages 形状（input_schema 而非 parameters） */
 export function anthropicToolSchemas(names) {
   const picked = names.length ? TOOLS.filter((t) => names.includes(t.name)) : [];
-  return picked.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters }));
+  return picked.map((t) => toAnthropicTool(t));
 }
 
 /** 权限判定的资源标识：文件类取路径，shell 取命令，web_fetch 取 URL */
