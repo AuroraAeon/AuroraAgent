@@ -12,7 +12,7 @@
 执行顺序永远是：
 
 1. 改代码（一个可独立验证的小改动，例如「修复一个错误映射」「新增一个厂商标识」）
-2. `npm test` 全绿（基线 25 个测试；不绿不准提交）
+2. `npm test` 全绿（基线 59 个测试；不绿不准提交）
 3. `git add <具体文件>` → `git commit -m "中文描述"` → `git push`
 
 规约：
@@ -47,12 +47,12 @@ ModelTester 是「全球厂商最新大模型速测工作台」：厂商每上�
 | `check.mjs` | 连接自检：Key 校验 → 模型列表 → 一条最小真实请求（会花少量钱） |
 | `public/index.html` | 单页前端：原生 JS + 内联 SVG 图标，无框架；模型选择器、设置弹层（原生 `<dialog closedby="any">`） |
 | `util/sse.mjs` | SSE 解析器 `SseParser` + token 估算（测试与前端共享） |
-| `util/providers.mjs` | 自定义 Provider：存储（`providers.json` 原子落盘）、ID/端点/协议/模型目录/单价校验、上游模型发现、`/api/providers` 路由处理 |
+| `util/providers.mjs` | 自定义 Provider：存储（`providers.json` 原子落盘）、ID/端点/协议/模型目录/单价/API 密钥格式校验（与 dsh 同规约）、上游模型发现、`/api/providers` 路由处理 |
 | `util/wire.mjs` | 协议适配：OpenAI 兼容与 Anthropic Messages 的 URL 拼接、请求拼装、Anthropic SSE 帧翻译成 OpenAI 帧 |
 | `util/stream.mjs` | SSE 透传 / 翻译泵（逐帧转发 + 用量累计，供 `/api/chat` 使用） |
 | `util/usage.mjs` | 用量账本：逐行追加 + 汇总出口 |
 | `util/service.mjs` | LaunchAgent 生命周期：plist 生成 / 安装 / 卸载 / 状态 |
-| `public/providers.mjs` | 自定义 Provider 前端：提供方行、编辑器/添加卡片、可用模型挑选弹层、删除确认（`mountProviders`） |
+| `public/providers.mjs` | 自定义 Provider 前端（对齐 dsh Models 设置页）：提供方行、编辑器/添加卡片、可用模型挑选弹层（默认全选）、删除确认（`mountProviders`） |
 | `public/providers.css` | Provider 界面样式，复用全局设计令牌 |
 | `test/` | e2e 测试：mock 上游 + 真实 socket（见第 8 节） |
 | `tools/install-service.mjs` | LaunchAgent 安装 / 卸载 / 状态（plist 生成规则与 `web.mjs` 内置逻辑保持一致） |
@@ -121,7 +121,7 @@ ModelTester 是「全球厂商最新大模型速测工作台」：厂商每上�
 - e2e 模式：mock 上游（`127.0.0.1:18901`，复刻真实 SSE 帧与 401 / 402 错误）+ 真实 socket 拉起 `web.mjs`（`127.0.0.1:18787`）
 - **数据隔离**：测试以临时目录作 `MODELTESTER_DATA_DIR`，绝不许写真实数据目录
 - 新路由 / 新行为 / 新错误映射必须带中文测试名进入 `test/run-tests.mjs`；mock 需要新行为时改 `test/mock-longcat.mjs`
-- 基线 56/56 通过。提交前 `npm test` 必须全绿；不许 `skip`，不许放宽断言迁就失败
+- 基线 59/59 通过。提交前 `npm test` 必须全绿；不许 `skip`，不许放宽断言迁就失败
 - `npm run check` 走真实上游，只在改上游集成时跑（花少量钱）
 
 ## 9. 反模式（NEVER）
@@ -138,7 +138,7 @@ ModelTester 是「全球厂商最新大模型速测工作台」：厂商每上�
 
 ## 10. 验证基线（改动后自查）
 
-- `npm test` → 56/56
+- `npm test` → 59/59
 - `curl -s localhost:8787/api/health` → `{"ok":true,...}`；`/api/settings` → `version` / `managed` / `dataDir` 符合预期
 - 浏览器打开 http://localhost:8787 ：无 emoji、厂商图标正常、动画流畅、设置弹层可开关开机自启
 - 改了启动 / 打包逻辑：`npm run publish` 后 `launchctl print gui/$(id -u)/com.modeltester.app` 确认 `state = running`

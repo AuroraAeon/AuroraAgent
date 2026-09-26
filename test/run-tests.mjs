@@ -303,6 +303,16 @@ try {
     assert(html.includes('id="pvPickDlg"') && html.includes('id="pvDelDlg"'), '页面缺少提供方弹层');
     assert(html.includes('href="/providers.css"'), '页面未引用提供方样式');
   });
+  await test('提供方界面包含 dsh 对齐后的关键结构（容量折叠/aria 同步/弹层说明）', async () => {
+    const js = await (await fetch(`${BASE}/providers.mjs`)).text();
+    assert(js.includes('pv-mfold'), '模型行缺少「容量」disclosure');
+    assert(js.includes('syncAria'), '缺少 :user-invalid 的 aria-invalid 同步');
+    assert(js.includes('data-err'), '缺少字段错误标记（提交错误不应被 aria 同步清掉）');
+    assert(js.includes('fetchBtn.disabled = urlInput'), '「获取可用模型」缺少无地址禁用逻辑');
+    const html = await (await fetch(`${BASE}/`)).text();
+    assert(html.includes('pv-pick-intro'), '挑选弹层缺少说明文案');
+    assert(html.includes('id="pvDelTitle"'), '删除弹层缺少动态标题节点');
+  });
   await test('GET /providers.css 与 /providers.mjs 提供静态资源', async () => {
     const css = await fetch(`${BASE}/providers.css`);
     eq(css.status, 200);
