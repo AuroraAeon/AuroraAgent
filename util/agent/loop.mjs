@@ -49,6 +49,12 @@ export async function runAgentTurn(ctx) {
 
   // 会话级权限规则（「总是允许」沉淀处）叠加在默认规则之上
   const sessionRules = Array.isArray(session.rules) ? session.rules.slice() : [];
+  // 待办清单随会话持久化（meta.todos）；工具经 ctx.todoStore 读写，两端渲染同源
+  let todos = Array.isArray(session.todos) ? session.todos.slice() : [];
+  const todoStore = {
+    get: () => todos,
+    set: (next) => { todos = next; store.patch(sessionId, { todos: next }); },
+  };
   const policy = new PermissionPolicy([...defaultRules(), ...sessionRules]);
 
   let totIn = 0, totOut = 0, totCost = 0;
@@ -152,6 +158,7 @@ export async function runAgentTurn(ctx) {
         const tool = getTool(call.name);
         let ok = true;
         let output = '';
+        let extra;
         if (!tool) {
           ok = false;
           output = `未知工具：${call.name}。当前模式可用工具：${harness.tools.join('、') || '（无）'}`;
@@ -180,16 +187,22 @@ export async function runAgentTurn(ctx) {
             }
           }
           if (ok) {
-            try { output = await tool.run(safeArgs(call.arguments), { workspace: session.workspace, skills }); }
-            catch (e) { ok = false; output = `工具执行失败：${e.message}`; }
+            try {
+              const res = await tool.run(safeArgs(call.arguments), { workspace: session.workspace, skills, todoStore });
+              // 工具可返回字符串或 { output, extra }：extra 是结构化负载（diff / todos），
+              // 进转录与 tool_event 供两端渲染，但不进模型消息（模型只看 output 文本）
+              if (res && typeof res === 'object') { output = String(res.output ?? ''); extra = res.extra; }
+              else { output = String(res ?? ''); }
+            } catch (e) { ok = false; output = `工具执行失败：${e.message}`; }
           }
         }
         const durationMs = Date.now() - t0;
-        store.append(sessionId, { t: 'tool_result', id: toolId, name: call.name, ok, output });
+        const resultRec = { t: 'tool_result', id: toolId, name: call.name, ok, output, ...(extra ? { extra } : {}) };
+        store.append(sessionId, resultRec);
         records.push({ t: 'tool_call', id: toolId, name: call.name, args: safeArgs(call.arguments) });
-        records.push({ t: 'tool_result', id: toolId, name: call.name, ok, output });
+        records.push(resultRec);
         messages.push({ role: 'tool', tool_call_id: toolId, content: String(output) });
-        emit('tool_event', { sessionId, turnId, phase: ok ? 'completed' : 'failed', toolId, toolName: call.name, output: String(output).slice(0, 2000), durationMs });
+        emit('tool_event', { sessionId, turnId, phase: ok ? 'completed' : 'failed', toolId, toolName: call.name, output: String(output).slice(0, 2000), durationMs, ...(extra ? { extra } : {}) });
       }
     }
   } catch (err) {

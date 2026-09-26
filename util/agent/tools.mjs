@@ -41,6 +41,46 @@ function numbered(lines, from) {
   return lines.map((l, i) => `${String(from + i).padStart(width)}  ${l}`).join('\n');
 }
 
+/** 行级 diff：首尾公共行夹住变更区，附带 2 行上下文；超过 MAX_DIFF_LINES 行时折叠 */
+const MAX_DIFF_LINES = 60;
+
+export function lineDiff(oldText, newText, context = 2) {
+  const a = String(oldText ?? '').split('\n');
+  const b = String(newText ?? '').split('\n');
+  let start = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) start++;
+  let endA = a.length, endB = b.length;
+  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) { endA--; endB--; }
+  const from = Math.max(0, start - context);
+  const out = [];
+  for (let i = from; i < start; i++) out.push({ type: 'context', lineNo: i + 1, text: a[i] });
+  for (let i = start; i < endA; i++) out.push({ type: 'del', lineNo: i + 1, text: a[i] });
+  for (let i = start; i < endB; i++) out.push({ type: 'add', lineNo: i + 1, text: b[i] });
+  const toB = Math.min(b.length, endB + context);
+  for (let i = endB; i < toB; i++) out.push({ type: 'context', lineNo: i + 1, text: b[i] });
+  if (out.length > MAX_DIFF_LINES) {
+    return [...out.slice(0, MAX_DIFF_LINES - 1), { type: 'meta', lineNo: 0, text: `…（diff 过长已折叠，共 ${out.length} 行）` }];
+  }
+  return out;
+}
+
+/** diff 行数组 → 紧凑文本（模型可见，终端预览同款） */
+export function diffToText(diff = []) {
+  if (!diff.length) return '（无变化）';
+  return diff.map((d) => {
+    const mark = d.type === 'add' ? '+' : d.type === 'del' ? '-' : d.type === 'meta' ? ' ' : ' ';
+    return `${mark} ${String(d.lineNo).padStart(4)}  ${d.text}`;
+  }).join('\n');
+}
+
+/** 待办清单渲染（[x] / [ ] 为 ASCII 标记，规避 emoji 铁律） */
+export function renderTodoList(items = []) {
+  if (!items.length) return '（待办清单为空）';
+  const done = items.filter((t) => t.done).length;
+  const lines = items.map((t, i) => `${i + 1}. [${t.done ? 'x' : ' '}] ${t.text}`);
+  return `待办 ${done}/${items.length} 完成：\n${lines.join('\n')}`;
+}
+
 /** 检索类工具共享的目录遍历：跳过版本库 / 依赖 / 构建产物等噪音目录，回调每个文件绝对路径 */
 const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', '.venv', '__pycache__', '.next', 'coverage', 'public/app']);
 const MAX_FILE_BYTES = 512 * 1024;
@@ -190,7 +230,11 @@ export const TOOLS = [
       }
       const next = args.replace_all ? parts.join(newStr) : text.replace(oldStr, newStr);
       writeFileSync(abs, next);
-      return `已替换 ${args.path} 中 ${args.replace_all ? count : 1} 处`;
+      const diff = lineDiff(text, next);
+      return {
+        output: `已替换 ${args.path} 中 ${args.replace_all ? count : 1} 处\n${diffToText(diff)}`,
+        extra: { diff, path: args.path },
+      };
     },
   },
   {
@@ -320,6 +364,46 @@ export const TOOLS = [
       if (!out.length) return `未匹配到 ${pattern}`;
       const more = out.length >= 500 ? `\n[已达上限 500 条，缩小 pattern 后重试]` : '';
       return truncate(`匹配 ${out.length} 个文件：\n${out.join('\n')}${more}`);
+    },
+  },
+  {
+    name: 'todo',
+    description: '维护任务待办清单：list 查看 / add 新增 / done 完成 / remove 删除（序号 1 起）。多步任务先规划再逐项更新',
+    action: 'todo',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'add', 'done', 'remove'], description: 'list 查看；add 新增；done 标记完成；remove 删除' },
+        item: { type: 'string', description: 'add 填事项文本；done / remove 填序号' },
+      },
+      required: ['action'],
+    },
+    run(args, ctx) {
+      const store = ctx?.todoStore;
+      if (!store) throw new ToolError('todo 工具需要会话上下文', 'no_ctx');
+      const action = String(args.action || 'list').toLowerCase();
+      if (action === 'list') return renderTodoList(store.get());
+      if (action === 'add') {
+        const text = String(args.item || '').trim();
+        if (!text) throw new ToolError('add 需要 item 事项文本', 'bad_args');
+        store.set([...store.get(), { text, done: false }]);
+      } else if (action === 'done' || action === 'remove') {
+        const items = store.get();
+        const idx = Number(args.item) - 1;
+        if (!Number.isInteger(idx) || idx < 0 || idx >= items.length) {
+          throw new ToolError(`序号无效：${args.item}（当前共 ${items.length} 项）`, 'bad_args');
+        }
+        if (action === 'done') {
+          const next = items.slice();
+          next[idx] = { ...next[idx], done: true };
+          store.set(next);
+        } else {
+          store.set(items.filter((_, i) => i !== idx));
+        }
+      } else {
+        throw new ToolError(`未知动作：${action}（list / add / done / remove）`, 'bad_args');
+      }
+      return { output: renderTodoList(store.get()), extra: { todos: store.get() } };
     },
   },
   {

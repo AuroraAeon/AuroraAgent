@@ -16,7 +16,7 @@ import { consumeAgentStream } from '../util/stream.mjs';
 import { agentEvent, sseFrame } from '../util/agent/events.mjs';
 import { HARNESSES, getHarness, harnessSummaries, DEFAULT_HARNESS } from '../util/agent/harness.mjs';
 import { SessionStore } from '../util/agent/session.mjs';
-import { getTool, toolSchemas, anthropicToolSchemas, toolResource, resolveInside } from '../util/agent/tools.mjs';
+import { getTool, toolSchemas, anthropicToolSchemas, toolResource, resolveInside, lineDiff, diffToText, renderTodoList } from '../util/agent/tools.mjs';
 import { PermissionPolicy, defaultRules, mostRestrictive } from '../util/agent/policy.mjs';
 import { assembleMessages, needsCompaction, planCompaction, compactionMessages, contextWindowOf, estimateMessagesTokens } from '../util/agent/context.mjs';
 import { runAgentTurn } from '../util/agent/loop.mjs';
@@ -542,6 +542,37 @@ await test('检索工具：grep / glob 真实查找与预算截断', async () =>
   try { await grep.run({ pattern: 'root', path: '/etc' }, { workspace: ws }); } catch (e) { escaped2 = e.code === 'path_escape'; }
   assert(escaped2, 'grep 起点应受路径禁锢');
   rmSync(wsRoot, { recursive: true, force: true });
+});
+
+await test('todo 工具：增删完成与状态机', () => {
+  const store = { list: [], get() { return this.list; }, set(n) { this.list = n; } };
+  const todo = getTool('todo');
+  const r1 = todo.run({ action: 'add', item: '读文件' }, { todoStore: store });
+  assert(r1.output.includes('0/1') && r1.extra.todos.length === 1, 'add 后进清单');
+  todo.run({ action: 'add', item: '改代码' }, { todoStore: store });
+  const r3 = todo.run({ action: 'done', item: '1' }, { todoStore: store });
+  assert(r3.output.includes('1/2') && r3.extra.todos[0].done, 'done 按序号生效');
+  const r4 = todo.run({ action: 'remove', item: '2' }, { todoStore: store });
+  eq(r4.extra.todos.length, 1, 'remove 按序号删除');
+  eq(todo.run({ action: 'list' }, { todoStore: store }), renderTodoList(store.get()), 'list 返回渲染文本');
+  for (const bad of [{ action: 'done', item: '9' }, { action: 'add' }, { action: 'boom' }]) {
+    let threw = false;
+    try { todo.run(bad, { todoStore: store }); } catch (e) { threw = e.code === 'bad_args'; }
+    assert(threw, `非法参数应拒绝: ${JSON.stringify(bad)}`);
+  }
+  let noCtx = false;
+  try { todo.run({ action: 'list' }, {}); } catch (e) { noCtx = e.code === 'no_ctx'; }
+  assert(noCtx, '缺会话上下文应拒绝');
+});
+
+await test('edit_file：diff 结构化 extra 与紧凑文本', () => {
+  const d = lineDiff('a\nb\nc\n', 'a\nB\nc\n');
+  eq(d.filter((x) => x.type === 'del').length, 1);
+  eq(d.filter((x) => x.type === 'add').length, 1);
+  assert(d.some((x) => x.type === 'context'), '应带上下行');
+  const text = diffToText(d);
+  assert(text.includes('-    2  b') && text.includes('+    2  B'), '紧凑文本带 +/- 标记与行号');
+  assert(diffToText([]).includes('无变化'), '空 diff 有空态');
 });
 
 await test('skill 工具：schema 形状与默认免确认', () => {
@@ -1514,6 +1545,50 @@ await test('Agent turn：模型调用 skill 工具加载技能指令并回填', 
   const result = detail.records.find((x) => x.t === 'tool_result' && x.name === 'skill');
   assert(result && result.ok, '工具结果应落转录');
   assert(result.output.includes('[技能：code-review]') && result.output.includes('代码审查技能') && result.output.includes('按严重级分级'), '结果应含技能正文');
+});
+
+await test('Agent turn：todo 工具维护清单并持久化到会话', async () => {
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_TODO 规划一下' }),
+  });
+  const all = await drainAgentStream(openAgentStream(resp));
+  const done = all.find((e) => e.type === 'tool_event' && e.phase === 'completed' && e.toolName === 'todo');
+  assert(done && Array.isArray(done.extra?.todos) && done.extra.todos[0].text === 'mock 待办事项', 'completed 事件应带 todos extra');
+  assert(all.at(-1).type === 'turn_completed', '应以 turn_completed 收尾');
+  const detail = await (await fetch(`${AGENT}/sessions/${s.id}`)).json();
+  const rec = detail.records.find((x) => x.t === 'tool_result' && x.name === 'todo');
+  assert(rec && rec.extra && rec.extra.todos.length === 1, '转录应留 todos extra');
+  eq(detail.meta.todos.length, 1, 'todo 应持久化进会话 meta');
+  eq(detail.meta.todos[0].done, false);
+});
+
+await test('Agent turn：edit_file 回传 diff 结构化负载', async () => {
+  const ws = join(tmpDataDir, 'workspace');
+  writeFileSync(join(ws, 'edit_me.txt'), '第一行\nold 内容\n末行\n');
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_EDIT 改一下' }),
+  });
+  const stream = openAgentStream(resp);
+  const head = await drainAgentStream(stream, { until: (ev) => ev.type === 'tool_event' && ev.phase === 'confirmation_needed' });
+  await fetch(`${AGENT}/permission`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId: head.find((e) => e.phase === 'confirmation_needed').requestId, decision: 'allow' }),
+  });
+  const all = [...head, ...(await drainAgentStream(stream))];
+  const done = all.find((e) => e.type === 'tool_event' && e.phase === 'completed' && e.toolName === 'edit_file');
+  assert(done && Array.isArray(done.extra?.diff), 'completed 事件应带 diff extra');
+  assert(done.extra.diff.some((d) => d.type === 'del' && d.text.includes('old 内容')), 'diff 应含删除行');
+  assert(done.extra.diff.some((d) => d.type === 'add' && d.text.includes('new 内容')), 'diff 应含新增行');
+  eq(readFileSync(join(ws, 'edit_me.txt'), 'utf8'), '第一行\nnew 内容\n末行\n', '文件应真实改写');
+  const detail = await (await fetch(`${AGENT}/sessions/${s.id}`)).json();
+  const rec = detail.records.find((x) => x.t === 'tool_result' && x.name === 'edit_file');
+  assert(rec.extra && rec.extra.diff.length > 0, '转录应留 diff extra');
+  const toolMsg = detail.records.find((x) => x.t === 'tool_result' && x.name === 'edit_file');
+  assert(toolMsg.output.includes('+    2  new 内容'), '模型可见输出含紧凑 diff');
 });
 
 await test('Agent turn：空输入 400、未知会话 404', async () => {

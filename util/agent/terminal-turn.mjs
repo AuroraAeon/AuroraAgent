@@ -73,6 +73,10 @@ export async function runTerminalTurn({ store, usage, session, input, provider, 
           toolLineOpen = true;
         } else if (p.phase === 'completed') {
           write(`  ${painter.success('✓')} ${label}${res ? ` ${res}` : ''}${p.durationMs != null ? painter.dim(` ${p.durationMs}ms`) : ''}\n`);
+          if (p.toolName === 'todo' && Array.isArray(p.extra?.todos)) {
+            const t = p.extra.todos;
+            write(`  ${painter.dim(`待办进度 ${t.filter((x) => x.done).length}/${t.length}`)}\n`);
+          }
           if (p.output) { breakLine(); write(painter.dim(indent(p.output, 220)) + '\n'); }
         } else if (p.phase === 'failed') {
           const denied = rejectedTools.has(p.toolId);
