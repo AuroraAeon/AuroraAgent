@@ -5,13 +5,14 @@
  * 特性: 断流即中止上游、用量账本、请求日志、健康检查
  */
 import { createServer } from 'node:http';
-import { readFileSync, appendFileSync, existsSync, openSync } from 'node:fs';
+import { readFileSync, existsSync, openSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { exec, execSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { SseParser } from './util/sse.mjs';
+import { UsageLedger } from './util/usage.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // 数据目录三级回退：MODELTESTER_DATA_DIR（启动器 / LaunchAgent 显式指定）→
@@ -24,7 +25,7 @@ function resolveDataDir() {
 }
 const DATA_DIR = resolveDataDir();
 const CONFIG_PATH = join(DATA_DIR, 'modeltester.config.json');
-const USAGE_PATH = join(DATA_DIR, 'usage.jsonl');
+const usage = new UsageLedger(DATA_DIR, { warn: (m, e) => log('warn', m, e) });
 const BASE = process.env.MODELTESTER_BASE_URL || 'https://api.longcat.chat';
 const PORT = Number(process.env.PORT || 8787);
 const PRICE = { input: 2, output: 8 }; // 限时折扣价 ¥/百万 tokens
@@ -115,33 +116,21 @@ function serveStatic(res, filePath) {
   res.end(readFileSync(filePath));
 }
 
-// ---------- 用量账本（usage accounting） ----------
-function recordUsage(rec) {
-  try {
-    appendFileSync(USAGE_PATH, JSON.stringify({ ts: new Date().toISOString(), ...rec }) + '\n');
-  } catch (e) { log('warn', 'usage 写入失败', { error: String(e) }); }
-}
-function readUsage() {
-  try {
-    return readFileSync(USAGE_PATH, 'utf8').trim().split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-  } catch { return []; }
-}
-
 // ---------- 活跃流注册表（/api/abort 按 requestId 停止；设计借鉴 dsh 的 stream cancel 语义） ----------
 const activeStreams = new Map(); // requestId -> { controller, started, usage, stopped, settled, model }
 function settleUsage(entry, ms) {
   entry.settled = true;
-  const usage = entry.usage;
-  const inTok = usage?.prompt_tokens || 0;
-  const outTok = usage?.completion_tokens || 0;
+  const u = entry.usage;
+  const inTok = u?.prompt_tokens || 0;
+  const outTok = u?.completion_tokens || 0;
   const cost = (inTok * PRICE.input + outTok * PRICE.output) / 1_000_000;
   const rec = {
     requestId: entry.requestId, model: entry.model, ms,
     inputTokens: inTok, outputTokens: outTok,
-    reasoningTokens: usage?.completion_tokens_details?.reasoning_tokens || 0,
+    reasoningTokens: u?.completion_tokens_details?.reasoning_tokens || 0,
     cost: Number(cost.toFixed(6)), stopped: entry.stopped,
   };
-  recordUsage(rec);
+  usage.record(rec);
   return rec;
 }
 // 额度耗尽的措辞识别（状态码之外的兜底；借鉴 dsh-llm 的 isQuotaExceededError）
@@ -204,16 +193,8 @@ const server = createServer(async (req, res) => {
     return res.end(JSON.stringify({ ok: true, model: cfg.model, hasKey: Boolean(cfg.apiKey), ts: Date.now() }));
   }
   if (req.method === 'GET' && url === '/api/usage') {
-    const rows = readUsage();
-    const totals = rows.reduce((a, r) => {
-      a.requests += 1;
-      a.inputTokens += r.inputTokens || 0;
-      a.outputTokens += r.outputTokens || 0;
-      a.cost += r.cost || 0;
-      return a;
-    }, { requests: 0, inputTokens: 0, outputTokens: 0, cost: 0 });
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ totals, recent: rows.slice(-20).reverse() }));
+    return res.end(JSON.stringify(usage.summary()));
   }
 
   if (req.method === 'GET' && url === '/api/models') {
