@@ -133,7 +133,7 @@ async function ask(cfg, dataUrl) {
 async function main() {
   const cfg = loadConfig();
   if (!cfg.apiKey) {
-    console.log('[!] 未找到 API Key。请先在 modeltester.config.json 配置，或 export MODELTESTER_API_KEY。');
+    console.log('[!] 未找到 API Key。请先在 auroraagent.config.json 配置，或 export AURORAAGENT_API_KEY。');
     process.exit(1);
   }
   const onlyIdx = process.argv.indexOf('--only');

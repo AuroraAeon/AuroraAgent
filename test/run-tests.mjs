@@ -768,7 +768,7 @@ writeFileSync(tmpPng, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAACCRR8pA
 
 const child = spawn(process.execPath, ['web.mjs'], {
   cwd: join(__dirname, '..'),
-  env: { ...process.env, MODELTESTER_BASE_URL: `http://127.0.0.1:${MOCK_PORT}`, PORT: String(WEB_PORT), NO_OPEN: '1', MODELTESTER_API_KEY: 'ak-test-key', LOG_LEVEL: 'error', MODELTESTER_DATA_DIR: tmpDataDir },
+  env: { ...process.env, AURORAAGENT_BASE_URL: `http://127.0.0.1:${MOCK_PORT}`, PORT: String(WEB_PORT), NO_OPEN: '1', AURORAAGENT_API_KEY: 'ak-test-key', LOG_LEVEL: 'error', AURORAAGENT_DATA_DIR: tmpDataDir },
   stdio: 'ignore',
 });
 await new Promise((r) => setTimeout(r, 1200));

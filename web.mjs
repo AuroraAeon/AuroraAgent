@@ -17,23 +17,15 @@ import { ProviderStore, ProviderError, handleProviderApi } from './util/provider
 import { pumpSse, pumpTranslated } from './util/stream.mjs';
 import { buildChatRequest, anthropicFrame, upstreamHint, fetchUpstream } from './util/wire.mjs';
 import { createAgentApi } from './util/agent/http.mjs';
+import { resolveDataDir, loadConfig, PRICE } from './util/config.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-// 数据目录三级回退：MODELTESTER_DATA_DIR（启动器 / LaunchAgent 显式指定）→
-// 同目录已有 modeltester.config.json 时用 App 目录本身（源码开发态）→
-// 否则 ~/Library/Application Support/ModelTester（独立 App 态，数据与 Bundle 解耦）
-function resolveDataDir() {
-  if (process.env.MODELTESTER_DATA_DIR) return process.env.MODELTESTER_DATA_DIR;
-  if (existsSync(join(__dirname, 'modeltester.config.json'))) return __dirname;
-  return join(homedir(), 'Library', 'Application Support', 'ModelTester');
-}
+// 数据目录与配置统一走 util/config.mjs（env → 源码态 → App 态三级回退，含旧命名一次性迁移）
 const DATA_DIR = resolveDataDir();
-const CONFIG_PATH = join(DATA_DIR, 'modeltester.config.json');
 const usage = new UsageLedger(DATA_DIR, { warn: (m, e) => log('warn', m, e) });
-const BASE = process.env.MODELTESTER_BASE_URL || 'https://api.longcat.chat';
+const BASE = process.env.AURORAAGENT_BASE_URL || 'https://api.longcat.chat';
 const PORT = Number(process.env.PORT || 8787);
-const PRICE = { input: 2, output: 8 }; // 限时折扣价 ¥/百万 tokens
-const VERSION = '4.0.0';
+const VERSION = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8')).version; // 版本唯一来源
 // 自定义 Provider 仓库：内置提供方（美团 LongCat）由 env/配置合成，自定义提供方落 providers.json
 const providers = new ProviderStore(DATA_DIR, {
   name: '美团 LongCat',
@@ -78,19 +70,6 @@ function log(level, msg, extra) {
   const suffix = extra && Object.keys(extra).length ? ` ${JSON.stringify(extra)}` : '';
   const line = `[${new Date().toISOString()}] ${level.toUpperCase()} ${msg}${suffix}`;
   if (level === 'error') console.error(line); else console.log(line);
-}
-
-// ---------- 配置 ----------
-function loadConfig() {
-  let saved = {};
-  try { saved = JSON.parse(readFileSync(CONFIG_PATH, 'utf8')); } catch {}
-  return {
-    apiKey: process.env.MODELTESTER_API_KEY || saved.apiKey || '',
-    model: saved.model || 'LongCat-2.5-Preview',
-    thinking: saved.thinking !== false,
-    temperature: saved.temperature ?? 0.7,
-    maxTokens: saved.maxTokens ?? 32768,
-  };
 }
 
 // ---------- 模型目录（GET /api/models；结构借鉴 dsh ModelCatalog：共享目录 + 生命周期状态 + 单飞加载） ----------

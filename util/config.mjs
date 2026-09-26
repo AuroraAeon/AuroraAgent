@@ -1,8 +1,10 @@
 /**
- * 配置与数据目录：三级回退（env → 同目录已有 config 用当前目录（源码态）→ ~/Library/Application Support/ModelTester（App 态））。
- * 从 chat.mjs 抽出供终端 Agent 与工具库共用；web.mjs / check.mjs / tools/install-service.mjs 各自的内联实现须与本文件保持一致。
+ * 配置与数据目录：三级回退（env → 同目录已有 config 用当前目录（源码态）→ ~/Library/Application Support/AuroraAgent（App 态））。
+ * web.mjs / chat.mjs / check.mjs / tools/install-service.mjs 共用本文件，不再各自内联实现。
+ * 5.0.0 起旧命名（ModelTester / MODELTESTER_*）全部更名 AuroraAgent；本文件顺带负责一次性迁移：
+ * 旧数据目录整体搬迁（含旧名 config 就地改名），幂等、失败静默，不影响启动。
  */
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, copyFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -11,22 +13,53 @@ import { fileURLToPath } from 'node:url';
 export const PRICE = { input: 2, output: 8 };
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+export const CONFIG_FILE = 'auroraagent.config.json';
+const LEGACY_CONFIG_FILE = 'modeltester.config.json';
+const LEGACY_DATA_DIR = join(homedir(), 'Library', 'Application Support', 'ModelTester');
 
-/** 数据目录三级回退（四处实现必须保持一致，见 AGENTS.md 第 4 节） */
+/** 目录内旧名 config 就地改名（源码态与迁移后各调用一次，幂等） */
+function renameLegacyConfig(dir) {
+  try {
+    const from = join(dir, LEGACY_CONFIG_FILE);
+    const to = join(dir, CONFIG_FILE);
+    if (existsSync(from) && !existsSync(to)) renameSync(from, to);
+  } catch {}
+}
+
+/** 旧数据目录 → 新目录：目标未初始化就整体搬迁（原子改名）；已初始化则只补缺的文件。旧目录留底不删。 */
+function migrateLegacyDataDir(target) {
+  try {
+    if (!existsSync(LEGACY_DATA_DIR)) return;
+    mkdirSync(target, { recursive: true });
+    if (!existsSync(join(target, CONFIG_FILE)) && !existsSync(join(target, LEGACY_CONFIG_FILE))) {
+      try { renameSync(LEGACY_DATA_DIR, target); renameLegacyConfig(target); return; } catch {}
+    }
+    for (const name of readdirSync(LEGACY_DATA_DIR)) {
+      const to = join(target, name === LEGACY_CONFIG_FILE ? CONFIG_FILE : name);
+      if (!existsSync(to)) copyFileSync(join(LEGACY_DATA_DIR, name), to);
+    }
+  } catch {}
+}
+
+/** 数据目录三级回退（env 显式指定优先；env 缺省时旧目录整体搬迁到新命名目录） */
 export function resolveDataDir() {
-  if (process.env.MODELTESTER_DATA_DIR) return process.env.MODELTESTER_DATA_DIR;
-  if (existsSync(join(__dirname, '..', 'modeltester.config.json'))) return join(__dirname, '..');
-  return join(homedir(), 'Library', 'Application Support', 'ModelTester');
+  if (process.env.AURORAAGENT_DATA_DIR) return process.env.AURORAAGENT_DATA_DIR;
+  const devDir = join(__dirname, '..');
+  renameLegacyConfig(devDir);
+  if (existsSync(join(devDir, CONFIG_FILE))) return devDir;
+  const appDir = join(homedir(), 'Library', 'Application Support', 'AuroraAgent');
+  migrateLegacyDataDir(appDir);
+  return appDir;
 }
 
 export function loadConfig() {
   let saved = {};
   let fileExists = false;
   try {
-    saved = JSON.parse(readFileSync(join(resolveDataDir(), 'modeltester.config.json'), 'utf8'));
+    saved = JSON.parse(readFileSync(join(resolveDataDir(), CONFIG_FILE), 'utf8'));
     fileExists = true;
   } catch {}
-  const overrideKey = process.env.MODELTESTER_API_KEY || '';
+  const overrideKey = process.env.AURORAAGENT_API_KEY || '';
   return {
     apiKey: overrideKey || saved.apiKey || '',
     // 环境变量 Key 只是临时覆盖: 配置文件已有 Key 时绝不写回文件
@@ -47,5 +80,5 @@ export function saveConfig(cfg) {
     maxTokens: cfg.maxTokens,
   };
   if (!cfg.keyIsOverride) out.apiKey = cfg.apiKey;
-  writeFileSync(join(resolveDataDir(), 'modeltester.config.json'), JSON.stringify(out, null, 2) + '\n');
+  writeFileSync(join(resolveDataDir(), CONFIG_FILE), JSON.stringify(out, null, 2) + '\n');
 }

@@ -1,5 +1,6 @@
-modeltester.config.json
+auroraagent.config.json
 usage.jsonl
+sessions/
 *.log
 node_modules/
 __pycache__/

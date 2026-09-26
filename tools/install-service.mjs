@@ -9,24 +9,25 @@
  * 两个关键约定：
  * 1. 日志必须放 ~/Library/Logs——App 若位于 ~/Documents 等 TCC 隐私保护目录，
  *    launchd 无权打开其中的文件做 stdout 重定向，job 会以 exit 78 (EX_CONFIG) 反复失败。
- * 2. 数据目录通过 MODELTESTER_DATA_DIR 显式指定（默认 App 目录）；独立 App 打包时
- *    设置为 ~/Library/Application Support/ModelTester，与 App  Bundle 解耦。
+ * 2. 数据目录通过 AURORAAGENT_DATA_DIR 显式指定（默认 App 目录）；独立 App 打包时
+ *    设置为 ~/Library/Application Support/AuroraAgent，与 App Bundle 解耦。
  */
 import { writeFileSync, unlinkSync, existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
+import { resolveDataDir } from '../util/config.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const LABEL = 'com.modeltester.app';
+const LABEL = 'com.auroraagent.app';
+const LEGACY_LABEL = 'com.modeltester.app'; // 5.0.0 更名前的旧 label，安装/卸载时一并清理
 const PLIST = join(homedir(), 'Library/LaunchAgents', `${LABEL}.plist`);
 const DOMAIN = `gui/${process.getuid()}`;
 const NODE = process.execPath;
 const LOG = join(homedir(), 'Library/Logs', `${LABEL}.log`);
-// 数据目录三级回退：env → ROOT 已有 config（源码态）→ ~/Library/Application Support/ModelTester（App 态）
-const DATA_DIR = process.env.MODELTESTER_DATA_DIR ||
-  (existsSync(join(ROOT, 'modeltester.config.json')) ? ROOT : join(homedir(), 'Library', 'Application Support', 'ModelTester'));
+// 数据目录统一走 util/config.mjs（env → 源码态 → App 态三级回退，含旧命名一次性迁移）
+const DATA_DIR = resolveDataDir();
 const PORT = 8787;
 
 const sh = (cmd) => {
@@ -38,6 +39,9 @@ const health = () => sh(`curl -s --max-time 3 http://localhost:${PORT}/api/healt
 
 if (process.argv.includes('--remove')) {
   sh(`launchctl bootout ${DOMAIN}/${LABEL}`);
+  sh(`launchctl bootout ${DOMAIN}/${LEGACY_LABEL}`); // 旧 label 残留一并清掉
+  const legacyPlist = join(homedir(), 'Library', 'LaunchAgents', `${LEGACY_LABEL}.plist`);
+  if (existsSync(legacyPlist)) unlinkSync(legacyPlist);
   if (existsSync(PLIST)) unlinkSync(PLIST);
   console.log(`已卸载 ${LABEL}（数据与配置保留在 ${DATA_DIR}）`);
   process.exit(0);
@@ -53,6 +57,12 @@ if (process.argv.includes('--status')) {
 }
 
 mkdirSync(dirname(PLIST), { recursive: true });
+// 旧 label 一次性迁移：先 bootout 旧 job 再装新的，避免两个 job 抢 8787 端口
+if (LEGACY_LABEL !== LABEL) {
+  sh(`launchctl bootout ${DOMAIN}/${LEGACY_LABEL}`);
+  const legacyPlist = join(homedir(), 'Library', 'LaunchAgents', `${LEGACY_LABEL}.plist`);
+  if (existsSync(legacyPlist)) { unlinkSync(legacyPlist); console.log(`  旧 label 已卸载: ${LEGACY_LABEL}`); }
+}
 writeFileSync(PLIST, `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -66,7 +76,7 @@ writeFileSync(PLIST, `<?xml version="1.0" encoding="UTF-8"?>
   <key>WorkingDirectory</key><string>${ROOT}</string>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>MODELTESTER_DATA_DIR</key><string>${DATA_DIR}</string>
+    <key>AURORAAGENT_DATA_DIR</key><string>${DATA_DIR}</string>
     <key>NO_OPEN</key><string>1</string>
   </dict>
   <key>RunAtLoad</key><true/>

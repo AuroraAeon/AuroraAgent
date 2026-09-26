@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { execSync } from 'node:child_process';
 
-export const SERVICE_LABEL = 'com.modeltester.app';
+export const SERVICE_LABEL = 'com.auroraagent.app';
 export const SERVICE_DOMAIN = `gui/${process.getuid()}`;
 export const PLIST_PATH = join(homedir(), 'Library/LaunchAgents', `${SERVICE_LABEL}.plist`);
 export const SERVICE_LOG = join(homedir(), 'Library/Logs', `${SERVICE_LABEL}.log`);

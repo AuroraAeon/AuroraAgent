@@ -15,7 +15,7 @@ export const QUOTA_WORDING = /\binsufficient[\s_-]+(?:quota|balance|credits?)\b|
 export function upstreamHint(provider, status, errText) {
   const builtin = Boolean(provider.builtin);
   const keyHint = builtin
-    ? '请检查 modeltester.config.json 里的 apiKey，或访问 https://longcat.chat/platform/api_keys 重新获取'
+    ? '请检查 auroraagent.config.json 里的 apiKey，或访问 https://longcat.chat/platform/api_keys 重新获取'
     : `请到「设置 → 提供方」检查「${provider.name}」的 API 密钥，或到该厂商控制台重新获取`;
   const quotaHint = builtin
     ? '请到 https://longcat.chat/platform/ 充值，或抢购 Token 资源包（每日 10:00/16:00/21:00/23:00），或完成邀请任务领取奖励'

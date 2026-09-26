@@ -15,7 +15,7 @@ import { SseParser } from './util/sse.mjs';
 import { loadConfig, PRICE } from './util/config.mjs';
 import { runTerminal } from './util/agent/terminal.mjs';
 
-const BASE = process.env.MODELTESTER_BASE_URL || 'https://api.longcat.chat';
+const BASE = process.env.AURORAAGENT_BASE_URL || 'https://api.longcat.chat';
 const KEY_PAGE = 'https://longcat.chat/platform/api_keys';
 
 // 既有导出（color-test.mjs 依赖），签名不变
@@ -45,7 +45,7 @@ export async function streamChat(cfg, messages, on) {
     let msg = await resp.text();
     try { msg = JSON.parse(msg).error?.message || msg; } catch {}
     const hint = resp.status === 401
-      ? `\nAPI Key 无效或未填写。请访问 ${KEY_PAGE} 获取，然后用 /key <你的Key> 或设置环境变量 MODELTESTER_API_KEY。`
+      ? `\nAPI Key 无效或未填写。请访问 ${KEY_PAGE} 获取，然后用 /key <你的Key> 或设置环境变量 AURORAAGENT_API_KEY。`
       : resp.status === 402
         ? '\n账号额度已用尽: ① longcat.chat/platform 充值 ② Token资源包每日 10:00/16:00/21:00/23:00 抢购 ③ 邀请好友领奖励'
         : resp.status === 429 ? '\n请求太频繁，稍后再试。' : '';

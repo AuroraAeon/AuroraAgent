@@ -12,7 +12,7 @@ import { getHarness } from './harness.mjs';
 import { runAgentTurn } from './loop.mjs';
 import { loadConfig, saveConfig, PRICE, resolveDataDir } from '../config.mjs';
 
-const BASE = process.env.MODELTESTER_BASE_URL || 'https://api.longcat.chat';
+const BASE = process.env.AURORAAGENT_BASE_URL || 'https://api.longcat.chat';
 const KEY_PAGE = 'https://longcat.chat/platform/api_keys';
 const CLEAR = '\r\x1b[K';
 const MODEL_RE = /^[A-Za-z0-9._:-]{1,80}$/;
@@ -40,7 +40,7 @@ export async function runTerminal({ argv = [] } = {}) {
   const keyIdx = argv.indexOf('--key');
   if (keyIdx >= 0 && argv[keyIdx + 1]) {
     cfg.apiKey = argv[keyIdx + 1];
-    if (!cfg.keyIsOverride && process.env.MODELTESTER_API_KEY) cfg.keyIsOverride = true;
+    if (!cfg.keyIsOverride && process.env.AURORAAGENT_API_KEY) cfg.keyIsOverride = true;
   }
   const pIdx = argv.indexOf('-p');
   const oneShot = pIdx >= 0 ? argv[pIdx + 1] : null;
@@ -49,7 +49,7 @@ export async function runTerminal({ argv = [] } = {}) {
     console.log(paint('yellow', '[!] 还未配置 API Key'));
     console.log(`  1. 打开 ${KEY_PAGE} 注册/登录并创建 Key`);
     console.log('  2. 回来执行下面的命令之一:');
-    console.log(`     ${paint('cyan', 'export MODELTESTER_API_KEY="ak-你的Key"')} 然后 node chat.mjs`);
+    console.log(`     ${paint('cyan', 'export AURORAAGENT_API_KEY="ak-你的Key"')} 然后 node chat.mjs`);
     console.log(`     或在对话中输入 ${paint('cyan', '/key ak-你的Key')}`);
     if (!oneShot) process.exit(1);
   }

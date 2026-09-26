@@ -342,7 +342,7 @@ export class ProviderStore {
 
 /**
  * 线路地址拼装：自定义提供方的「API 地址」就是端点根，直接拼 /chat/completions；
- * 内置提供方多一段 /openai/v1 前缀（MODELTESTER_BASE_URL 仍按既有语义取站点根）。
+ * 内置提供方多一段 /openai/v1 前缀（AURORAAGENT_BASE_URL 仍按既有语义取站点根）。
  */
 export function chatUrl(p) { return `${p.baseUrl}${p.pathPrefix || ''}/chat/completions`; }
 export function modelsUrl(p) { return `${p.baseUrl}${p.pathPrefix || ''}/models`; }

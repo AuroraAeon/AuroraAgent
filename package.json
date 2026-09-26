@@ -15,7 +15,7 @@
     "service:status": "node tools/install-service.mjs --status",
     "service:remove": "node tools/install-service.mjs --remove",
     "app:build": "npm run build:web && node tools/build-app.mjs",
-    "publish": "npm run build:web && node tools/build-app.mjs && launchctl kickstart -k gui/$(id -u)/com.modeltester.app",
+    "publish": "npm run build:web && node tools/build-app.mjs && launchctl kickstart -k gui/$(id -u)/com.auroraagent.app",
     "dev:web": "npm --prefix web-ui run dev",
     "build:web": "npm --prefix web-ui run build"
   }
