@@ -24,6 +24,20 @@ export class SearchableList {
     return v[this.cursor] ?? null;
   }
 
+  /** 直接定位光标到可见列表索引（夹紧 + 校正滚动） */
+  setCursor(i) {
+    const v = this.visible;
+    this.cursor = v.length ? Math.max(0, Math.min(v.length - 1, i)) : 0;
+    this.#clampScroll();
+    return this;
+  }
+  /** 按 id 定位光标（当前项高亮初始位置） */
+  focusById(id) {
+    const i = this.visible.findIndex((x) => String(x.id ?? x) === String(id));
+    if (i >= 0) this.setCursor(i);
+    return this;
+  }
+
   move(delta) {
     const v = this.visible;
     if (!v.length) { this.cursor = 0; this.scroll = 0; return; }
