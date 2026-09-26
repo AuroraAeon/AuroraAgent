@@ -90,9 +90,7 @@ function els() {
 // ---------- 行 ----------
 function rowHtml(p) {
   const open = state.card && state.card.kind === 'edit' && state.card.id === p.id;
-  const dot = p.builtin
-    ? '<span class="pv-dot" data-state="' + (p.hasKey ? 'configured' : 'missing') + '" title="' + (p.hasKey ? 'API 密钥已配置' : 'API 密钥缺失') + '"></span>'
-    : '<span class="pv-dot" data-state="' + (p.hasKey ? 'configured' : 'missing') + '" title="' + (p.hasKey ? 'API 密钥已配置' : 'API 密钥缺失') + '"></span>';
+  const dot = '<span class="pv-dot" data-state="' + (p.hasKey ? 'configured' : 'missing') + '" title="' + (p.hasKey ? 'API 密钥已配置' : 'API 密钥缺失') + '"></span>';
   const tag = p.builtin ? '<span class="pv-badge">内置</span>' : '<span class="pv-tag">' + esc(p.id) + '</span>';
   const acts = p.builtin
     ? '<span class="pv-meta">由配置与上游目录决定</span>'
@@ -103,7 +101,7 @@ function rowHtml(p) {
   return '<div class="pv-row" data-open="' + (open ? 'true' : 'false') + '" data-id="' + esc(p.id) + '">'
     + dot
     + '<span class="pv-ident"><span class="pv-name">' + esc(p.name) + '</span>' + tag + '</span>'
-    + '<span class="pv-meta">' + p.models.length + ' 个模型</span>'
+    + (p.models.length ? '<span class="pv-meta">' + p.models.length + ' 个模型</span>' : '')
     + acts
     + '</div>';
 }
