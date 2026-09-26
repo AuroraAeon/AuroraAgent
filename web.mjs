@@ -35,7 +35,7 @@ const providers = new ProviderStore(DATA_DIR, {
   model: () => loadConfig().model,
 }, () => modelCatalog.models);
 
-// Agent 运行时 HTTP 面（/api/agent/*）：实现拆在 util/agent/http.mjs，此处只按前缀委派
+// Agent 运行时 HTTP 面（/api/agent/* 与 /api/mcp/*）：实现拆在 util/agent/http.mjs，此处只按前缀委派
 const agentApi = createAgentApi({
   dataDir: DATA_DIR,
   usage,
@@ -411,7 +411,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (url.startsWith('/api/agent')) { await agentApi(req, res, url); return; }
+  if (url.startsWith('/api/agent') || url.startsWith('/api/mcp')) { await agentApi(req, res, url); return; }
 
   res.writeHead(404, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ error: { message: 'not found' } }));

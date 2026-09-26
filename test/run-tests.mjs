@@ -1144,7 +1144,7 @@ writeFileSync(tmpPng, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAACCRR8pA
 
 const child = spawn(process.execPath, ['web.mjs'], {
   cwd: join(__dirname, '..'),
-  env: { ...process.env, AURORAAGENT_BASE_URL: `http://127.0.0.1:${MOCK_PORT}`, PORT: String(WEB_PORT), NO_OPEN: '1', AURORAAGENT_API_KEY: 'ak-test-key', LOG_LEVEL: 'error', AURORAAGENT_DATA_DIR: tmpDataDir },
+  env: { ...process.env, AURORAAGENT_BASE_URL: `http://127.0.0.1:${MOCK_PORT}`, PORT: String(WEB_PORT), NO_OPEN: '1', AURORAAGENT_API_KEY: 'ak-test-key', LOG_LEVEL: 'error', AURORAAGENT_DATA_DIR: tmpDataDir, AURORAAGENT_EXPERIMENTAL_MCP: '1' },
   stdio: 'ignore',
 });
 await new Promise((r) => setTimeout(r, 1200));
@@ -1867,6 +1867,47 @@ await test('Agent turn：计划模式驳回后不执行', async () => {
     body: JSON.stringify({ sessionId: s.id, decision: 'approve' }),
   });
   eq((await again.json()).ok, false, '无等待中的计划请求应返回 ok:false');
+});
+
+await test('MCP：注册 mock 服务器并经 Agent turn 调用其工具（实验特性）', async () => {
+  const created = await fetch(`${BASE}/api/mcp/servers`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: 'mock', name: 'Mock MCP', transport: 'stdio', command: process.execPath, args: [join(__dirname, 'mock-mcp-server.mjs')] }),
+  });
+  eq(created.status, 200, '注册应成功');
+  const list = await (await fetch(`${BASE}/api/mcp/servers`)).json();
+  const row = list.servers.find((s) => s.id === 'mock');
+  assert(row && row.connected && row.tools === 2, 'mock 服务器应连接并发现 2 个工具');
+  const bad = await fetch(`${BASE}/api/mcp/servers`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: '坏 id', transport: 'stdio' }),
+  });
+  eq(bad.status, 400, '非法草稿应 400');
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_MCP 调用 MCP 工具' }),
+  });
+  const stream = openAgentStream(resp);
+  const head = await drainAgentStream(stream, { until: (ev) => ev.type === 'tool_event' && ev.phase === 'confirmation_needed' });
+  const askEv = head.find((e) => e.phase === 'confirmation_needed');
+  assert(askEv && askEv.toolName === 'mcp__mock__echo', 'MCP 工具默认应询问授权');
+  await fetch(`${AGENT}/permission`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId: askEv.requestId, decision: 'allow' }),
+  });
+  const tail = await drainAgentStream(stream);
+  const all = [...head, ...tail];
+  const done = all.find((e) => e.type === 'tool_event' && e.phase === 'completed' && e.toolName === 'mcp__mock__echo');
+  assert(done && String(done.output).includes('MCP回声:来自模型的调用'), 'MCP 工具应执行并回传文本');
+  assert(all.at(-1).type === 'turn_completed', '应以 turn_completed 收尾');
+  const detail = await (await fetch(`${AGENT}/sessions/${s.id}`)).json();
+  const rec = detail.records.find((x) => x.t === 'tool_result' && x.name === 'mcp__mock__echo');
+  assert(rec && rec.ok && String(rec.output).includes('MCP回声'), '转录应留 MCP 工具结果');
+  const del = await fetch(`${BASE}/api/mcp/servers/mock`, { method: 'DELETE' });
+  eq((await del.json()).removed, 1, '删除应生效');
+  const after = await (await fetch(`${BASE}/api/mcp/servers`)).json();
+  eq(after.servers.find((s2) => s2.id === 'mock'), undefined, '删除后不应再列出');
 });
 
 await test('Agent turn：空输入 400、未知会话 404', async () => {
