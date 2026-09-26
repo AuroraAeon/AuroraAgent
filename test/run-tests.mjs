@@ -1889,6 +1889,15 @@ await test('MCP：注册 mock 服务器并经 Agent turn 调用其工具（实�
   const list = await (await fetch(`${BASE}/api/mcp/servers`)).json();
   const row = list.servers.find((s) => s.id === 'mock');
   assert(row && row.connected && row.tools === 2, 'mock 服务器应连接并发现 2 个工具');
+  const s0 = await createAgentSession();
+  const resp0 = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s0.id, input: 'USE_MCP 调用 MCP 工具' }),
+  });
+  await drainAgentStream(openAgentStream(resp0), { until: (ev) => ev.type === 'tool_event' && ev.phase === 'confirmation_needed' });
+  const sentNames = (mock.state.lastChatBody?.tools || []).map((t) => t.function?.name || t.name);
+  assert(sentNames.includes('mcp__mock__echo'), 'MCP 工具 schema 应进入请求顶层 tools[]');
+  await fetch(`${AGENT}/abort`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: s0.id }) });
   const bad = await fetch(`${BASE}/api/mcp/servers`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: '坏 id', transport: 'stdio' }),

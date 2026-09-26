@@ -15,8 +15,7 @@ import { UsageLedger } from './util/usage.mjs';
 import { SERVICE_LOG, servicePid, isManaged, autostartInstalled } from './util/service.mjs';
 import { ProviderStore, ProviderError, handleProviderApi } from './util/providers.mjs';
 import { pumpSse, pumpTranslated } from './util/stream.mjs';
-import { buildChatRequest, anthropicFrame, fetchUpstream } from './util/wire.mjs';
-import { upstreamHint } from './util/llm/errors.mjs';
+import { openChatStream } from './util/llm/provider.mjs';
 import { createAgentApi } from './util/agent/http.mjs';
 import { resolveDataDir, loadConfig, PRICE } from './util/config.mjs';
 
@@ -366,30 +365,33 @@ const server = createServer(async (req, res) => {
         // 连接期退避重试：仅网络层失败且未产生任何字节时重试（借鉴 dsh retry-policy 的安全重试思想）
         // 内置提供方沿用全局 maxTokens/temperature/thinking；自定义提供方只在显式声明后发送，
         // 避免上游把未支持的字段当 400 拒绝
-        const wire = buildChatRequest(provider, {
-          model, messages,
-          sendThinking: provider.builtin || Boolean(provider.thinking),
-          thinkingOn: body.thinking !== false,
-          maxTokens: provider.builtin ? cfg.maxTokens : provider.maxTokens,
-          temperature: provider.builtin ? cfg.temperature : provider.temperature,
-        });
-        const upstream = await fetchUpstream(wire, {
-          signal: entry.controller.signal,
-          onRetry: (n, e) => log('warn', '上游连接失败，准备重试', { attempt: n, error: String(e) }),
-        });
-
-        if (!upstream.ok) {
-          const errText = await upstream.text();
-          const hint = upstreamHint(provider, upstream.status, errText);
-          log('warn', '上游错误', { status: upstream.status, provider: provider.id });
-          res.writeHead(upstream.status, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ error: { message: hint } }));
+        // LLM 抽象层统一入口（与 Agent Loop 同源）：构造请求 + 连接期重试 + 错误话术 + 帧翻译选择
+        let opened;
+        try {
+          opened = await openChatStream(provider, {
+            model, messages,
+            sendThinking: provider.builtin || Boolean(provider.thinking),
+            thinkingOn: body.thinking !== false,
+            maxTokens: provider.builtin ? cfg.maxTokens : provider.maxTokens,
+            temperature: provider.builtin ? cfg.temperature : provider.temperature,
+          }, {
+            signal: entry.controller.signal,
+            onRetry: (n, e) => log('warn', '上游连接失败，准备重试', { attempt: n, error: String(e) }),
+          });
+        } catch (e) {
+          // 上游非 2xx：原样透传状态码与中文提示；网络层异常走下方统一兜底
+          if (e?.kind) {
+            log('warn', '上游错误', { kind: e.kind, status: e.status, provider: provider.id });
+            res.writeHead(e.status || 502, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ error: { message: e.message } }));
+          }
+          throw e;
         }
 
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' });
-        reader = upstream.body.getReader();
+        reader = opened.reader;
         // Anthropic Messages 的帧形状不同，逐帧翻译成 OpenAI 兼容帧，前端零改动
-        if (provider.protocol === 'anthropic') await pumpTranslated(reader, res, entry, anthropicFrame);
+        if (opened.translate) await pumpTranslated(reader, res, entry, opened.translate);
         else await pumpSse(reader, res, entry);
         const rec = settleUsage(entry, Date.now() - started);
         log('info', '对话完成', { ms: rec.ms, inputTokens: rec.inputTokens, outputTokens: rec.outputTokens, cost: rec.cost, requestId });

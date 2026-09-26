@@ -8,8 +8,7 @@
  * 工具集执行；权限三档（permissionMode）叠加在规则集之上，见 policy.mjs。
  */
 import { randomUUID } from 'node:crypto';
-import { buildChatRequest, anthropicFrame, fetchUpstream } from '../wire.mjs';
-import { upstreamHint } from '../llm/errors.mjs';
+import { openChatStream } from '../llm/provider.mjs';
 import { consumeAgentStream } from '../stream.mjs';
 import { resolveTool, toolResource } from './tools.mjs';
 import { PermissionPolicy, defaultRules } from './policy.mjs';
@@ -92,11 +91,9 @@ export async function runAgentTurn(ctx) {
     if (!plan) return;
     emit('context_compression_started', { sessionId, turnId, headRecords: plan.head.length });
     try {
-      const wire = buildChatRequest(provider, { model, messages: compactionMessages(plan.head), maxTokens: 1024 });
-      const upstream = await fetchUpstream(wire, { signal: controller.signal });
-      if (!upstream.ok) throw new Error('HTTP ' + upstream.status);
+      const opened = await openChatStream(provider, { model, messages: compactionMessages(plan.head), maxTokens: 1024 }, { signal: controller.signal });
       let summary = '';
-      await consumeAgentStream(upstream.body.getReader(), { controller, usage: null }, { onText: (t) => { summary += t; } });
+      await consumeAgentStream(opened.reader, { controller, usage: null }, { onText: (t) => { summary += t; } }, { translate: opened.translate });
       if (!summary.trim()) throw new Error('压缩结果为空');
       store.replaceRecords(sessionId, [{ t: 'summary', text: summary.trim() }, ...plan.tail]);
       records = store.records(sessionId);
@@ -139,28 +136,32 @@ export async function runAgentTurn(ctx) {
     await maybeCompact();
     messages = assembleMessages({ harness, workspace: session.workspace, records, skills, extraSystem });
     emit('model_round_started', { sessionId, turnId, round });
-    const wire = buildChatRequest(provider, {
-      model, messages, toolNames,
-      sendThinking: provider.builtin || Boolean(provider.thinking),
-      thinkingOn: gen.thinkingOn !== false,
-      maxTokens: provider.builtin ? gen.maxTokens : provider.maxTokens,
-      temperature: provider.builtin ? gen.temperature : provider.temperature,
-    });
-    const upstream = await fetchUpstream(wire, { signal: controller.signal, onRetry: (n, e) => log('warn', '上游连接失败，准备重试', { attempt: n, error: String(e) }) });
-    if (!upstream.ok) {
-      const hint = upstreamHint(provider, upstream.status, await upstream.text());
-      log('warn', '上游错误', { status: upstream.status, provider: provider.id, sessionId });
-      emit('turn_failed', { sessionId, turnId, error: hint, round });
+    let opened;
+    try {
+      // LLM 抽象层统一入口：构造请求 + 连接期重试 + 中文错误话术 + 协议帧翻译选择；
+      // extraTools（MCP 等外部工具）的 schema 经此进入请求，模型才看得见这些工具
+      opened = await openChatStream(provider, {
+        model, messages, toolNames, extraTools,
+        sendThinking: provider.builtin || Boolean(provider.thinking),
+        thinkingOn: gen.thinkingOn !== false,
+        maxTokens: provider.builtin ? gen.maxTokens : provider.maxTokens,
+        temperature: provider.builtin ? gen.temperature : provider.temperature,
+      }, { signal: controller.signal, onRetry: (n, e) => log('warn', '上游连接失败，准备重试', { attempt: n, error: String(e) }) });
+    } catch (e) {
+      // 中止走统一取消路径（保留已生成内容）；其余（上游非 2xx / 网络失败）以 turn_failed 收尾
+      if (controller.signal.aborted || e?.name === 'AbortError') throw e;
+      log('warn', '上游错误', { kind: e.kind, status: e.status, provider: provider.id, sessionId });
+      emit('turn_failed', { sessionId, turnId, error: e.message, round });
       return { failed: true };
     }
     currentEntry = { controller, usage: null };
     let roundText = '';
     let roundThink = '';
-    const { toolCalls } = await consumeAgentStream(upstream.body.getReader(), currentEntry, {
+    const { toolCalls } = await consumeAgentStream(opened.reader, currentEntry, {
       onText: (t) => { roundText += t; emit('text_chunk', { sessionId, turnId, text: t }); },
       onThinking: (t) => { roundThink += t; emit('thinking_chunk', { sessionId, turnId, text: t }); },
       onToolCallDelta: (i, cur) => emit('tool_event', { sessionId, turnId, phase: 'params_partial', toolId: cur.id || `call_${i}`, toolName: cur.name, params: cur.args }),
-    }, { translate: provider.protocol === 'anthropic' ? anthropicFrame : undefined });
+    }, { translate: opened.translate });
     if (roundThink) store.append(sessionId, { t: 'thinking', text: roundThink });
     if (roundText) {
       store.append(sessionId, { t: 'assistant', text: roundText });
