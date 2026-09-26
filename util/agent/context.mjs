@@ -34,7 +34,7 @@ export function needsCompaction(messages, { windowTokens = DEFAULT_WINDOW, ratio
  * tool_call / tool_result 成对投影为 assistant.tool_calls + role:tool；
  * summary 记录投影为系统消息（早期摘要）；thinking / usage 不回填（省 token 且不污染上下文）。
  */
-export function assembleMessages({ harness, workspace, records = [], skills = [] }) {
+export function assembleMessages({ harness, workspace, records = [], skills = [], extraSystem = '' }) {
   const catalog = skillCatalogBlock(skills);
   const system = [
     harness.systemPrompt,
@@ -42,7 +42,7 @@ export function assembleMessages({ harness, workspace, records = [], skills = []
     `工作目录：${workspace}`,
     `当前时间：${new Date().toISOString()}`,
     '文件工具只能访问工作目录内的路径；修改用户文件前先说清将要改什么。',
-  ].join('\n') + (catalog ? `\n\n${catalog}` : '');
+  ].join('\n') + (catalog ? `\n\n${catalog}` : '') + (extraSystem ? `\n\n${extraSystem}` : '');
   const messages = [{ role: 'system', content: system }];
   const pending = [];
   const flushPending = () => {

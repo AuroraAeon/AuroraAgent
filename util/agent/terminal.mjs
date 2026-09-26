@@ -194,7 +194,7 @@ export async function runTerminal({ argv = [] } = {}) {
   const baseCommands = [
     { name: 'help', summary: '显示全部命令', run: printHelp },
     { name: 'new', summary: '新建会话（携带当前模型与模式）', run: () => {
-      const created = store.create({ model: meta.model, provider: meta.provider, harness: meta.harness });
+      const created = store.create({ model: meta.model, provider: meta.provider, harness: meta.harness, planMode: meta.planMode === true });
       meta = created;
       console.log(painter().dim(`✓ 新会话已创建：${created.name}`));
     } },
@@ -208,6 +208,11 @@ export async function runTerminal({ argv = [] } = {}) {
     } },
     { name: 'harness', argHint: '<模式>', summary: '切换模式（无参数弹出选择器）', run: cmdHarness },
     { name: 'theme', argHint: '<dark|light|auto>', summary: '切换终端主题（无参数弹出选择器）', run: cmdTheme },
+    { name: 'plan', argHint: 'on|off', summary: '计划模式开关（默认关；开启后下一轮先出计划，批准才执行）', run: (arg) => {
+      const on = arg !== 'off';
+      meta = store.patch(meta.id, { planMode: on }) || meta;
+      console.log(painter().dim(`✓ 计划模式已${on ? '开启（下一轮先出计划，y 批准后执行）' : '关闭'}`));
+    } },
     { name: 'think', argHint: 'on|off', summary: '思考过程开关（默认开）', run: (arg) => {
       cfg.thinking = arg !== 'off';
       console.log(painter().dim(`✓ 思考已${cfg.thinking ? '开启' : '关闭'}`));
@@ -244,6 +249,7 @@ export async function runTerminal({ argv = [] } = {}) {
     harness: getHarness(meta.harness).label,
     thinking: cfg.thinking,
     permissionMode: cfg.permissionMode,
+    planMode: meta.planMode === true,
     tokens: foot.tokens,
     cost: foot.cost,
   });

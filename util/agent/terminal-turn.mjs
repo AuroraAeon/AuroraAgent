@@ -23,6 +23,7 @@ export async function runTerminalTurn({ store, usage, session, input, provider, 
   let controller = null;
   let aborted = false;
   let pendingPerm = null;
+  let pendingPlan = null;
 
   const write = (s) => { process.stdout.write(s); atLineStart = s.endsWith('\n'); };
   const breakLine = () => { if (!atLineStart) write('\n'); };
@@ -31,8 +32,9 @@ export async function runTerminalTurn({ store, usage, session, input, provider, 
   const onSigint = () => {
     aborted = true;
     controller?.abort();
-    // 权限询问期间中断：按拒绝放行，让循环收尾成 turn_cancelled
+    // 权限 / 计划询问期间中断：按拒绝 / 驳回放行，让循环收尾成 turn_cancelled
     if (pendingPerm) pendingPerm('n');
+    if (pendingPlan) pendingPlan('n');
   };
   process.on('SIGINT', onSigint);
   if (hooks) hooks.abort = onSigint;
@@ -87,6 +89,22 @@ export async function runTerminalTurn({ store, usage, session, input, provider, 
         }
         break;
       }
+      case 'plan_proposed':
+        endToolLine();
+        breakLine();
+        write(`\n${painter.accent('  计划')}（只读探索产出，尚未执行任何修改）\n`);
+        write(painter.text(indent(String(p.plan || ''), 220)) + '\n');
+        break;
+      case 'plan_approved':
+        endToolLine();
+        breakLine();
+        write(painter.success('  计划已批准，进入执行') + '\n');
+        break;
+      case 'plan_rejected':
+        endToolLine();
+        breakLine();
+        write(painter.warning('  计划已驳回，未做任何修改') + '\n');
+        break;
       case 'token_usage_updated':
         endToolLine();
         breakLine();
@@ -135,6 +153,8 @@ export async function runTerminalTurn({ store, usage, session, input, provider, 
       store, usage, session, input, provider, model, harness, builtinPrice: PRICE,
       gen: { maxTokens: cfg.maxTokens, temperature: cfg.temperature, thinkingOn: cfg.thinking },
       emit, controller: turnController,
+      permissionMode: cfg.permissionMode,
+      planMode: session.planMode !== undefined ? session.planMode === true : cfg.planMode === true,
       // 权限询问与主输入共用同一条 line 通道（ask()），避免 readline 双消费；
       // 中断（Ctrl+C）时按拒绝放行，让循环收尾成 turn_cancelled
       requestPermission: ({ toolName, params, resource }) => new Promise((resolve) => {
@@ -147,6 +167,19 @@ export async function runTerminalTurn({ store, usage, session, input, provider, 
           resolve(a === 'a' || a === 'always' ? 'always' : a === 'n' || a === 'no' || a === '' ? 'deny' : 'allow');
         };
         ask().then((line) => { if (pendingPerm) pendingPerm(line); });
+      }),
+      // 计划决策与权限询问共用同一条 line 通道；Ctrl+C 按驳回放行
+      requestPlanDecision: ({ plan }) => new Promise((resolve) => {
+        write(`\n${painter.accent('  计划')}（只读探索产出，尚未执行任何修改）\n`);
+        write(painter.text(indent(String(plan || ''), 220)) + '\n');
+        write(`  [y]批准执行 [n]驳回 › `);
+        pendingPlan = (line) => {
+          pendingPlan = null;
+          atLineStart = true;
+          const a = String(line).trim().toLowerCase();
+          resolve(a === 'y' || a === 'yes' ? 'approve' : 'reject');
+        };
+        ask().then((line) => { if (pendingPlan) pendingPlan(line); });
       }),
       log: () => {},
     });

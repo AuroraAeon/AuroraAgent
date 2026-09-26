@@ -8,6 +8,7 @@ import { appendFileSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSyn
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_HARNESS } from './harness.mjs';
+import { DEFAULT_PERMISSION_MODE, PERMISSION_MODES } from '../config.mjs';
 
 const META_SUFFIX = '.meta.json';
 
@@ -20,7 +21,7 @@ export class SessionStore {
   }
 
   /** 新建会话；workspace 缺省为 <数据目录>/workspace，允许指定其他绝对路径 */
-  create({ name = '', model = '', provider = '', harness = DEFAULT_HARNESS, workspace = '' } = {}) {
+  create({ name = '', model = '', provider = '', harness = DEFAULT_HARNESS, workspace = '', permissionMode = '', planMode = false } = {}) {
     const id = randomUUID();
     const now = new Date().toISOString();
     const meta = {
@@ -34,6 +35,8 @@ export class SessionStore {
       updatedAt: now,
       turns: 0,
       rules: [],
+      permissionMode: PERMISSION_MODES.includes(permissionMode) ? permissionMode : DEFAULT_PERMISSION_MODE,
+      planMode: planMode === true,
       inputTokens: 0,
       outputTokens: 0,
       cost: 0,

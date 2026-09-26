@@ -9,6 +9,7 @@ import { runAgentTurn } from './loop.mjs';
 import { getHarness, harnessSummaries } from './harness.mjs';
 import { sseFrame } from './events.mjs';
 import { loadSkills } from './skills.mjs';
+import { PERMISSION_MODES } from '../config.mjs';
 
 const SESSION_RE = /^\/api\/agent\/sessions\/([0-9a-f-]{36})$/;
 
@@ -36,6 +37,7 @@ export function createAgentApi(deps) {
   const skills = loadSkills({ userDir: join(dataDir, 'skills') });
   const activeTurns = new Map(); // sessionId -> { controller }
   const pendingPermissions = new Map(); // requestId -> { resolve, sessionId }
+  const pendingPlans = new Map(); // sessionId -> { resolve }（计划模式等用户批准 / 驳回）
 
   return async function handleAgentApi(req, res, url) {
     if (req.method === 'GET' && url === '/api/agent/harnesses') {
@@ -60,6 +62,8 @@ export function createAgentApi(deps) {
         provider: provider.id,
         harness: harness.id,
         workspace: String(body.workspace || ''),
+        permissionMode: PERMISSION_MODES.includes(body.permissionMode) ? body.permissionMode : '',
+        planMode: body.planMode === true,
       });
       log('info', 'Agent 会话已创建', { sessionId: meta.id, harness: harness.id });
       return json(res, 200, { session: meta });
@@ -96,6 +100,13 @@ export function createAgentApi(deps) {
         }
         changes.harness = want;
       }
+      if (body.permissionMode !== undefined) {
+        if (!PERMISSION_MODES.includes(body.permissionMode)) {
+          return json(res, 400, { error: { message: `未知权限模式：${body.permissionMode}（可用 always_ask / ask_when_needed / never_ask）` } });
+        }
+        changes.permissionMode = body.permissionMode;
+      }
+      if (body.planMode !== undefined) changes.planMode = body.planMode === true;
       if (body.provider !== undefined) {
         const pid = String(body.provider || '');
         if (!/^[A-Za-z0-9._-]{1,64}$/.test(pid)) return json(res, 400, { error: { message: '提供方 ID 不合法' } });
@@ -107,7 +118,7 @@ export function createAgentApi(deps) {
         changes.model = model;
       }
       if (!Object.keys(changes).length) {
-        return json(res, 400, { error: { message: '没有可更新的字段（name / harness / model / provider）' } });
+        return json(res, 400, { error: { message: '没有可更新的字段（name / harness / model / provider / permissionMode / planMode）' } });
       }
       log('info', 'Agent 会话已更新', { sessionId: sessionMatch[1], changes: Object.keys(changes) });
       return json(res, 200, { meta: sessions.patch(sessionMatch[1], changes) });
@@ -132,6 +143,14 @@ export function createAgentApi(deps) {
       return json(res, 200, { ok: true });
     }
 
+    if (req.method === 'POST' && url === '/api/agent/plan') {
+      const body = await readBody(req, 64 * 1024);
+      const pending = pendingPlans.get(String(body.sessionId || ''));
+      if (!pending) return json(res, 200, { ok: false, reason: '没有等待中的计划请求（可能已超时或已处理）' });
+      pendingPlans.delete(String(body.sessionId || ''));
+      pending.resolve(body.decision === 'approve' ? 'approve' : 'reject');
+      return json(res, 200, { ok: true });
+    }
     if (req.method === 'POST' && url === '/api/agent/turn') {
       const body = await readBody(req, 10 * 1024 * 1024);
       const sessionId = String(body.sessionId || '');
@@ -146,6 +165,11 @@ export function createAgentApi(deps) {
       const model = pickModel(body.model, got.meta.model || cfg.model);
       const provider = resolveChatProvider(body.provider || got.meta.provider, model);
       const harness = getHarness(got.meta.harness);
+      // 权限三档 / 计划模式优先级：请求体 > 会话 meta > 全局配置（缺省等价现状）
+      const permissionMode = PERMISSION_MODES.includes(body.permissionMode) ? body.permissionMode
+        : PERMISSION_MODES.includes(got.meta.permissionMode) ? got.meta.permissionMode : cfg.permissionMode;
+      const planMode = body.planMode !== undefined ? body.planMode === true
+        : got.meta.planMode !== undefined ? got.meta.planMode === true : cfg.planMode === true;
       const controller = new AbortController();
       activeTurns.set(sessionId, { controller });
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' });
@@ -161,15 +185,20 @@ export function createAgentApi(deps) {
         for (const [id, p] of pendingPermissions) {
           if (p.sessionId === sessionId) { pendingPermissions.delete(id); p.resolve('deny'); }
         }
+        const waiting = pendingPlans.get(sessionId);
+        if (waiting) { pendingPlans.delete(sessionId); waiting.resolve('reject'); }
       };
       try {
         await runAgentTurn({
           store: sessions, usage, session: got.meta, input, provider, model, harness,
           builtinPrice, skills,
           gen: { maxTokens: cfg.maxTokens, temperature: cfg.temperature, thinkingOn: body.thinking !== false },
-          emit, controller,
+          emit, controller, permissionMode, planMode,
           requestPermission: ({ requestId }) => new Promise((resolve) => {
             pendingPermissions.set(requestId, { resolve, sessionId });
+          }),
+          requestPlanDecision: () => new Promise((resolve) => {
+            pendingPlans.set(sessionId, { resolve });
           }),
           log: (level, msg, extra) => log(level, msg, extra),
         });
