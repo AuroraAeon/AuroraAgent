@@ -64,7 +64,7 @@ console.log(`构建目标: ${APP}`);
 for (const f of ['web.mjs', 'chat.mjs', 'check.mjs', 'package.json', 'README.md']) {
   cpSync(join(ROOT, f), join(BUNDLE_APP, f));
 }
-for (const d of ['util', 'public', 'test', 'tools']) {
+for (const d of ['util', 'public', 'skills', 'test', 'tools']) {
   cpSync(join(ROOT, d), join(BUNDLE_APP, d), { recursive: true });
 }
 cpSync(join(ROOT, 'docs'), join(CONTENTS, 'Resources', 'docs'), { recursive: true });

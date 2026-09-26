@@ -27,6 +27,7 @@ import { runLlmTests } from './llm.mjs';
 import { runConfigTests } from './config.mjs';
 import { runTuiComponentTests } from './tui-components.mjs';
 import { runPickTests } from './pick.mjs';
+import { runSkillsTests } from './skills.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MOCK_PORT = 18901;
@@ -77,6 +78,7 @@ await runLlmTests(test, assert, eq);
 await runConfigTests(test, assert, eq);
 await runTuiComponentTests(test, assert, eq);
   await runPickTests(test, assert, eq);
+  await runSkillsTests(test, assert, eq);
 await runGuardTests(test, assert);
 
 // ---------- 单元测试: SseParser ----------
