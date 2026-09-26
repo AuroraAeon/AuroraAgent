@@ -73,6 +73,35 @@ export function createAgentApi(deps) {
     if (sessionMatch && req.method === 'DELETE') {
       return json(res, 200, { deleted: sessions.remove(sessionMatch[1]) });
     }
+    // 切换模式 / 改名 / 换模型：下一轮 turn 生效（进行中的 turn 不受影响）
+    if (sessionMatch && req.method === 'PATCH') {
+      const body = await readBody(req, 64 * 1024);
+      if (!sessions.get(sessionMatch[1])) return json(res, 404, { error: { message: '会话不存在或已删除' } });
+      const changes = {};
+      if (body.name !== undefined) changes.name = String(body.name || '').slice(0, 60) || '新会话';
+      if (body.harness !== undefined) {
+        const want = String(body.harness || '');
+        if (getHarness(want).id !== want) {
+          return json(res, 400, { error: { message: `未知模式：${want}（可用 minimal / standard / ultimate）` } });
+        }
+        changes.harness = want;
+      }
+      if (body.provider !== undefined) {
+        const pid = String(body.provider || '');
+        if (!/^[A-Za-z0-9._-]{1,64}$/.test(pid)) return json(res, 400, { error: { message: '提供方 ID 不合法' } });
+        changes.provider = pid;
+      }
+      if (body.model !== undefined) {
+        const model = pickModel(body.model, '');
+        if (!model) return json(res, 400, { error: { message: '模型 ID 不合法：只能用字母、数字与 . _ : -，最长 80 字符' } });
+        changes.model = model;
+      }
+      if (!Object.keys(changes).length) {
+        return json(res, 400, { error: { message: '没有可更新的字段（name / harness / model / provider）' } });
+      }
+      log('info', 'Agent 会话已更新', { sessionId: sessionMatch[1], changes: Object.keys(changes) });
+      return json(res, 200, { meta: sessions.patch(sessionMatch[1], changes) });
+    }
 
     if (req.method === 'POST' && url === '/api/agent/abort') {
       const body = await readBody(req, 64 * 1024);

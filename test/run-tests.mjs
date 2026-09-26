@@ -1211,6 +1211,36 @@ await test('Agent 会话：创建 / 列表 / 详情 / 删除', async () => {
   eq((await fetch(`${AGENT}/sessions/${s.id}`)).status, 404, '删除后详情 404');
 });
 
+await test('PATCH /api/agent/sessions/:id 切换模式 / 改名 / 换模型', async () => {
+  const s = await createAgentSession();
+  const j = await (await fetch(`${AGENT}/sessions/${s.id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ harness: 'ultimate', name: '改名后的会话', model: 'LongCat-2.0' }),
+  })).json();
+  eq(j.meta.harness, 'ultimate', '模式应切换为 ultimate');
+  eq(j.meta.name, '改名后的会话');
+  eq(j.meta.model, 'LongCat-2.0');
+  const bad = await fetch(`${AGENT}/sessions/${s.id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ harness: 'creative' }),
+  });
+  eq(bad.status, 400, '未知模式应 400');
+  const badModel = await fetch(`${AGENT}/sessions/${s.id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: '坏模型/带斜杠' }),
+  });
+  eq(badModel.status, 400, '非法模型 ID 应 400');
+  const empty = await fetch(`${AGENT}/sessions/${s.id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  eq(empty.status, 400, '空补丁应 400');
+  const detail = await (await fetch(`${AGENT}/sessions/${s.id}`)).json();
+  eq(detail.meta.harness, 'ultimate', '失败的 PATCH 不应改动会话');
+  eq((await fetch(`${AGENT}/sessions/nope`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 404, '未知会话 404');
+  await fetch(`${AGENT}/sessions/${s.id}`, { method: 'DELETE' });
+});
+
 await test('Agent turn：只读工具默认放行，无需确认即执行', async () => {
   const ws = join(tmpDataDir, 'workspace');
   mkdirSync(ws, { recursive: true });
