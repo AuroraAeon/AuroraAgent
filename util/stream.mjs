@@ -10,10 +10,13 @@ function abortRaceFor(controller) {
   let rejectOnAbort;
   const race = new Promise((_, reject) => { rejectOnAbort = reject; });
   race.catch(() => {}); // 防止循环正常结束后才 abort 导致未处理的拒绝
-  controller.signal.addEventListener('abort', () => {
+  const onAbort = () => {
     const reason = controller.signal.reason;
     rejectOnAbort(reason instanceof Error ? reason : new Error('已中止'));
-  }, { once: true });
+  };
+  // 信号已中止时 addEventListener 不会再触发，必须立即拒绝，否则读取挂死
+  if (controller.signal.aborted) onAbort();
+  else controller.signal.addEventListener('abort', onAbort, { once: true });
   return race;
 }
 

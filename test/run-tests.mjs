@@ -18,6 +18,8 @@ import { SessionStore } from '../util/agent/session.mjs';
 import { getTool, toolSchemas, anthropicToolSchemas, toolResource, resolveInside } from '../util/agent/tools.mjs';
 import { PermissionPolicy, defaultRules, mostRestrictive } from '../util/agent/policy.mjs';
 import { assembleMessages, needsCompaction, planCompaction, compactionMessages, contextWindowOf, estimateMessagesTokens } from '../util/agent/context.mjs';
+import { runAgentTurn } from '../util/agent/loop.mjs';
+import { UsageLedger } from '../util/usage.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MOCK_PORT = 18901;
@@ -531,6 +533,229 @@ await test('上下文压缩：阈值判定与头尾切分', () => {
   assert(cm[1].content.includes('问题0'), '总结输入应含早期对话');
   eq(contextWindowOf({}), 128000, '未声明窗口回退 128k');
   eq(contextWindowOf({ capacity: { contextWindow: 262144 } }), 262144, '应读取提供方声明窗口');
+});
+
+// ---------- 单元测试: Agent Loop ----------
+console.log('\nAgent Loop 单元测试（stub fetch）');
+
+/** 构造 SSE 响应（真实 Response + ReadableStream，loop 用 getReader 消费） */
+function sseResp(frames, status = 200) {
+  const stream = new ReadableStream({
+    start(c) {
+      for (const f of frames) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(f)}\n\n`));
+      c.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+      c.close();
+    },
+  });
+  return new Response(stream, { status, headers: { 'Content-Type': 'text/event-stream' } });
+}
+const textFrames = (txt) => [
+  { choices: [{ index: 0, delta: { content: txt } }] },
+  { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 5 } },
+];
+const toolFrames = (name, args) => [
+  { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_t1', type: 'function', function: { name, arguments: JSON.stringify(args) } }] } }] },
+  { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 12, completion_tokens: 8 } },
+];
+
+/** 一次性 loop 运行环境：临时数据目录 + stub fetch + 事件收集 */
+async function runLoopOnce({ framesByCall, harness = getHarness('standard'), permission = 'allow', seedRecords = [], providerExtra = {}, input = '开始' }) {
+  const dir = mkdtempSync(join(tmpdir(), 'mt-loop-'));
+  const ws = join(dir, 'workspace');
+  mkdirSync(ws, { recursive: true });
+  const store = new SessionStore(dir);
+  const usage = new UsageLedger(dir);
+  const session = store.create({ model: 'm1', harness: harness.id, workspace: ws });
+  for (const r of seedRecords) store.append(session.id, r);
+  const events = [];
+  const requests = [];
+  const provider = { id: 'p1', name: '测试提供方', protocol: 'openai', baseUrl: 'https://up.test', pathPrefix: '/v1', apiKey: 'k', ...providerExtra };
+  const realFetch = globalThis.fetch;
+  let call = 0;
+  globalThis.fetch = async (url, opts = {}) => {
+    requests.push({ url: String(url), body: JSON.parse(opts.body || '{}'), signal: opts.signal });
+    if (opts.signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
+    const scripted = typeof framesByCall === 'function' ? framesByCall(call, requests.at(-1)) : framesByCall[Math.min(call, framesByCall.length - 1)];
+    call++;
+    if (scripted instanceof Response) return scripted;
+    if (Array.isArray(scripted)) return sseResp(scripted);
+    return sseResp(scripted.frames, scripted.status);
+  };
+  const controller = new AbortController();
+  let permCalls = 0;
+  const result = await runAgentTurn({
+    store, usage, session, input, provider, model: 'm1', harness,
+    builtinPrice: { input: 2, output: 8 },
+    emit: (type, payload) => events.push({ type, ...payload }),
+    controller,
+    requestPermission: async () => { permCalls++; return permission; },
+    log: () => {},
+  }).finally(() => { globalThis.fetch = realFetch; });
+  return { dir, ws, store, usage, session, events, requests, result, permCalls };
+}
+
+await test('Loop：无工具轮直接出终稿并记账', async () => {
+  const { events, store, usage, result, requests } = await runLoopOnce({
+    framesByCall: [textFrames('你好，世界')],
+    harness: getHarness('minimal'),
+  });
+  const types = events.map((e) => e.type);
+  assert(types.includes('turn_started') && types.includes('model_round_started'), '应有 turn 与轮次开始事件');
+  assert(types.includes('text_chunk'), '应有文本增量事件');
+  assert(types.includes('token_usage_updated'), '应有用量事件');
+  assert(types.at(-1) === 'turn_completed', '应以 turn_completed 收尾');
+  eq(result.text, '你好，世界');
+  eq(result.tools, 0);
+  const recs = store.records(result.sessionId || events[0].sessionId);
+  assert(recs.some((r) => r.t === 'user' && r.text === '开始'), '用户消息应落转录');
+  assert(recs.some((r) => r.t === 'assistant' && r.text === '你好，世界'), '回答应落转录');
+  assert(recs.some((r) => r.t === 'usage' && r.inputTokens === 10), '用量应落转录');
+  eq(usage.read().length, 1, '账本应记 1 条');
+  eq(usage.read()[0].kind, 'agent');
+  eq(requests[0].body.tools, undefined, 'minimal 模式不应带 tools');
+});
+
+await test('Loop：工具轮经权限允许后执行并回填结果', async () => {
+  const { ws, store, events, result, requests, permCalls } = await runLoopOnce({
+    framesByCall: [toolFrames('write_file', { path: 'out/a.txt', content: 'LOOP_OK' }), textFrames('写好了')],
+    permission: 'allow',
+  });
+  eq(readFileSync(join(ws, 'out/a.txt'), 'utf8'), 'LOOP_OK', '工具应真实落盘');
+  const phases = events.filter((e) => e.type === 'tool_event').map((e) => e.phase);
+  assert(phases.includes('started') && phases.includes('confirmation_needed') && phases.includes('confirmed') && phases.includes('completed'), `工具事件阶段应完整: ${phases.join(',')}`);
+  eq(permCalls, 1, '应询问一次权限');
+  eq(result.tools, 1);
+  eq(result.text, '写好了');
+  const second = requests[1].body.messages;
+  const toolMsg = second.find((m) => m.role === 'tool');
+  assert(toolMsg, '第二轮应带回工具结果消息');
+  assert(toolMsg.content.includes('LOOP_OK') || toolMsg.content.includes('已写入'), '工具结果应回填给模型');
+  const asst = second.find((m) => m.role === 'assistant' && m.tool_calls);
+  eq(asst.tool_calls[0].function.name, 'write_file');
+  const recs = store.records(events[0].sessionId);
+  assert(recs.some((r) => r.t === 'tool_result' && r.ok), '工具结果应落转录');
+});
+
+await test('Loop：权限拒绝后循环继续，模型看到拒绝原因', async () => {
+  const { events, result, requests, permCalls } = await runLoopOnce({
+    framesByCall: [toolFrames('shell', { command: 'echo hi' }), textFrames('好的，不执行')],
+    permission: 'deny',
+  });
+  const phases = events.filter((e) => e.type === 'tool_event').map((e) => e.phase);
+  assert(phases.includes('rejected'), '应有 rejected 阶段');
+  assert(!phases.includes('completed'), '拒绝后不应执行');
+  eq(permCalls, 1);
+  eq(result.text, '好的，不执行');
+  const toolMsg = requests[1].body.messages.find((m) => m.role === 'tool');
+  assert(toolMsg.content.includes('用户拒绝'), '模型应看到拒绝原因');
+});
+
+await test('Loop：总是允许沉淀为会话规则，同类调用不再询问', async () => {
+  const { store, events, permCalls, result } = await runLoopOnce({
+    framesByCall: [toolFrames('write_file', { path: 'b.txt', content: '1' }), toolFrames('write_file', { path: 'b.txt', content: '2' }), textFrames('完成')],
+    permission: 'always',
+  });
+  eq(permCalls, 1, '只有第一次应询问');
+  const meta = store.list()[0];
+  eq(meta.rules.length, 1, '应沉淀 1 条会话规则');
+  eq(meta.rules[0].effect, 'allow');
+  const phases = events.filter((e) => e.type === 'tool_event').map((e) => e.phase);
+  eq(phases.filter((p) => p === 'confirmation_needed').length, 1, 'confirmation_needed 只应出现一次');
+  eq(result.tools, 2);
+});
+
+await test('Loop：中断保留已生成内容并发 turn_cancelled', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mt-loop-abort-'));
+  const ws = join(dir, 'workspace');
+  mkdirSync(ws, { recursive: true });
+  const store = new SessionStore(dir);
+  const session = store.create({ model: 'm1', harness: 'standard', workspace: ws });
+  const events = [];
+  const controller = new AbortController();
+  const realFetch = globalThis.fetch;
+  let call = 0;
+  globalThis.fetch = async (url, opts = {}) => {
+    call++;
+    if (call === 1) return sseResp(toolFrames('shell', { command: 'echo hi' }));
+    // 第二轮：模拟一个拖尾的流，等 abort 赛赢
+    const stream = new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: '半句' } }] })}\n\n`)); } });
+    return new Response(stream, { status: 200 });
+  };
+  const p = runAgentTurn({
+    store, usage: new UsageLedger(dir), session, input: '跑命令', provider: { id: 'p1', name: 'p', protocol: 'openai', baseUrl: 'https://up.test', pathPrefix: '/v1', apiKey: 'k' },
+    model: 'm1', harness: getHarness('standard'), builtinPrice: { input: 2, output: 8 },
+    emit: (type, payload) => events.push({ type, ...payload }),
+    controller,
+    requestPermission: () => new Promise(() => {}), // 永不回应，等 abort
+    log: () => {},
+  });
+  setTimeout(() => controller.abort(), 60);
+  const result = await p.finally(() => { globalThis.fetch = realFetch; });
+  eq(result.cancelled, true, '应标记取消');
+  assert(events.some((e) => e.type === 'turn_cancelled'), '应发 turn_cancelled');
+  const texts = events.filter((e) => e.type === 'text_chunk').map((e) => e.text).join('');
+  assert(texts.includes('半句'), '已生成内容应保留');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+await test('Loop：上下文超限时先压缩再继续', async () => {
+  const seed = [];
+  for (let i = 0; i < 12; i++) {
+    seed.push({ t: 'user', text: `第${i}个问题，${'x'.repeat(120)}` });
+    seed.push({ t: 'assistant', text: `第${i}个回答，${'y'.repeat(120)}` });
+  }
+  const { store, events, requests, result } = await runLoopOnce({
+    seedRecords: seed,
+    framesByCall: [textFrames('【摘要】早期讨论了十二个问题'), textFrames('压缩后继续回答')],
+    providerExtra: { capacity: { contextWindow: 600 } },
+  });
+  const types = events.map((e) => e.type);
+  assert(types.includes('context_compression_started'), '应发压缩开始事件');
+  assert(types.includes('context_compression_completed'), '应发压缩完成事件');
+  eq(requests[0].body.messages[0].role, 'system', '第一次调用应是压缩请求');
+  assert(requests[0].body.messages[1].content.includes('第0个问题'), '压缩输入应含早期对话');
+  assert(requests[1].body.messages.some((m) => typeof m.content === 'string' && m.content.includes('【摘要】')), '主轮次应带上摘要');
+  const recs = store.records(events[0].sessionId);
+  eq(recs[0].t, 'summary', '重写后转录应以 summary 打头');
+  eq(result.text, '压缩后继续回答');
+});
+
+await test('Loop：上游 401 映射为中文错误并以 turn_failed 收尾', async () => {
+  const { events, result } = await runLoopOnce({
+    framesByCall: [{ status: 401, frames: [] }],
+  });
+  const failed = events.find((e) => e.type === 'turn_failed');
+  assert(failed, '应发 turn_failed');
+  assert(failed.error.includes('API Key 无效'), `错误应说清原因: ${failed.error}`);
+  eq(result.failed, true);
+});
+
+await test('Loop：触顶轮次上限以 max_rounds 收尾', async () => {
+  const harness = { id: 'test-cap', label: 'Test', summary: 'x', tools: ['read_file'], maxRounds: 2, compactRatio: 0.99, systemPrompt: 'x' };
+  const { events, result } = await runLoopOnce({
+    framesByCall: [toolFrames('read_file', { path: 'nope.txt' })],
+    harness,
+  });
+  eq(result.tools, 2, '应跑满 2 轮各 1 次工具');
+  const done = events.find((e) => e.type === 'turn_completed');
+  eq(done.finishReason, 'max_rounds');
+});
+
+await test('Loop：未知工具与坏参数不中断循环', async () => {
+  const { events, result, requests } = await runLoopOnce({
+    framesByCall: [
+      [{ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'c1', type: 'function', function: { name: 'no_such_tool', arguments: '{}' } }] } }] }, { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 1, completion_tokens: 1 } }],
+      [{ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'c2', type: 'function', function: { name: 'read_file', arguments: 'not-json' } }] } }] }, { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 1, completion_tokens: 1 } }],
+      textFrames('兜底完成'),
+    ],
+  });
+  eq(result.tools, 2);
+  eq(result.text, '兜底完成');
+  const failedPhases = events.filter((e) => e.type === 'tool_event' && e.phase === 'failed').length;
+  eq(failedPhases, 2, '两次异常调用都应报 failed');
+  const toolMsgs = requests[2].body.messages.filter((m) => m.role === 'tool');
+  eq(toolMsgs.length, 2, '两轮工具结果都应回填');
+  assert(toolMsgs[0].content.includes('未知工具'), '未知工具应给出可用清单');
 });
 
 // ---------- e2e ----------

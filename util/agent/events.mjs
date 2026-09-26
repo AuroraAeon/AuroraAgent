@@ -15,6 +15,7 @@ export const EVENT_TYPES = [
   'token_usage_updated',
   'context_compression_started',
   'context_compression_completed',
+  'context_compression_failed',
   'turn_completed',
   'turn_cancelled',
   'turn_failed',

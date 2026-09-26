@@ -11,7 +11,7 @@ const DEFAULT_WINDOW = 128000;
 /** 提供方声明的上下文窗口；未声明或非法时回退 128k */
 export function contextWindowOf(provider) {
   const n = Number(provider?.capacity?.contextWindow);
-  return Number.isFinite(n) && n > 1000 ? n : DEFAULT_WINDOW;
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_WINDOW;
 }
 
 /** 估算整段消息序列的 token 占用（内容序列化后约 4 字符 1 token，外加每条固定开销） */

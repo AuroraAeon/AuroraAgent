@@ -49,10 +49,11 @@ export class PermissionPolicy {
     return EFFECTS.includes(effect) ? effect : 'ask';
   }
 
-  /** 「总是允许」：在会话规则里沉淀一条 allow（精确资源），立即生效 */
+  /** 「总是允许」：在会话规则里沉淀一条 allow（精确资源），立即生效；返回新规则供调用方持久化 */
   grantAlways(action, resource) {
-    this.rules = [...this.rules, { action: String(action), resource: String(resource), effect: 'allow' }];
-    return this.rules.length;
+    const rule = { action: String(action), resource: String(resource), effect: 'allow' };
+    this.rules = [...this.rules, rule];
+    return rule;
   }
 
   /** 序列化（随会话持久化到 meta.rules） */
