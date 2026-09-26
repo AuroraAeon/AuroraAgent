@@ -6,7 +6,7 @@
  */
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { spawn } from 'node:child_process';
-import { resolve, sep, dirname } from 'node:path';
+import { resolve, sep, dirname, join, relative } from 'node:path';
 import { toOpenAIFunction, toAnthropicTool } from '../llm/tool.mjs';
 import { findSkill } from './skills.mjs';
 
@@ -39,6 +39,56 @@ function truncate(text, limit = MAX_OUTPUT) {
 function numbered(lines, from) {
   const width = String(from + lines.length - 1).length;
   return lines.map((l, i) => `${String(from + i).padStart(width)}  ${l}`).join('\n');
+}
+
+/** 检索类工具共享的目录遍历：跳过版本库 / 依赖 / 构建产物等噪音目录，回调每个文件绝对路径 */
+const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', '.venv', '__pycache__', '.next', 'coverage', 'public/app']);
+const MAX_FILE_BYTES = 512 * 1024;
+
+function walkFiles(root, onFile) {
+  let entries;
+  try { entries = readdirSync(root, { withFileTypes: true }); } catch { return; }
+  for (const ent of entries) {
+    const abs = join(root, ent.name);
+    if (ent.isDirectory()) {
+      if (!SKIP_DIRS.has(ent.name)) walkFiles(abs, onFile);
+    } else if (ent.isFile()) {
+      onFile(abs);
+    }
+  }
+}
+
+/** 读文本文件；二进制（含 NUL）或超限返回 null */
+function readTextFile(abs) {
+  try {
+    const st = statSync(abs);
+    if (!st.isFile() || st.size > MAX_FILE_BYTES) return null;
+    const raw = readFileSync(abs, 'utf8');
+    if (raw.slice(0, 8000).includes('\0')) return null;
+    return raw;
+  } catch { return null; }
+}
+
+/** 文件名 glob（仅 * 与 ?）转正则（大小写不敏感） */
+function fileGlobRe(pattern) {
+  const re = String(pattern || '').split('').map((ch) => (ch === '*' ? '[^/]*' : ch === '?' ? '[^/]' : ch.replace(/[.+^${}()|[\]\\]/g, '\\$&'))).join('');
+  return new RegExp(`(^|/)${re}$`, 'i');
+}
+
+/** 路径 glob 转正则：星号星号跨目录（含尾随斜杠时可匹配零层）、单星号匹配一段、问号匹配单字符 */
+export function globToRegExp(pattern) {
+  const p = String(pattern || '');
+  let re = '';
+  for (let i = 0; i < p.length; i++) {
+    const ch = p[i];
+    if (ch === '*' && p[i + 1] === '*') {
+      i++;
+      if (p[i + 1] === '/') { re += '(?:.*/)?'; i++; } else re += '.*';
+    } else if (ch === '*') re += '[^/]*';
+    else if (ch === '?') re += '[^/]';
+    else re += ch.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  }
+  return new RegExp(`^${re}$`);
 }
 
 export const TOOLS = [
@@ -202,6 +252,76 @@ export const TOOLS = [
     },
   },
 
+  {
+    name: 'grep',
+    description: '在工作目录内按正则搜索文件内容，返回 文件:行号: 内容；自动跳过 .git / node_modules / 构建产物，二进制文件不搜',
+    action: 'grep',
+    parameters: {
+      type: 'object',
+      properties: {
+        pattern: { type: 'string', description: '正则表达式（JavaScript 语法，大小写敏感）' },
+        path: { type: 'string', description: '搜索起点（相对工作目录），省略则整个工作目录' },
+        glob: { type: 'string', description: '文件名过滤（如 *.mjs），省略则所有文本文件' },
+        max_results: { type: 'integer', description: '最多返回的匹配条数，默认 50，上限 200' },
+      },
+      required: ['pattern'],
+    },
+    run(args, ctx) {
+      let re;
+      try { re = new RegExp(String(args.pattern || '')); } catch (e) { throw new ToolError(`正则无效：${e.message}`, 'bad_args'); }
+      const root = resolveInside(ctx.workspace, args.path || '.');
+      const nameRe = args.glob ? fileGlobRe(args.glob) : null;
+      const cap = Math.min(200, Math.max(1, Number(args.max_results) || 50));
+      const hits = [];
+      let scanned = 0;
+      walkFiles(root, (abs) => {
+        if (hits.length >= cap) return;
+        if (nameRe && !nameRe.test(relative(root, abs).split('/').pop())) return;
+        const text = readTextFile(abs);
+        if (text == null) return;
+        scanned++;
+        const rel = relative(ctx.workspace, abs) || '.';
+        const lines = text.split('\n');
+        for (let i = 0; i < lines.length && hits.length < cap; i++) {
+          if (re.test(lines[i])) hits.push(`${rel}:${i + 1}: ${lines[i].trimEnd().slice(0, 300)}`);
+        }
+      });
+      if (!hits.length) return `未匹配到 /${args.pattern}/（扫描 ${scanned} 个文本文件）`;
+      const more = hits.length >= cap ? `\n[已达上限 ${cap} 条，缩小 pattern 或 path 后重试]` : '';
+      return truncate(`匹配 ${hits.length} 条（扫描 ${scanned} 个文本文件）：\n${hits.join('\n')}${more}`);
+    },
+  },
+  {
+    name: 'glob',
+    description: '按文件名模式在工作目录内查找文件（** 跨目录、* 匹配一段、? 匹配单字符），返回相对路径列表',
+    action: 'glob',
+    parameters: {
+      type: 'object',
+      properties: {
+        pattern: { type: 'string', description: 'glob 模式，如 **/*.mjs、src/*.ts、package.json' },
+        path: { type: 'string', description: '搜索起点（相对工作目录），省略则工作目录根' },
+      },
+      required: ['pattern'],
+    },
+    run(args, ctx) {
+      const pattern = String(args.pattern || '').trim();
+      if (!pattern) throw new ToolError('pattern 不能为空', 'bad_args');
+      const root = resolveInside(ctx.workspace, args.path || '.');
+      const hasSlash = pattern.includes('/');
+      const re = globToRegExp(pattern);
+      const out = [];
+      walkFiles(root, (abs) => {
+        if (out.length >= 500) return;
+        const rel = relative(root, abs).split(sep).join('/');
+        const target = hasSlash ? rel : rel.split('/').pop();
+        if (re.test(target)) out.push(relative(ctx.workspace, abs).split(sep).join('/'));
+      });
+      out.sort();
+      if (!out.length) return `未匹配到 ${pattern}`;
+      const more = out.length >= 500 ? `\n[已达上限 500 条，缩小 pattern 后重试]` : '';
+      return truncate(`匹配 ${out.length} 个文件：\n${out.join('\n')}${more}`);
+    },
+  },
   {
     name: 'skill',
     description: '加载一个技能的完整指令。当用户请求与系统提示技能目录里某个技能的描述匹配时调用；返回的文本是本次任务必须遵循的规范',

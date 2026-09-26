@@ -509,6 +509,41 @@ await test('工具 schema：OpenAI 与 Anthropic 两种形状', () => {
   eq(toolResource('read_file', { path: 'a.txt' }), 'a.txt', '文件类资源取路径');
 });
 
+await test('检索工具：grep / glob 真实查找与预算截断', async () => {
+  const wsRoot = mkdtempSync(join(tmpdir(), 'aurora-search-'));
+  const ws = join(wsRoot, 'workspace');
+  mkdirSync(join(ws, 'src', 'deep'), { recursive: true });
+  writeFileSync(join(ws, 'src', 'a.mjs'), 'const NEEDLE = 1;\nconsole.log(NEEDLE);\n');
+  writeFileSync(join(ws, 'src', 'deep', 'b.mjs'), '// 无关文件\n');
+  writeFileSync(join(ws, 'notes.txt'), 'NEEDLE 在文本里\n');
+  const grep = getTool('grep');
+  const hit = await grep.run({ pattern: 'NEEDLE' }, { workspace: ws });
+  assert(hit.includes('src/a.mjs:1') && hit.includes('src/a.mjs:2') && hit.includes('notes.txt:1'), '应带 文件:行号 且跨目录');
+  assert(!hit.includes('b.mjs'), '不含匹配的文件不该出现');
+  const filtered = await grep.run({ pattern: 'NEEDLE', glob: '*.txt' }, { workspace: ws });
+  assert(filtered.includes('notes.txt') && !filtered.includes('a.mjs'), 'glob 过滤应按文件名生效');
+  const capped = await grep.run({ pattern: 'NEEDLE', max_results: 1 }, { workspace: ws });
+  assert(capped.includes('已达上限 1 条'), '预算上限应有提示');
+  const none = await grep.run({ pattern: '绝对不存在XYZ' }, { workspace: ws });
+  assert(none.includes('未匹配到'), '无匹配给明确空态');
+  let threw = false;
+  try { await grep.run({ pattern: '([' }, { workspace: ws }); } catch (e) { threw = e.code === 'bad_args'; }
+  assert(threw, '非法正则应报 bad_args');
+  const glob = getTool('glob');
+  const found = await glob.run({ pattern: '**/*.mjs' }, { workspace: ws });
+  assert(found.includes('src/a.mjs') && found.includes('src/deep/b.mjs'), 'glob 应跨目录');
+  assert(!found.includes('notes.txt'), 'glob 应按扩展名过滤');
+  const named = await glob.run({ pattern: 'notes.txt' }, { workspace: ws });
+  assert(named.includes('notes.txt'), '无斜杠模式匹配 basename');
+  let escaped = false;
+  try { await glob.run({ pattern: 'passwd', path: '../../..' }, { workspace: ws }); } catch (e) { escaped = e.code === 'path_escape'; }
+  assert(escaped, 'glob 起点应受路径禁锢');
+  let escaped2 = false;
+  try { await grep.run({ pattern: 'root', path: '/etc' }, { workspace: ws }); } catch (e) { escaped2 = e.code === 'path_escape'; }
+  assert(escaped2, 'grep 起点应受路径禁锢');
+  rmSync(wsRoot, { recursive: true, force: true });
+});
+
 await test('skill 工具：schema 形状与默认免确认', () => {
   const oa = toolSchemas(['skill']);
   eq(oa.length, 1);

@@ -22,7 +22,7 @@ export const HARNESSES = [
     id: 'standard',
     label: 'Standard',
     summary: '日常任务：按需调用工具，多步推进并核对结果',
-    tools: ['read_file', 'list_dir', 'write_file', 'edit_file', 'shell', 'web_fetch'],
+    tools: ['read_file', 'list_dir', 'write_file', 'edit_file', 'shell', 'web_fetch', 'grep', 'glob', 'todo'],
     maxRounds: 24,
     compactRatio: 0.7,
     systemPrompt: [
@@ -30,6 +30,7 @@ export const HARNESSES = [
       '当前为 Standard 模式：按需调用工具完成任务，多步推进，每步核对结果后再继续。',
       '工作目录见下方说明；文件操作只能在工作目录内进行。',
       '修改文件前先读取确认现状；能用 edit_file 精确替换就不要整文件重写。',
+      '找内容用 grep、找文件用 glob，不要用 shell 的 find / grep 绕行；多步任务用 todo 跟踪进度。',
       'shell 命令保持幂等与可重入；命令输出很长时先缩小范围再读。',
       '回答使用与用户相同的语言，简洁、直接、可执行。',
     ].join('\n'),
@@ -38,7 +39,7 @@ export const HARNESSES = [
     id: 'ultimate',
     label: 'Ultimate',
     summary: '复杂任务：充分探索、逐步验证、汇总结果',
-    tools: ['read_file', 'list_dir', 'write_file', 'edit_file', 'shell', 'web_fetch'],
+    tools: ['read_file', 'list_dir', 'write_file', 'edit_file', 'shell', 'web_fetch', 'grep', 'glob', 'todo'],
     maxRounds: 64,
     compactRatio: 0.6,
     systemPrompt: [
@@ -47,6 +48,7 @@ export const HARNESSES = [
       '工作目录见下方说明；文件操作只能在工作目录内进行。',
       '优先使用工具获取事实，不要凭空假设文件内容或命令结果。',
       '遇到不确定的分支时明确说出假设，再继续推进。',
+      '找内容用 grep、找文件用 glob；多步任务用 todo 规划并逐项更新。',
       '回答使用与用户相同的语言，简洁、直接、可执行。',
     ].join('\n'),
   },
