@@ -171,8 +171,12 @@ function settleUsage(entry, ms) {
   const u = entry.usage;
   const inTok = u?.prompt_tokens || 0;
   const outTok = u?.completion_tokens || 0;
-  // 自定义提供方可在记录里自带单价；未设置则沿用内置价格，账本不记假账
-  const price = entry.price || PRICE;
+  // 自定义提供方可在记录里自带单价；只填一侧时另一侧回退内置价格，账本不记假账
+  const own = entry.price || {};
+  const price = {
+    input: Number.isFinite(own.input) ? own.input : PRICE.input,
+    output: Number.isFinite(own.output) ? own.output : PRICE.output,
+  };
   const cost = (inTok * price.input + outTok * price.output) / 1_000_000;
   const rec = {
     requestId: entry.requestId, model: entry.model, provider: entry.provider, ms,

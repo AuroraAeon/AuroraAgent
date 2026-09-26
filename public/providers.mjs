@@ -51,6 +51,11 @@ const state = {
   noticeTimer: 0,
 };
 let hooks = { onChanged: () => {} };
+// 后端字段错误 → 输入框 ID（添加卡片与编辑卡片的前缀不同）
+const FIELD_MAP = {
+  add: { id: 'nwId', name: 'nwName', baseUrl: 'nwBaseUrl', 'price.input': 'nwPriceIn', 'price.output': 'nwPriceOut' },
+  edit: { name: 'pvName', baseUrl: 'pvBaseUrl', 'price.input': 'pvPriceIn', 'price.output': 'pvPriceOut' },
+};
 
 // ---------- 网络 ----------
 async function api(url, method, body) {
@@ -182,6 +187,21 @@ function readModels(listEl) {
   return { models, error };
 }
 
+/** 计费单价（可选）：输入/输出两个框共用一条说明，各自带错误槽 */
+function priceFieldsHtml(inId, outId, hintId, price) {
+  const p = price || {};
+  const half = (id, label, ph, val) => '<div><label for="' + id + '">' + label + '</label>'
+    + '<input class="pv-input" id="' + id + '" type="number" min="0" step="any" inputmode="decimal"'
+    + ' placeholder="' + ph + '" value="' + esc(val ?? '') + '" aria-describedby="' + hintId + '">'
+    + '<p class="pv-err" id="' + id + 'Err" hidden></p></div>';
+  return '<div class="pv-field"><div class="pv-row2">'
+    + half(inId, '输入单价', '2', p.input)
+    + half(outId, '输出单价', '8', p.output)
+    + '</div>'
+    + '<p class="pv-hint" id="' + hintId + '">计费单价，单位 ¥/百万 tokens；留空则账本按内置提供方价格估算，不记假账。</p>'
+    + '</div>';
+}
+
 // ---------- 编辑器卡片 ----------
 function editorCardHtml(p) {
   const protocols = state.protocols.map((x) =>
@@ -202,6 +222,7 @@ function editorCardHtml(p) {
     + '<input class="pv-input" id="pvMaxTokens" inputmode="numeric" value="' + esc(p.maxTokens ? fmtCap(p.maxTokens) : '') + '" placeholder="留空则用上游默认">'
     + '<p class="pv-hint">仅在提供方支持时发送，避免上游把陌生字段当错误拒绝。</p></div>'
     + '<label class="switch" style="margin:2px 0 12px"><input type="checkbox" id="pvThinking"' + (p.thinking ? ' checked' : '') + '><span class="track"><span class="knob"></span></span><span>发送思考开关（thinking）</span></label>'
+    + priceFieldsHtml('pvPriceIn', 'pvPriceOut', 'pvPriceHint', p.price)
     + '<div class="pv-field"><label>模型目录</label>'
     + '<div class="pv-cat-head"><span class="pv-cat-meta" id="pvCatMeta">已自定义模型目录</span>'
     + '<button type="button" class="pv-link" data-act="fetch">' + SVG.refresh.replace('<svg', '<svg style="width:12px;height:12px;vertical-align:-2px"') + '获取可用模型</button></div>'
@@ -233,6 +254,7 @@ function addCardHtml() {
     + '<p class="pv-resolve" id="pvResolve"></p>'
     + fieldHtml({ id: 'nwApiKey', label: 'API 密钥', type: 'password', autocomplete: 'new-password',
         placeholder: '输入 API 密钥，或留空使用环境认证', hint: '只写入本机数据目录，不会出现在任何界面回显里。' })
+    + priceFieldsHtml('nwPriceIn', 'nwPriceOut', 'nwPriceHint', null)
     + '<div class="pv-field"><label>模型目录</label>'
     + '<div class="pv-cat-head"><span class="pv-cat-meta" id="pvCatMeta"></span>'
     + '<button type="button" class="pv-link" data-act="fetch">' + SVG.refresh.replace('<svg', '<svg style="width:12px;height:12px;vertical-align:-2px"') + '获取可用模型</button></div>'
@@ -289,13 +311,13 @@ async function onSubmit(ev) {
   const listEl = $('pvModels');
   const { models, error } = readModels(listEl);
   const modelsErr = $('pvModelsErr');
+  const errs = []; // [输入框 ID, 消息]：一次提交展示全部字段错误，而不是挤牙膏
   if (error) {
     modelsErr.hidden = false;
     modelsErr.innerHTML = SVG.alert + '<span>' + esc(error) + '</span>';
-    listEl.querySelector('.pv-mid')?.focus();
-    return;
+  } else {
+    modelsErr.hidden = true;
   }
-  modelsErr.hidden = true;
 
   const draft = { models };
   if (isAdd) {
@@ -311,15 +333,30 @@ async function onSubmit(ev) {
     draft.protocol = $('pvProtocol').value;
     draft.thinking = $('pvThinking').checked;
     const cap = parseCap($('pvMaxTokens').value);
-    if (cap !== undefined && !(cap > 0)) return showFieldError('pvMaxTokens', '最大输出 token 数需为正数，例如 8192、64K 或 1M。');
-    if (cap !== undefined) draft.maxTokens = cap;
+    if (cap !== undefined && !(cap > 0)) errs.push(['pvMaxTokens', '最大输出 token 数需为正数，例如 8192、64K 或 1M。']);
+    if (cap !== undefined && cap > 0) draft.maxTokens = cap;
     const key = $('pvApiKey').value.trim();
     if (key) draft.apiKey = key;
   }
-  if (!draft.name) return showFieldError(isAdd ? 'nwName' : 'pvName', '请填写显示名称，用于界面标识这个提供方。');
-  if (!draft.baseUrl) return showFieldError(isAdd ? 'nwBaseUrl' : 'pvBaseUrl', '请填写 API 地址，例如 https://api.example.com/v1');
+  // 计费单价：留空表示不设置（编辑时传空对象即清空）；只填一侧由后端计价回退内置价
+  const price = {};
+  for (const [side, id] of [['input', isAdd ? 'nwPriceIn' : 'pvPriceIn'], ['output', isAdd ? 'nwPriceOut' : 'pvPriceOut']]) {
+    const raw = $(id).value.trim();
+    if (raw === '') continue;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) errs.push([id, '计费单价的' + (side === 'input' ? '输入' : '输出') + '需为不小于 0 的数字，例如 ' + (side === 'input' ? '2' : '8') + '。']);
+    else price[side] = n;
+  }
+  draft.price = price;
+  if (!draft.name) errs.push([isAdd ? 'nwName' : 'pvName', '请填写显示名称，用于界面标识这个提供方。']);
+  if (!draft.baseUrl) errs.push([isAdd ? 'nwBaseUrl' : 'pvBaseUrl', '请填写 API 地址，例如 https://api.example.com/v1']);
   if (isAdd && !/^[a-z][a-z0-9-]*$/.test(draft.id)) {
-    return showFieldError('nwId', 'Provider ID 需以小写字母开头，之后可用小写字母、数字和短横线。');
+    errs.push(['nwId', 'Provider ID 需以小写字母开头，之后可用小写字母、数字和短横线。']);
+  }
+  if (error || errs.length) {
+    errs.forEach(([id, msg]) => showFieldError(id, msg));
+    (errs.length ? $(errs[0][0]) : listEl.querySelector('.pv-mid'))?.focus();
+    return;
   }
 
   const btn = $(isAdd ? 'pvCreateBtn' : 'pvSaveBtn');
@@ -330,9 +367,12 @@ async function onSubmit(ev) {
       ? await api('/api/providers', 'POST', draft)
       : await api('/api/providers/' + encodeURIComponent(state.card.id), 'PUT', draft);
     if (!r.ok) {
-      if (r.field) showFieldError(isAdd && r.field === 'id' ? 'nwId' : r.field === 'name' ? (isAdd ? 'nwName' : 'pvName') : r.field === 'baseUrl' ? (isAdd ? 'nwBaseUrl' : 'pvBaseUrl') : r.field === 'models' ? 'pvModels' : '', r.error);
-      else notify(r.error || '保存失败，请重试', true);
       if (r.field === 'models') { modelsErr.hidden = false; modelsErr.innerHTML = SVG.alert + '<span>' + esc(r.error) + '</span>'; }
+      else {
+        const target = FIELD_MAP[isAdd ? 'add' : 'edit'][r.field];
+        if (target) showFieldError(target, r.error);
+        else notify(r.error || '保存失败，请重试', true);
+      }
       return;
     }
     state.card = null;

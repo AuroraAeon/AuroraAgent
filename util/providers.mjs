@@ -108,15 +108,17 @@ export function validateProviderDraft(draft, taken = []) {
   const value = { id, name, protocol, baseUrl: endpoint.ok ? endpoint.url : String(draft.baseUrl ?? '').trim(), models };
   const apiKey = String(draft.apiKey ?? '').trim();
   if (apiKey) value.apiKey = apiKey;
-  // 计费单价（¥/百万 tokens）可选：不填则账本沿用内置提供方的价格，避免自定义提供方记出假账
+  // 计费单价（¥/百万 tokens）可选：只填一侧也接受，未填侧计价时回退内置价；传空对象表示清空
   if (draft.price !== undefined && draft.price !== null) {
     const price = {};
     for (const key of ['input', 'output']) {
-      const n = Number(draft.price?.[key]);
-      if (!Number.isFinite(n) || n < 0) { errors.price = `计费单价的${key === 'input' ? '输入' : '输出'}需为不小于 0 的数字。`; break; }
+      const raw = draft.price?.[key];
+      if (raw === undefined || raw === null || raw === '') continue;
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n < 0) { errors[`price.${key}`] = `计费单价的${key === 'input' ? '输入' : '输出'}需为不小于 0 的数字，例如 ${key === 'input' ? 2 : 8}。`; break; }
       price[key] = n;
     }
-    if (!errors.price) value.price = price;
+    if (!errors['price.input'] && !errors['price.output']) value.price = price;
   }
   if (draft.thinking === true) value.thinking = true;
   const maxTokens = Number(draft.maxTokens);

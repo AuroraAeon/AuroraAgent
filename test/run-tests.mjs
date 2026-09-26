@@ -144,6 +144,22 @@ await test('validateProviderDraft 接受合法草稿并剥离空行', () => {
   eq(r.value.baseUrl, 'https://gw.example.com/v1', '末尾斜杠应被去掉');
   assert(!('apiKey' in r.value), '空 Key 不应进草稿');
 });
+await test('validateProviderDraft 校验计费单价：只填一侧也接受，非法值定位到 price.<side>', () => {
+  const base = { id: 'my-gw', name: '网关', protocol: 'openai', baseUrl: 'https://a.com', models: [{ id: 'm' }] };
+  const oneSide = validateProviderDraft({ ...base, price: { input: 2 } });
+  assert(oneSide.ok, '只填输入单价应通过: ' + JSON.stringify(oneSide.errors));
+  eq(oneSide.value.price.input, 2);
+  assert(!('output' in oneSide.value.price), '没填的一侧不应凭空出现');
+  const cleared = validateProviderDraft({ ...base, price: {} });
+  assert(cleared.ok, '空对象应表示清空单价');
+  eq(Object.keys(cleared.value.price).length, 0, '清空后不应残留单价');
+  const negative = validateProviderDraft({ ...base, price: { input: -1 } });
+  eq(negative.ok, false);
+  eq(negative.errors['price.input'] !== undefined, true, '负数应定位到 price.input');
+  const text = validateProviderDraft({ ...base, price: { output: 'abc' } });
+  eq(text.ok, false);
+  eq(text.errors['price.output'] !== undefined, true, '非数字应定位到 price.output');
+});
 await test('ProviderStore 增删改查并落盘 providers.json', () => {
   const dir = mkdtempSync(join(tmpdir(), 'lc-test-prov-'));
   try {
@@ -271,7 +287,9 @@ try {
     assert((await css.text()).includes('.pv-row'), '样式缺少提供方行');
     const js = await fetch(`${BASE}/providers.mjs`);
     eq(js.status, 200);
-    assert((await js.text()).includes('mountProviders'), '模块缺少挂载入口');
+    const jsText = await js.text();
+    assert(jsText.includes('mountProviders'), '模块缺少挂载入口');
+    assert(jsText.includes('pvPriceIn') && jsText.includes('nwPriceOut'), '模块缺少计费单价字段');
   });
   await test('静态资源走白名单，目录穿越取不到文件', async () => {
     eq((await fetch(`${BASE}/web.mjs`)).status, 404);
@@ -554,6 +572,28 @@ try {
       eq(rec.cost, 0.00065, '应按提供方单价计价');
     } finally {
       eq((await deleteProvider('priced-gw')).ok, true);
+    }
+  });
+
+  await test('用量账本按提供方单价计价：只填一侧时另一侧回退内置价', async () => {
+    const created = await createProvider({
+      id: 'half-gw', name: '半价网关', protocol: 'openai', baseUrl: `${MOCK_ORIGIN}/v1`,
+      apiKey: 'sk-half', price: { input: 5 }, models: [{ id: 'custom-half' }],
+    });
+    eq(created.ok, true, '创建失败: ' + created.error);
+    try {
+      const requestId = 'half-' + Date.now();
+      await readStream(await chat({ messages: [{ role: 'user', content: '半价' }], provider: 'half-gw', model: 'custom-half', requestId }));
+      let rec = null;
+      for (let i = 0; i < 50 && !rec; i++) {
+        const u = await (await fetch(`${BASE}/api/usage`)).json();
+        rec = u.recent.find((x) => x.requestId === requestId);
+        if (!rec) await new Promise((r) => setTimeout(r, 100));
+      }
+      assert(rec, '账本没有记录半价提供方的请求');
+      eq(rec.cost, 0.00022, '输入按 5、输出回退内置 8 计价');
+    } finally {
+      eq((await deleteProvider('half-gw')).ok, true);
     }
   });
 
