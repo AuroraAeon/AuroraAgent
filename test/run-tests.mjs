@@ -607,6 +607,25 @@ await test('权限策略：默认姿态、后匹配赢与总是允许', () => {
   eq(mostRestrictive('deny', 'allow'), 'deny');
 });
 
+await test('权限三档：permissionMode 设定 ask 类动作的默认效应', () => {
+  const need = new PermissionPolicy(defaultRules(), { permissionMode: 'ask_when_needed' });
+  eq(need.effective('read_file', 'a.txt'), 'allow', '缺省档只读放行');
+  eq(need.effective('shell', 'ls'), 'ask', '缺省档 shell 仍要问');
+  const never = new PermissionPolicy(defaultRules(), { permissionMode: 'never_ask' });
+  eq(never.effective('shell', 'ls'), 'allow', 'never_ask 放行 ask 类');
+  eq(never.effective('write_file', 'a.txt'), 'allow', 'never_ask 放行写文件');
+  const neverDeny = new PermissionPolicy([...defaultRules(), { action: 'shell', resource: 'rm *', effect: 'deny' }], { permissionMode: 'never_ask' });
+  eq(neverDeny.effective('shell', 'rm -rf /'), 'deny', 'never_ask 不推翻 deny');
+  const always = new PermissionPolicy(defaultRules(), { permissionMode: 'always_ask' });
+  eq(always.effective('read_file', 'a.txt'), 'ask', 'always_ask 只读也要问');
+  eq(always.effective('shell', 'ls'), 'ask', 'always_ask 写执行照旧要问');
+  always.grantAlways('read_file', 'a.txt');
+  eq(always.effective('read_file', 'a.txt'), 'allow', '总是允许沉淀的会话规则不被 always_ask 推翻');
+  eq(always.effective('read_file', 'b.txt'), 'ask', '总是允许不应外溢');
+  const bad = new PermissionPolicy(defaultRules(), { permissionMode: '乱写' });
+  eq(bad.permissionMode, 'ask_when_needed', '非法档位回退缺省');
+});
+
 await test('线路拼装：tools 参数进入 OpenAI 与 Anthropic 两种形状', () => {
   const provider = { protocol: 'openai', baseUrl: 'https://x', apiKey: 'k' };
   const req = buildChatRequest(provider, { model: 'm', messages: [{ role: 'user', content: 'hi' }], toolNames: ['read_file', 'shell'] });
