@@ -1,0 +1,6 @@
+modeltester.config.json
+usage.jsonl
+*.log
+node_modules/
+__pycache__/
+.DS_Store

@@ -1,0 +1,20 @@
+{
+  "name": "modeltester",
+  "version": "4.0.0",
+  "private": true,
+  "type": "module",
+  "description": "全球厂商新模型速测工作台（终端 + 网页，零依赖，可打包为独立 macOS Application）；当前接入：美团 LongCat-2.5-Preview",
+  "scripts": {
+    "start": "node web.mjs",
+    "web": "node web.mjs",
+    "chat": "node chat.mjs",
+    "check": "node check.mjs",
+    "test": "node test/run-tests.mjs",
+    "color": "node tools/color-test.mjs",
+    "service": "node tools/install-service.mjs",
+    "service:status": "node tools/install-service.mjs --status",
+    "service:remove": "node tools/install-service.mjs --remove",
+    "app:build": "node tools/build-app.mjs",
+    "publish": "node tools/build-app.mjs && launchctl kickstart -k gui/$(id -u)/com.modeltester.app"
+  }
+}
