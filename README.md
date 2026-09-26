@@ -7,10 +7,11 @@
 ## 它是什么
 
 - **Agent Loop**（`util/agent/loop.mjs`）：一轮用户输入驱动「模型请求 → 工具调用 → 结果回填 → 再请求」的循环，直到模型不再调用工具或触顶模式轮次上限；中断保留已生成内容，SSE 断开即中止上游，不浪费额度
-- **六个内置工具**（`util/agent/tools.mjs`）：`read_file` / `list_dir` / `write_file` / `edit_file` / `shell` / `web_fetch`，JSON Schema 参数；文件工具经路径解析 + 前缀校验禁锢在会话 workspace 内（拒绝穿越），`shell` 限定工作目录与超时（默认 30s、上限 120s），工具输出超限截断
+- **十一个内置工具**（`util/agent/tools.mjs`）：`read_file` / `list_dir` / `write_file` / `edit_file` / `shell` / `web_fetch` / `grep` / `glob` / `todo` / `skill` / `task`，JSON Schema 参数；文件工具经路径解析 + 前缀校验禁锢在会话 workspace 内（拒绝穿越），`shell` 限定工作目录与超时（默认 30s、上限 120s），工具输出超限截断；技能（`skill`）与 MCP 服务器工具经同一套 kosong 形状接口动态入列（`mcp__<服务器>__<工具>`）
 - **权限门控**（`util/agent/policy.mjs`）：只读工具默认放行，写文件 / 编辑 / 执行命令必须经你确认；「总是允许」沉淀为会话级规则，不是全局放行
 - **上下文压缩**（`util/agent/context.mjs`）：token 估算超过窗口阈值（默认 128k 的 70%）时，把早期对话经一轮模型调用总结为 summary 记录，保留近期尾部原文
 - **三档 Harness 模式**（`util/agent/harness.mjs`）：模式决定任务怎么被完成——系统提示、可用工具、轮次上限、压缩阈值都随模式变化
+- **技能与扩展**：`skills/` 内置 + `<数据目录>/skills/` 用户技能（frontmatter 目录常驻系统提示，`/<技能名>` 斜杠命令与 `skill` 工具按需加载正文）；`task` 工具派发子代理并行处理相互独立的子任务并聚合结果；MCP 客户端（实验特性，stdio / HTTP 双传输）把外部服务器工具接入同一套工具接口
 - **按轮记账**：每一轮模型请求经 `util/usage.mjs` 按提供方单价结算，会话内可看到每轮 tokens 与费用
 - **事件协议**（`util/agent/events.mjs`）：`turn_started` / `model_round_started` / `text_chunk` / `thinking_chunk` / `tool_event` / `token_usage_updated` / `context_compression_*` / `turn_completed|cancelled|failed`，统一 SSE 帧封装，终端与网页共用
 
@@ -28,10 +29,10 @@ npm run web       # 网页工作台 http://localhost:8787
 | 模式 | 定位 | 工具 | 轮次上限 | 压缩阈值 |
 | --- | --- | --- | --- | --- |
 | Minimal | 快速协作：目标明确时直接作答 | 无 | 1 | 90% |
-| Standard | 日常任务：按需调用工具，多步推进并核对结果 | 全部六个 | 24 | 70% |
-| Ultimate | 复杂任务：充分探索、逐步验证、汇总结果 | 全部六个 | 64 | 60% |
+| Standard | 日常任务：按需调用工具，多步推进并核对结果 | 全部（含 task 派发） | 24 | 70% |
+| Ultimate | 复杂任务：充分探索、逐步验证、汇总结果 | 全部（含 task 派发） | 64 | 60% |
 
-模式在输入区一键切换（下一轮生效），也可 `PATCH /api/agent/sessions/:id` 热切换。Creative（Mini App 创作）留待后续迭代；Ultimate 暂不含 subagent 派发。
+模式在输入区一键切换（下一轮生效），也可 `PATCH /api/agent/sessions/:id` 热切换。Creative（Mini App 创作）留待后续迭代。模式之上还有两个正交维度：**权限三档**（始终询问 / 必要时询问 / 完全自动）与**计划模式**（先出计划、批准才执行），互不替换。
 
 ## 工具与权限
 
@@ -43,8 +44,15 @@ npm run web       # 网页工作台 http://localhost:8787
 | `write_file` | 覆盖写文件（自动建父目录） | 需确认 |
 | `edit_file` | 精确字符串替换（多处出现需上下文或 replace_all） | 需确认 |
 | `shell` | 工作目录内执行 shell 命令（退出码 + 输出，超限截断） | 需确认 |
+| `grep` | 工作目录内正则检索（文件名 + 行号 + 命中行，预算截断） | 放行 |
+| `glob` | 按 glob 模式找文件（大小写敏感、忽略 `node_modules`） | 放行 |
+| `todo` | 规划清单维护（增项 / 更新状态，随会话持久化） | 放行 |
+| `skill` | 按名称加载技能正文（frontmatter 目录常驻系统提示） | 放行 |
+| `task` | 派发子代理：受限子 turn 并行处理自含子任务并聚合结果 | 放行 |
 
 需要确认的工具会在界面里弹出权限卡：**允许**（仅这一次）/ **总是允许**（本会话后续同类操作放行，落会话规则）/ **拒绝**（结果回给模型，循环继续）。终端里是 `y` / `a` / `n` 确认。
+
+询问粒度可切三档（网页输入区下拉 / 终端 `/plan` 同级设置，会话级）：**始终询问**（连只读也逐次确认）/ **必要时询问**（默认，只读放行、写与执行询问）/ **完全自动**（放行 ask 类动作，但用户「总是允许」沉淀的规则与显式 deny 仍然优先）。另开**计划模式**（网页开关 / 终端 `/plan on`）：下一轮模型只用只读 / 检索 / 待办工具产出计划，你在计划卡上**批准**才进入完整工具集的执行轮，**驳回**则本轮收尾不动手。
 
 **安全边界（如实说明）**：v1 没有 OS 级沙箱。当前边界是「文件工具路径禁锢在会话 workspace + 写与执行必经权限门控」。workspace 默认 `<数据目录>/workspace`，创建会话时可指定。
 
@@ -87,6 +95,9 @@ npm run web       # 网页工作台 http://localhost:8787
 | `/model <名称>` | 切换模型（按 ID 反查提供方） |
 | `/harness <minimal\|standard\|ultimate>` | 切换模式（无参数弹出选择器） |
 | `/theme <dark\|light\|auto>` | 切换终端主题（无参数弹出选择器） |
+| `/plan on\|off` | 计划模式开关（默认关；开启后下一轮先出计划，批准才执行） |
+| `/mcp` | MCP 服务器与工具状态（实验特性，需 `AURORAAGENT_EXPERIMENTAL_MCP=1`） |
+| `/<技能名>` | 技能派生命令：把该技能正文作为指令注入下一轮（与网页斜杠调色板同源） |
 | `/think on\|off` | 思考过程开关（默认开） |
 | `/temp 0~1` `/max <n>` | 温度 / 单次最大输出 tokens |
 | `/key <Key>` | 换 Key 并保存 |
@@ -108,7 +119,11 @@ Agent 运行时（`/api/agent/*`，单活跃 turn：已有 turn 在跑时返回 
 | `POST /api/agent/turn` | 发起一轮对话，SSE 事件流（事件协议见上） |
 | `POST /api/agent/abort` | 中止当前 turn，保留已生成内容 |
 | `POST /api/agent/permission` | 权限决策回传：`{requestId, decision: 'allow'\|'deny'\|'always'}` |
+| `POST /api/agent/plan` | 计划决策回传：`{sessionId, requestId, approve: true\|false}` |
+| `GET /api/agent/skills` | 技能目录（内置 + 用户，name + description + 来源） |
 | `GET /api/agent/harnesses` | 三档模式契约 |
+
+MCP 实验面（`AURORAAGENT_EXPERIMENTAL_MCP=1` 门控，未开启 404 并附开启指引）：`GET /api/mcp/servers`、`POST /api/mcp/servers`、`DELETE /api/mcp/servers/:id`、`POST /api/mcp/servers/:id/probe`（测试连接并列举工具）。
 
 模型速测底座（全部保持原样）：`POST /api/chat`（SSE 流式对话，`provider` 路由自定义上游）、`POST /api/abort`、`GET /api/models`（60s 缓存）、`GET/POST/PUT/DELETE /api/providers*`、`POST /api/providers/discover`、`GET /api/status` `/api/health`、`GET /api/usage`、`GET/POST /api/settings`、`GET /vendor/<name>.svg`。
 
@@ -213,8 +228,8 @@ npm run docs:dev    # 本地起文档站
 
 ## 当前状态（实测打通）
 
-- `npm test` 92/92 通过（mock 上游，不花额度）；`npm run check` 真实 API 连通（Key 有效 + 模型目录 + 测试请求）
-- Agent e2e 覆盖：会话 CRUD；完整 turn（工具调用 → 权限允许 → workspace 落盘 → 二轮出终稿）；权限拒绝后循环继续；路径穿越拒绝；shell 执行与超时；turn 中途 abort；harness 列表；上下文压缩触发；每轮用量记账
+- `npm test` 192/192 通过（mock 上游，不花额度，含仓库守卫：零 emoji / TUI 颜色单一真值源 / 对比度 / 行数预算 / 文档站结构）；`npm run check` 真实 API 连通（Key 有效 + 模型目录 + 测试请求）
+- Agent e2e 覆盖：会话 CRUD；完整 turn（工具调用 → 权限允许 → workspace 落盘 → 二轮出终稿）；权限拒绝后循环继续；路径穿越拒绝；shell 执行与超时；turn 中途 abort；harness 列表；上下文压缩触发；每轮用量记账；技能斜杠注入与 skill 工具加载；todo 维护；edit_file diff 回传；计划批准 / 驳回两阶段；task 派发子代理并汇总（子会话可查）；MCP 注册与工具调用（实验）
 - 网页工作台经浏览器实测完整 turn：权限卡允许 → 写文件 → 二轮终稿 → 按轮分组的思考 / 工具 / 用量脚注
 - 终端实测：权限 y/n 两条路径、`/help` `/sessions` `/new` `/model` `/harness`、拒绝后续跑均正常
 - 自定义提供方：设置页可接任意 OpenAI 兼容网关或 Anthropic Messages 上游；账本按提供方单价计价（只填一侧时另一侧回退内置价）；内置 LongCat 请求载荷与接入前逐字节一致（有专门测试守着）
