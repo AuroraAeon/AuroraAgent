@@ -141,9 +141,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 - **数据隔离**：测试以临时目录作 `AURORAAGENT_DATA_DIR`，绝不许写真实数据目录
 - 新路由 / 新行为 / 新错误映射必须带中文测试名进入 `test/run-tests.mjs`；mock 需要新行为时改 `test/mock-longcat.mjs`
 - mock 触发词：消息含 `USE_TOOL` → 模型发起 `read_file mock.txt`；含 `USE_TOOL_WRITE` → 发起 `write_file written_by_agent.txt`；`FLAKY` 断网重试；`SLOW` 慢速
-- 前端契约测试（`/app` 服务、哈希资产、令牌 CSS 在场、零 emoji、旧路由 404、ProviderEditor 源码校验规则、KaTeX 样式与 woff2 字体可服务）守着构建产物与 `web-ui/` 的同步；改了 `web-ui/` 忘了 `build:web` 会红
-- 公式分段逻辑是 `web-ui/src/math-split.mjs`（零依赖纯函数），Node 测试直接 import 同一份做真实断言，不拿源码契约糊弄
-- **踩坑记录**：KaTeX 的符号表自带 ♣ ♭ ✓ 等字形，「构建产物零 emoji」断言会红。正解是 `vite.config.ts` 的 `esbuild.charset='ascii'`（产物统一 ASCII 转义）与只保留 woff2 字体的插件，**不是**放宽 emoji 断言
+- 前端契约测试（`/app` 服务、哈希资产、令牌 CSS 在场、零 emoji、旧路由 404、ProviderEditor 源码校验规则）守着构建产物与 `web-ui/` 的同步；改了 `web-ui/` 忘了 `build:web` 会红
 - 基线 102/102 通过。提交前 `npm test` 必须全绿；不许 `skip`，不许放宽断言迁就失败
 - `npm run check` 走真实上游，只在改上游集成时跑（花少量钱）
 - 跑 `npm test` 前确认 18901 无常驻 mock 占用（`pkill -f mock-longcat`）；exec 沙箱会杀后台进程，常驻服务 / mock 用 exec_command 前台会话跑
