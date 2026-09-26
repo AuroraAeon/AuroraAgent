@@ -436,8 +436,8 @@ try {
     const list = await (await fetch(`${BASE}/api/providers`)).json();
     eq(list.providers.length, 2, '失败创建不应落盘');
   });
-  await test('POST /api/providers/:id/discover 拉取可用模型（只读）', async () => {
-    const j = await (await fetch(`${BASE}/api/providers/mock-gw/discover`, {
+  await test('POST /api/providers/discover 拉取可用模型（只读）', async () => {
+    const j = await (await fetch(`${BASE}/api/providers/discover`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ baseUrl: draft.baseUrl, protocol: 'openai', apiKey: draft.apiKey }),
     })).json();
@@ -447,8 +447,8 @@ try {
     eq(j.models[1].contextWindow, 262144);
     eq(j.models[1].maxTokens, 16384);
   });
-  await test('POST /api/providers/:id/discover 对坏端点给出可读错误', async () => {
-    const r = await fetch(`${BASE}/api/providers/mock-gw/discover`, {
+  await test('POST /api/providers/discover 对坏端点给出可读错误', async () => {
+    const r = await fetch(`${BASE}/api/providers/discover`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ baseUrl: 'http://127.0.0.1:1/none', protocol: 'openai', apiKey: 'x' }),
     });
@@ -512,6 +512,31 @@ try {
       assert(s.usage && s.usage.completion_tokens === 7, 'message_delta 的 usage 未汇总');
     } finally {
       eq((await deleteProvider('claude-gw')).ok, true);
+    }
+  });
+
+  await test('用量账本按提供方单价计价并记录 provider', async () => {
+    const created = await createProvider({
+      id: 'priced-gw', name: '计价网关', protocol: 'openai', baseUrl: `${MOCK_ORIGIN}/v1`,
+      apiKey: 'sk-priced', price: { input: 10, output: 30 }, models: [{ id: 'custom-priced' }],
+    });
+    eq(created.ok, true, '创建失败: ' + created.error);
+    try {
+      const requestId = 'priced-' + Date.now();
+      await readStream(await chat({ messages: [{ role: 'user', content: '计价' }], provider: 'priced-gw', model: 'custom-priced', requestId }));
+      let rec = null;
+      for (let i = 0; i < 50 && !rec; i++) {
+        const u = await (await fetch(`${BASE}/api/usage`)).json();
+        rec = u.recent.find((x) => x.requestId === requestId);
+        if (!rec) await new Promise((r) => setTimeout(r, 100));
+      }
+      assert(rec, '账本没有记录自定义提供方的请求');
+      eq(rec.provider, 'priced-gw');
+      eq(rec.inputTokens, 20);
+      eq(rec.outputTokens, 15);
+      eq(rec.cost, 0.00065, '应按提供方单价计价');
+    } finally {
+      eq((await deleteProvider('priced-gw')).ok, true);
     }
   });
 

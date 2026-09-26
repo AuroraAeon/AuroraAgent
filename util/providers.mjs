@@ -108,6 +108,19 @@ export function validateProviderDraft(draft, taken = []) {
   const value = { id, name, protocol, baseUrl: endpoint.ok ? endpoint.url : String(draft.baseUrl ?? '').trim(), models };
   const apiKey = String(draft.apiKey ?? '').trim();
   if (apiKey) value.apiKey = apiKey;
+  // 计费单价（¥/百万 tokens）可选：不填则账本沿用内置提供方的价格，避免自定义提供方记出假账
+  if (draft.price !== undefined && draft.price !== null) {
+    const price = {};
+    for (const key of ['input', 'output']) {
+      const n = Number(draft.price?.[key]);
+      if (!Number.isFinite(n) || n < 0) { errors.price = `计费单价的${key === 'input' ? '输入' : '输出'}需为不小于 0 的数字。`; break; }
+      price[key] = n;
+    }
+    if (!errors.price) value.price = price;
+  }
+  if (draft.thinking === true) value.thinking = true;
+  const maxTokens = Number(draft.maxTokens);
+  if (Number.isFinite(maxTokens) && maxTokens > 0) value.maxTokens = Math.round(maxTokens);
   return { ok: Object.keys(errors).length === 0, errors, value };
 }
 
@@ -131,6 +144,12 @@ function normalizeStored(raw) {
       return out;
     });
   const protocol = PROTOCOL_IDS.has(raw.protocol) ? raw.protocol : 'openai';
+  const price = {};
+  for (const key of ['input', 'output']) {
+    const n = Number(raw.price?.[key]);
+    if (Number.isFinite(n) && n >= 0) price[key] = n;
+  }
+  const maxTokens = Number(raw.maxTokens);
   return {
     id,
     name: String(raw.name ?? id).trim() || id,
@@ -138,6 +157,9 @@ function normalizeStored(raw) {
     baseUrl: endpoint.url,
     pathPrefix: typeof raw.pathPrefix === 'string' ? raw.pathPrefix : '',
     models,
+    price: Object.keys(price).length ? price : undefined,
+    thinking: raw.thinking === true,
+    maxTokens: Number.isFinite(maxTokens) && maxTokens > 0 ? Math.round(maxTokens) : undefined,
     apiKey: String(raw.apiKey ?? '').trim(),
   };
 }
@@ -215,6 +237,9 @@ export class ProviderStore {
       builtin: Boolean(p.builtin),
       hasKey: Boolean(p.apiKey),
       model: p.model || '',
+      price: p.price || null,
+      thinking: Boolean(p.thinking),
+      maxTokens: p.maxTokens || null,
       models: p.models.map((m) => ({ ...m })),
     }));
   }
@@ -258,6 +283,9 @@ export class ProviderStore {
       baseUrl: patch.baseUrl ?? this.custom[idx].baseUrl,
       models: patch.models ?? this.custom[idx].models,
       apiKey: patch.apiKey !== undefined ? patch.apiKey : this.custom[idx].apiKey,
+      thinking: patch.thinking !== undefined ? patch.thinking : this.custom[idx].thinking,
+      maxTokens: patch.maxTokens !== undefined ? patch.maxTokens : this.custom[idx].maxTokens,
+      price: patch.price !== undefined ? patch.price : this.custom[idx].price,
     };
     const checked = validateProviderDraft(merged, this.custom.filter((p) => p.id !== key).map((p) => p.id));
     if (!checked.ok) throw new ProviderError(Object.values(checked.errors)[0], Object.keys(checked.errors)[0]);
@@ -367,6 +395,7 @@ function redact(store, p) {
   return {
     id: p.id, name: p.name, protocol: p.protocol, baseUrl: p.baseUrl,
     builtin: Boolean(p.builtin), hasKey: Boolean(p.apiKey), model: p.model || '', models: p.models || [],
+    price: p.price || null, thinking: Boolean(p.thinking), maxTokens: p.maxTokens || null,
   };
 }
 
@@ -414,7 +443,24 @@ export async function handleProviderApi(req, res, url, ctx) {
     return true;
   }
 
+  // 模型质问与提供方 ID 无关：地址、协议、密钥都由请求体给出，新建与编辑共用一条路由
+  if (req.method === 'POST' && url === '/api/providers/discover') {
+    const want = (await readBody(req, 64 * 1024)) || {};
+    try {
+      const found = await fetchModelCandidates({
+        baseUrl: want.baseUrl, protocol: want.protocol, apiKey: want.apiKey, pathPrefix: want.pathPrefix,
+      });
+      log('info', '已拉取提供方模型目录', { count: found.models.length, url: found.url });
+      json(res, 200, { ok: true, url: found.url, models: found.models });
+    } catch (e) {
+      log('warn', '拉取提供方模型目录失败', { error: e.message });
+      fail(e instanceof ProviderError ? 400 : 500, e.message, e.field);
+    }
+    return true;
+  }
+
   const one = /^\/api\/providers\/([a-z0-9-]+)$/.exec(url);
+  if (one && one[1] === 'discover') return false;
   if (one && req.method === 'DELETE') {
     try {
       store.remove(one[1]);
@@ -431,21 +477,6 @@ export async function handleProviderApi(req, res, url, ctx) {
       log('info', '已更新自定义提供方', { id: one[1] });
       json(res, 200, { ok: true, provider: redact(store, updated), providers: store.list() });
     } catch (e) { fail(e instanceof ProviderError ? 400 : 500, e.message, e.field); }
-    return true;
-  }
-
-  if (req.method === 'POST' && /^\/api\/providers\/[a-z0-9-]+\/discover$/.test(url)) {
-    const want = (await readBody(req, 64 * 1024)) || {};
-    try {
-      const found = await fetchModelCandidates({
-        baseUrl: want.baseUrl, protocol: want.protocol, apiKey: want.apiKey, pathPrefix: want.pathPrefix,
-      });
-      log('info', '已拉取提供方模型目录', { count: found.models.length, url: found.url });
-      json(res, 200, { ok: true, url: found.url, models: found.models });
-    } catch (e) {
-      log('warn', '拉取提供方模型目录失败', { error: e.message });
-      fail(e instanceof ProviderError ? 400 : 500, e.message, e.field);
-    }
     return true;
   }
 

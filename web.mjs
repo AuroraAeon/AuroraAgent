@@ -160,15 +160,17 @@ function serveStatic(res, filePath) {
 }
 
 // ---------- 活跃流注册表（/api/abort 按 requestId 停止；设计借鉴 dsh 的 stream cancel 语义） ----------
-const activeStreams = new Map(); // requestId -> { controller, started, usage, stopped, settled, model }
+const activeStreams = new Map(); // requestId -> { controller, started, usage, stopped, settled, model, provider, price }
 function settleUsage(entry, ms) {
   entry.settled = true;
   const u = entry.usage;
   const inTok = u?.prompt_tokens || 0;
   const outTok = u?.completion_tokens || 0;
-  const cost = (inTok * PRICE.input + outTok * PRICE.output) / 1_000_000;
+  // 自定义提供方可在记录里自带单价；未设置则沿用内置价格，账本不记假账
+  const price = entry.price || PRICE;
+  const cost = (inTok * price.input + outTok * price.output) / 1_000_000;
   const rec = {
-    requestId: entry.requestId, model: entry.model, ms,
+    requestId: entry.requestId, model: entry.model, provider: entry.provider, ms,
     inputTokens: inTok, outputTokens: outTok,
     reasoningTokens: u?.completion_tokens_details?.reasoning_tokens || 0,
     cost: Number(cost.toFixed(6)), stopped: entry.stopped,
@@ -359,7 +361,7 @@ const server = createServer(async (req, res) => {
 
         // 注册活跃流：/api/abort 与客户端断开都能中止上游，避免继续计费
         requestId = String(body.requestId || '') || randomUUID();
-        entry = { requestId, controller: new AbortController(), started, usage: null, stopped: false, settled: false, model };
+        entry = { requestId, controller: new AbortController(), started, usage: null, stopped: false, settled: false, model, provider: provider.id, price: provider.price };
         activeStreams.set(requestId, entry);
         res.on('close', () => {
           if (!res.writableEnded && !entry.settled) {
