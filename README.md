@@ -19,6 +19,7 @@
 | --- | --- |
 | API Key / 模型 / 温度等配置 | `~/Library/Application Support/ModelTester/modeltester.config.json` |
 | 用量账本（含被中止的请求） | `~/Library/Application Support/ModelTester/usage.jsonl` |
+| 自定义提供方（Key / 端点 / 模型目录 / 单价） | `~/Library/Application Support/ModelTester/providers.json` |
 | 服务日志 | `~/Library/Logs/com.modeltester.app.log` |
 
 数据目录按三级回退解析：`MODELTESTER_DATA_DIR` 环境变量 → 同目录已存在 `modeltester.config.json` 时用当前目录（源码开发态）→ `~/Library/Application Support/ModelTester`（App 态）。因此 Bundle 内直接执行 npm 命令无需设置任何环境变量。
@@ -29,6 +30,24 @@
 
 - **开机自启**开关：切换即安装/卸载 LaunchAgent `com.modeltester.app`；前端轮询 `/api/settings` 直到 `managed` 与目标一致（开启时旧实例会让出端口等新 job 接管，不可用窗口约 1 秒）
 - **服务状态**：`managed`（LaunchAgent 是否托管当前进程）、服务 PID、数据目录、端口、版本
+- **提供方**：内置美团 LongCat（只读行）+ 自定义提供方管理，详见下文「自定义提供方」
+
+## 自定义提供方（接任意上游）
+
+除内置美团 LongCat 外，可在设置页「提供方」区接入任意上游——OpenAI 兼容网关、自建服务、或比内置目录更新更快的厂商，都不用改代码：
+
+1. 设置页点「添加自定义提供方」，填 **Provider ID**（小写字母开头的唯一标识）、**显示名称**、**API 地址**（端点根地址，会自动拼 `/chat/completions` 与 `/models`）、**API 协议**（OpenAI 兼容 / Anthropic Messages）、**API 密钥**
+2. **模型目录**三种填法：点「获取可用模型」从上游拉取后勾选（拉取是只读的，勾选后才写入）、手写模型 ID、或两者混用；每个模型可带显示名称、上下文窗口、最大输出 token（支持 `256K` / `1M` 写法）
+3. 保存后模型立即出现在页头模型选择器里（按提供方分组），选中即用；底部会提示当前提供方与单价
+4. **计费单价**（可选，¥/百万 tokens）：填了账本按它计价，留空回退内置价，不会记出假账；只填一侧时另一侧同样回退
+
+细节规约：
+
+- API 密钥只写入数据目录的 `providers.json`，任何界面都不回显；编辑时密钥框留空表示保留原值
+- 「自定义设置」折叠区里可改显示名称、协议、地址、最大输出 token、思考开关（`thinking` 仅在勾选后随请求发送，避免严格上游把陌生字段当错误拒绝）、单价与模型目录
+- 同一时刻只打开一个编辑器卡片；删除有确认弹层，会说明将同时移除配置与密钥
+- 自定义提供方走 Anthropic 协议时，`reasoning_content` / `content` / 用量帧由服务端翻译成 OpenAI 帧，前端零改动
+- 内置 LongCat 行只读（由配置与上游目录决定）；`chat.mjs` 终端端与 `check.mjs` 自检目前仍只走内置提供方，自定义提供方在网页端使用
 
 ## 第一步：获取 API Key（唯一需要你操作的）
 
@@ -49,7 +68,7 @@ Bundle 内终端执行（数据目录自动回退，直接读到 Key）：
 cd ~/Applications/ModelTester.app/Contents/Resources/app
 npm run check   # 自检：Key 是否有效 + 模型列表 + 测试请求
 npm run chat    # 终端聊天（流式输出，思考过程灰色显示）
-npm test        # 25 个单元/集成测试（mock 上游，不花 Key 额度；账本落临时目录，不污染真实数据）
+npm test        # 56 个单元/集成测试（mock 上游，不花 Key 额度；账本落临时目录，不污染真实数据）
 npm run color   # 纯色图片识别测试（打真实 API，约 ¥0.004）
 ```
 
@@ -80,10 +99,17 @@ npm run color   # 纯色图片识别测试（打真实 API，约 ¥0.004）
 │   ├── check.mjs        # 连通性自检
 │   ├── public/
 │   │   ├── index.html   # 网页前端（独立文件）
+│   │   ├── providers.mjs # 自定义提供方界面逻辑（行/编辑器/挑选弹层）
+│   │   ├── providers.css # 提供方界面样式（复用全局设计令牌）
 │   │   ├── icon.svg     # ModelTester 品牌标识（App 图标同款）
 │   │   └── vendors/     # 各接入厂商的标识（meituan.svg …）
 │   ├── util/sse.mjs     # 增量 SSE 解析器 + token 估算（前后端共用）
-│   ├── test/            # mock 上游 + 25 个测试
+│   ├── util/providers.mjs # 自定义提供方存储/校验/发现 + /api/providers 路由
+│   ├── util/wire.mjs    # 协议适配：OpenAI 与 Anthropic Messages 请求拼装 + 帧翻译
+│   ├── util/stream.mjs  # SSE 透传 / 翻译泵（逐帧转发 + 用量累计）
+│   ├── util/usage.mjs   # 用量账本（逐行追加 + 汇总）
+│   ├── util/service.mjs # LaunchAgent 生命周期（plist 生成 / 安装 / 状态）
+│   ├── test/            # mock 上游 + 56 个测试
 │   └── tools/           # color-test / install-service / build-app
 ├── Resources/docs/      # figures/（学术图与原始数据）+ figure-work/（图表脚本）
 ├── AppIcon.icns         # ModelTester 品牌图标（public/icon.svg 栅格化生成）
@@ -111,9 +137,14 @@ MODELTESTER_DATA_DIR="$HOME/Library/Application Support/ModelTester" \
 
 | 接口 | 说明 |
 | --- | --- |
-| `POST /api/chat` | SSE 流式对话；请求体带 `requestId`（前端自动生成）用于注册活跃流 |
+| `POST /api/chat` | SSE 流式对话；请求体带 `requestId`（前端自动生成）用于注册活跃流；带 `provider` 时路由到对应自定义提供方（OpenAI 兼容或 Anthropic 协议），省略时按模型 ID 反查，再回退内置 |
 | `POST /api/abort` | 按 `requestId` 停止正在进行的生成：`{aborted:true}` 已中止 / `{aborted:false}` 无对应活跃请求 |
-| `GET /api/models` | 模型目录（可读名 + 标签 + 是否配置默认）；60s 缓存，`?force=1` 强制刷新 |
+| `GET /api/models` | 模型目录（可读名 + 标签 + 是否配置默认 + 所属提供方）；60s 缓存，`?force=1` 强制刷新；自定义提供方的模型一并汇总返回 |
+| `GET /api/providers` | 提供方目录：协议列表 + 全部提供方（内置在前，永不含 apiKey） |
+| `POST /api/providers` | 创建自定义提供方；字段校验失败返回 400 + `field` 指向具体字段 |
+| `PUT /api/providers/:id` | 更新；`apiKey` 留空表示保留已存储密钥，单价传空对象表示清空 |
+| `DELETE /api/providers/:id` | 删除自定义提供方；内置提供方拒绝删除 |
+| `POST /api/providers/discover` | 只读质问上游模型目录（`{baseUrl, protocol, apiKey}`），解析 `{data:[]}` / `{models:[]}` / `{models:{}}` 三种形态 |
 | `GET /api/status` `/api/health` | Key 状态 / 存活检查 |
 | `GET /api/usage` | 用量汇总；明细落盘 `usage.jsonl`，被中止的请求记 `stopped:true` |
 | `GET/POST /api/settings` | 开机自启开关 + 服务状态（`managed` / PID / 数据目录 / 端口 / 版本） |
@@ -125,6 +156,7 @@ MODELTESTER_DATA_DIR="$HOME/Library/Application Support/ModelTester" \
 
 以下设计借鉴自本机 `deepseek-harness`（`dsh`，源码位于 `/Users/pub/.local/lib/node_modules/@deepseek-ai/dsh`）：
 
+- **自定义提供方设置页**：借鉴 `dsh-client-ui-settings-models` 的 Models 区——提供方行 + 凭据状态点（绿=已配置/红=缺失，只按确认状态着色）、同一时刻单个编辑器卡片、「自定义设置」折叠区、只读质问 + 可搜索的候选挑选弹层（勾选后才写入）、删除确认弹层、保存提示 `role=status`
 - **模型选择器交互**：借鉴 `dsh-client-ui-model-selection` 的 `ModelSelect` —— 触发器 + 弹层（贴触发器右对齐向上弹出、12px 视口边距钳制）、`↑`/`↓` 循环移动焦点、`Escape` 关闭并把焦点归还触发器、点击外部与失焦均关闭、`aria-haspopup/expanded/controls` + `role=menu/menuitem`、`aria-busy` 忙碌态、加载失败显示原因并提供重试
 - **按流 id 取消 + 命名原因**：借鉴 `dsh-api-gateway` 的 stream cancel 协议与 `cancellableStream`，中止时携带原因（`用户点击了停止按钮` / `客户端断开连接`），日志可区分
 - **race 式中断读取循环**：`Promise.race([reader.read(), abortRace])`，即使 `read()` 未立即拒绝也能立刻跳出循环；服务端与浏览器端读取循环均已采用，退出前 `reader.cancel()` 释放上游连接
@@ -138,7 +170,7 @@ MODELTESTER_DATA_DIR="$HOME/Library/Application Support/ModelTester" \
 
 ```bash
 cd ~/Documents/ModelTester
-npm test                      # 25 个测试（mock 上游，账本落临时目录，不污染真实数据）
+npm test                      # 56 个测试（mock 上游，账本落临时目录，不污染真实数据）
 npm run check                 # 真实 API 连通性自检（Key 经数据目录回退自动读取）
 PORT=8788 npm run web         # 开发模式前台运行（避开常驻服务占用的 8787）
 npm run publish               # 构建 Bundle + 重启常驻服务，一条命令发布
@@ -185,7 +217,8 @@ npm run publish               # 构建 Bundle + 重启常驻服务，一条命�
 
 ## 当前状态（实测打通）
 
-- `npm test` 25/25 通过（mock 上游，不花额度）；`npm run check` 真实 API 连通（Key 有效 + 模型目录 + 测试请求）
+- `npm test` 56/56 通过（mock 上游，不花额度）；`npm run check` 真实 API 连通（Key 有效 + 模型目录 + 测试请求）
+- 自定义提供方：设置页可接任意 OpenAI 兼容网关或 Anthropic Messages 上游；模型目录可手动编写或从上游拉取勾选；账本按提供方单价计价（只填一侧时另一侧回退内置价）；内置 LongCat 请求载荷与接入前逐字节一致（有专门测试守着）
 - LaunchAgent `com.modeltester.app`：running / managed，数据目录指向 `~/Library/Application Support/ModelTester`
 - 开机自启开关往返验证通过：关闭→job 与 plist 移除、App 经保活子进程继续服务；开启→旧实例等 job 拉起，App 全程可达，实际不可用约 1s
 - 启动器实测：同进程接管、无重复启动

@@ -36,23 +36,31 @@ ModelTester 是「全球厂商最新大模型速测工作台」：厂商每上�
 - 双客户端：终端（`chat.mjs`）+ 网页（`web.mjs` + `public/index.html`），共享同一套配置与数据目录
 - 可打包为独立 macOS Application（`~/Applications/ModelTester.app`），由 LaunchAgent `com.modeltester.app` 常驻
 - 当前接入厂商：美团 LongCat-2.5-Preview。Base URL / 模型目录 / Key 全部是配置项——**代码不绑定厂商**，接入新厂商不改架构
+- 自定义 Provider：设置页可加任意 OpenAI 兼容 / Anthropic Messages 上游（存储、校验、发现、路由在 `util/providers.mjs` + `util/wire.mjs`，前端在 `public/providers.mjs`）；内置提供方只读，请求载荷保持历史形态
 
 ## 2. 架构地图
 
 | 文件 | 职责 |
 | --- | --- |
-| `web.mjs` | 网页服务核心：静态页、`/api/*` 路由、SSE 代理、停止中断、用量账本、模型目录（单飞加载 + 60s 缓存）、LaunchAgent 生命周期管理 |
+| `web.mjs` | 网页服务核心：静态页、`/api/*` 路由、SSE 代理、停止中断、模型目录（单飞加载 + 60s 缓存）；Provider 路由 / LaunchAgent / SSE 泵 / 账本已拆到 `util/`，静态资源走 `STATIC_ASSETS` 白名单 |
 | `chat.mjs` | 终端客户端：ANSI 彩色输出、思考过程流式渲染、中断保留已生成内容、`/key` 等命令 |
 | `check.mjs` | 连接自检：Key 校验 → 模型列表 → 一条最小真实请求（会花少量钱） |
 | `public/index.html` | 单页前端：原生 JS + 内联 SVG 图标，无框架；模型选择器、设置弹层（原生 `<dialog closedby="any">`） |
 | `util/sse.mjs` | SSE 解析器 `SseParser` + token 估算（测试与前端共享） |
+| `util/providers.mjs` | 自定义 Provider：存储（`providers.json` 原子落盘）、ID/端点/协议/模型目录/单价校验、上游模型发现、`/api/providers` 路由处理 |
+| `util/wire.mjs` | 协议适配：OpenAI 兼容与 Anthropic Messages 的 URL 拼接、请求拼装、Anthropic SSE 帧翻译成 OpenAI 帧 |
+| `util/stream.mjs` | SSE 透传 / 翻译泵（逐帧转发 + 用量累计，供 `/api/chat` 使用） |
+| `util/usage.mjs` | 用量账本：逐行追加 + 汇总出口 |
+| `util/service.mjs` | LaunchAgent 生命周期：plist 生成 / 安装 / 卸载 / 状态 |
+| `public/providers.mjs` | 自定义 Provider 前端：提供方行、编辑器/添加卡片、可用模型挑选弹层、删除确认（`mountProviders`） |
+| `public/providers.css` | Provider 界面样式，复用全局设计令牌 |
 | `test/` | e2e 测试：mock 上游 + 真实 socket（见第 8 节） |
 | `tools/install-service.mjs` | LaunchAgent 安装 / 卸载 / 状态（plist 生成规则与 `web.mjs` 内置逻辑保持一致） |
 | `tools/build-app.mjs` | 打包 `.app`（含自保护，见第 6 节） |
 | `tools/color-test.mjs` | 纯色识别回归测试工具（结论沉淀在 `docs/`） |
 | `docs/` | 测试结论与学术图表（PNG / SVG / PDF + CSV；**TIFF 永不再进仓库**） |
 
-数据流：浏览器 `POST /api/chat` → `web.mjs` 按 OpenAI 兼容协议请求上游 → SSE 逐帧透传（`reasoning_content` 渲染为思考、`content` 渲染为回答）→ 结束结算用量账本。客户端断开即 `AbortController` 中止上游，不浪费额度。
+数据流：浏览器 `POST /api/chat` → `web.mjs` 按模型所属提供方选协议请求上游（省略 `provider` 时按模型 ID 反查，再回退内置）→ SSE 逐帧透传或翻译（`reasoning_content` 渲染为思考、`content` 渲染为回答）→ 结束按提供方单价结算用量账本。客户端断开即 `AbortController` 中止上游，不浪费额度。
 
 ## 3. 常用命令
 
@@ -79,7 +87,7 @@ ModelTester 是「全球厂商最新大模型速测工作台」：厂商每上�
 
 配置字段：`apiKey` / `model` / `thinking` / `temperature` / `maxTokens`；用量账本 `usage.jsonl` 逐行追加。环境变量 `MODELTESTER_API_KEY`、`MODELTESTER_BASE_URL` 优先级高于配置文件。
 
-**`modeltester.config.json` 与 `usage.jsonl` 已在 `.gitignore`，永远不许提交**——Key 泄露即安全事故。
+**`modeltester.config.json`、`usage.jsonl`、`providers.json` 已在 `.gitignore`，永远不许提交**——Key 泄露即安全事故。自定义提供方（含 API 密钥、单价）存 `providers.json`，内置 LongCat 提供方在内存里合成（`builtin: true`，只读）。
 
 ## 5. 代码风格铁律
 
@@ -105,7 +113,7 @@ ModelTester 是「全球厂商最新大模型速测工作台」：厂商每上�
 1. `public/vendors/<name>.svg` 放厂商标识；`web.mjs` 的 `/vendor/` 白名单路由自动放行（正则防目录穿越，勿放宽）
 2. `public/index.html` 的 `VENDOR_MARKS` 数组加一行前缀匹配（模型 id → 图标）
 3. 配置 `MODELTESTER_BASE_URL`；模型目录来自上游 `GET /openai/v1/models`，代码不硬编码厂商模型清单
-4. `README.md`「当前接入厂商」段同步更新；协议差异（如思考开关字段）在 `web.mjs` 请求构造处处理并补测试
+4. `README.md`「当前接入厂商」段同步更新；协议差异（如思考开关字段、Messages 线路）在 `util/wire.mjs` 处理并补测试；更常见的路径是让用户直接在设置页加自定义提供方，无需改代码
 5. 全程遵守第 0 节：每完成一步且 `npm test` 通过，就提交推送一次
 
 ## 8. 测试规约
@@ -113,7 +121,7 @@ ModelTester 是「全球厂商最新大模型速测工作台」：厂商每上�
 - e2e 模式：mock 上游（`127.0.0.1:18901`，复刻真实 SSE 帧与 401 / 402 错误）+ 真实 socket 拉起 `web.mjs`（`127.0.0.1:18787`）
 - **数据隔离**：测试以临时目录作 `MODELTESTER_DATA_DIR`，绝不许写真实数据目录
 - 新路由 / 新行为 / 新错误映射必须带中文测试名进入 `test/run-tests.mjs`；mock 需要新行为时改 `test/mock-longcat.mjs`
-- 基线 25/25 通过。提交前 `npm test` 必须全绿；不许 `skip`，不许放宽断言迁就失败
+- 基线 56/56 通过。提交前 `npm test` 必须全绿；不许 `skip`，不许放宽断言迁就失败
 - `npm run check` 走真实上游，只在改上游集成时跑（花少量钱）
 
 ## 9. 反模式（NEVER）
@@ -130,7 +138,7 @@ ModelTester 是「全球厂商最新大模型速测工作台」：厂商每上�
 
 ## 10. 验证基线（改动后自查）
 
-- `npm test` → 25/25
+- `npm test` → 56/56
 - `curl -s localhost:8787/api/health` → `{"ok":true,...}`；`/api/settings` → `version` / `managed` / `dataDir` 符合预期
 - 浏览器打开 http://localhost:8787 ：无 emoji、厂商图标正常、动画流畅、设置弹层可开关开机自启
 - 改了启动 / 打包逻辑：`npm run publish` 后 `launchctl print gui/$(id -u)/com.modeltester.app` 确认 `state = running`
