@@ -63,18 +63,19 @@ export async function runTerminalTurn({ store, usage, session, input, provider, 
       case 'tool_event': {
         endToolLine();
         const label = toolLabel(p.toolName);
+        const sub = p.subAgent ? `${painter.accent('└')} ` : ''; // 子代理工具调用缩进一级呈现
         const res = p.resource || (p.params && (p.params.path || p.params.url || p.params.command || p.params.dir)) || '';
         if (p.phase === 'started') {
           breakLine();
-          write(`  ${painter.dim('…')} ${label}${res ? ` ${painter.dim(String(res))}` : ''}`);
+          write(`  ${sub}${painter.dim('…')} ${label}${res ? ` ${painter.dim(String(res))}` : ''}`);
           toolLineOpen = true;
         } else if (p.phase === 'confirmation_needed') {
           toolLineOpen = false; // 行已由 endToolLine 清掉，转为权限询问
         } else if (p.phase === 'confirmed') {
-          write(`  ${painter.dim('…')} ${label}${res ? ` ${painter.dim(String(res))}` : ''}`);
+          write(`  ${sub}${painter.dim('…')} ${label}${res ? ` ${painter.dim(String(res))}` : ''}`);
           toolLineOpen = true;
         } else if (p.phase === 'completed') {
-          write(`  ${painter.success('✓')} ${label}${res ? ` ${res}` : ''}${p.durationMs != null ? painter.dim(` ${p.durationMs}ms`) : ''}\n`);
+          write(`  ${sub}${painter.success('✓')} ${label}${res ? ` ${res}` : ''}${p.durationMs != null ? painter.dim(` ${p.durationMs}ms`) : ''}\n`);
           if (p.toolName === 'todo' && Array.isArray(p.extra?.todos)) {
             const t = p.extra.todos;
             write(`  ${painter.dim(`待办进度 ${t.filter((x) => x.done).length}/${t.length}`)}\n`);
@@ -82,7 +83,7 @@ export async function runTerminalTurn({ store, usage, session, input, provider, 
           if (p.output) { breakLine(); write(painter.dim(indent(p.output, 220)) + '\n'); }
         } else if (p.phase === 'failed') {
           const denied = rejectedTools.has(p.toolId);
-          write(`  ${painter.error('✗')} ${label}${res ? ` ${res}` : ''}${denied ? painter.dim(' 已拒绝') : ''}\n`);
+          write(`  ${sub}${painter.error('✗')} ${label}${res ? ` ${res}` : ''}${denied ? painter.dim(' 已拒绝') : ''}\n`);
           if (p.output && !denied) { breakLine(); write(painter.dim(indent(p.output, 220)) + '\n'); }
         } else if (p.phase === 'rejected') {
           rejectedTools.add(p.toolId); // 行不在此处打印：随后到的 failed 负责收尾

@@ -77,11 +77,13 @@ export function ToolCard({ tool, onDecide }: Props) {
     : output;
   const paramsJson = (() => { try { return JSON.stringify(tool.params, null, 2); } catch { return String(tool.params ?? ''); } })();
 
+  const children = tool.name === 'task' && Array.isArray(tool.extra?.children) ? tool.extra.children : null;
   return (
-    <div className={`toolcard tc-${tool.phase}`}>
+    <div className={`toolcard tc-${tool.phase}${tool.subAgent ? ' tc-sub' : ''}`}>
       <details open={tool.phase === 'ask' || undefined}>
         <summary>
           <span className="tc-icon"><meta.Icon size={14} /></span>
+          {tool.subAgent ? <span className="tc-sub-mark" title={`子代理：${tool.subTask || ''}`}>└</span> : null}
           <span className="tc-name">{meta.label}</span>
           {resource ? <code className="tc-res" title={resource}>{resource}</code> : null}
           <span className={`tc-status ${status.cls}`}>{status.node}</span>
@@ -107,6 +109,19 @@ export function ToolCard({ tool, onDecide }: Props) {
             </div>
           ) : null}
           {diff && diff.length ? <DiffView diff={diff} /> : null}
+          {children ? (
+            <div className="tc-sec">
+              <div className="tc-sec-t">子代理（{children.length}）</div>
+              <ul className="subkids">
+                {children.map((c, i) => (
+                  <li key={c.sessionId || i} className={c.ok ? 'ok' : 'bad'}>
+                    <span className="subkids-task">{c.task}</span>
+                    <span className="subkids-meta">{c.ok ? `${c.rounds} 轮 · ${c.tools} 工具` : '失败'}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           <div className="tc-sec">
             <div className="tc-sec-t">参数</div>
             <pre className="tc-pre">{paramsJson || '（无）'}</pre>

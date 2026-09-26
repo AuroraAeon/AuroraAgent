@@ -6,7 +6,7 @@ export type AgentEvent =
   | { type: 'model_round_started'; sessionId: string; turnId: string; round: number }
   | { type: 'text_chunk'; sessionId: string; turnId: string; text: string }
   | { type: 'thinking_chunk'; sessionId: string; turnId: string; text: string }
-  | { type: 'tool_event'; sessionId: string; turnId: string; phase: ToolPhase; toolId: string; toolName: string; params?: unknown; resource?: string; requestId?: string; output?: string; durationMs?: number; extra?: unknown }
+  | { type: 'tool_event'; sessionId: string; turnId: string; phase: ToolPhase; toolId: string; toolName: string; params?: unknown; resource?: string; requestId?: string; output?: string; durationMs?: number; extra?: unknown; subAgent?: boolean; subTask?: string; subSessionId?: string }
   | { type: 'plan_proposed'; sessionId: string; turnId: string; plan: string }
   | { type: 'plan_approved'; sessionId: string; turnId: string; plan: string }
   | { type: 'plan_rejected'; sessionId: string; turnId: string; plan: string }
@@ -52,8 +52,9 @@ export type SettingsInfo = {
 /** 历史投影：一条 assistant 视图可带思考、工具列表与用量脚注 */
 export type TodoItem = { text: string; done: boolean };
 export type DiffLine = { type: 'context' | 'add' | 'del' | 'meta'; lineNo: number; text: string };
-export type ToolExtra = { diff?: DiffLine[]; todos?: TodoItem[]; path?: string };
-export type ToolView = { id: string; name: string; params: unknown; phase: 'running' | 'ask' | 'rejected' | 'done' | 'failed'; output: string; requestId?: string; extra?: ToolExtra };
+export type SubAgentResult = { task: string; ok: boolean; text: string; sessionId: string; rounds: number; tools: number };
+export type ToolExtra = { diff?: DiffLine[]; todos?: TodoItem[]; path?: string; children?: SubAgentResult[] };
+export type ToolView = { id: string; name: string; params: unknown; phase: 'running' | 'ask' | 'rejected' | 'done' | 'failed'; output: string; requestId?: string; extra?: ToolExtra; subAgent?: boolean; subTask?: string };
 export type MsgView =
   | { kind: 'user'; key: string; text: string; at?: string }
   | { kind: 'assistant'; key: string; text: string; thinking: string; tools: ToolView[]; usage: { inputTokens: number; outputTokens: number; cost: number } | null; at?: string }

@@ -29,11 +29,11 @@ function applyToolEvent(live: LiveTurn, ev: Extract<AgentEvent, { type: 'tool_ev
   };
   switch (ev.phase) {
     case 'started':
-      upsert({ id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'running', output: '' });
+      upsert({ id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'running', output: '', ...(ev.subAgent ? { subAgent: true, subTask: ev.subTask } : {}) });
       break;
     case 'params_partial':
       if (idx >= 0) tools[idx] = { ...tools[idx], params: ev.params };
-      else upsert({ id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'running', output: '' });
+      else upsert({ id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'running', output: '', ...(ev.subAgent ? { subAgent: true, subTask: ev.subTask } : {}) });
       break;
     case 'confirmation_needed':
       upsert({ id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'ask', output: '', requestId: ev.requestId });

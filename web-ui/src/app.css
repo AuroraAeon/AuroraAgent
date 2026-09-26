@@ -201,6 +201,14 @@
   overflow-x:auto; white-space:pre-wrap; word-break:break-word; margin:0; max-height:280px; overflow-y:auto;
 }
 .tc-pre.err { border-color:var(--danger-line); color:var(--danger-ink); }
+.toolcard.tc-sub { margin-left:18px; border-left:2px solid var(--accent-line); }
+.tc-sub-mark { color:var(--accent-hi); font-weight:700; flex:none; }
+.subkids { list-style:none; display:flex; flex-direction:column; gap:4px; }
+.subkids li { display:flex; align-items:baseline; gap:8px; font-size:12.5px; color:var(--dim); }
+.subkids li::before { content:''; width:6px; height:6px; border-radius:50%; background:var(--ok); flex:none; align-self:center; }
+.subkids li.bad::before { background:var(--danger); }
+.subkids-task { color:var(--text); }
+.subkids-meta { margin-left:auto; color:var(--faint); font-size:11.5px; flex:none; }
 .tc-out { color:var(--dim); }
 
 /* ---------- diff 视图 ---------- */
