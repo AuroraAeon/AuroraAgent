@@ -359,3 +359,95 @@ export async function fetchModelCandidates(provider) {
   if (!models.length) throw new ProviderError('该提供方没有列出任何模型，请手动添加。', '');
   return { models, url };
 }
+
+/** 脱敏后的单个提供方（供保存后回显，形状与列表接口一致） */
+function redact(store, p) {
+  const row = store.list().find((x) => x.id === p.id);
+  if (row) return row;
+  return {
+    id: p.id, name: p.name, protocol: p.protocol, baseUrl: p.baseUrl,
+    builtin: Boolean(p.builtin), hasKey: Boolean(p.apiKey), model: p.model || '', models: p.models || [],
+  };
+}
+
+const json = (res, status, payload) => {
+  res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  res.end(JSON.stringify(payload));
+};
+
+/** 读取 JSON 请求体（带上限，超限直接掐断）；解析失败返回 null */
+function readBody(req, limit) {
+  return new Promise((resolve) => {
+    let raw = '';
+    req.on('data', (d) => { raw += d; if (raw.length > limit) req.destroy(); });
+    req.on('end', () => {
+      try { resolve(JSON.parse(raw || '{}')); } catch { resolve(null); }
+    });
+  });
+}
+
+/**
+ * /api/providers* 路由（借鉴 dsh Models 设置页：行 + 编辑器卡片 + 添加卡片 + 模型质问）。
+ * web.mjs 只保留一行分发，具体动作都在这里，避免单文件继续膨胀。
+ * @returns Promise<boolean> 是否已处理（true 时 web.mjs 直接 return）
+ */
+export async function handleProviderApi(req, res, url, ctx) {
+  const store = ctx.store;
+  const log = ctx.log;
+  const fail = (status, message, field) => json(res, status, { ok: false, error: message, field: field || '' });
+
+  if (req.method === 'GET' && url === '/api/providers') {
+    json(res, 200, { ok: true, protocols: PROTOCOLS, providers: store.list() });
+    return true;
+  }
+
+  if (req.method === 'POST' && url === '/api/providers') {
+    const draft = await readBody(req, 256 * 1024);
+    if (!draft) { fail(400, '请求体不是合法 JSON'); return true; }
+    try {
+      const created = store.create(draft);
+      log('info', '已创建自定义提供方', { id: created.id, protocol: created.protocol });
+      json(res, 200, { ok: true, provider: redact(store, created), providers: store.list() });
+    } catch (e) {
+      fail(e instanceof ProviderError ? 400 : 500, e.message, e.field);
+    }
+    return true;
+  }
+
+  const one = /^\/api\/providers\/([a-z0-9-]+)$/.exec(url);
+  if (one && req.method === 'DELETE') {
+    try {
+      store.remove(one[1]);
+      log('info', '已删除自定义提供方', { id: one[1] });
+      json(res, 200, { ok: true, providers: store.list() });
+    } catch (e) { fail(400, e.message, e.field); }
+    return true;
+  }
+  if (one && req.method === 'PUT') {
+    const patch = await readBody(req, 256 * 1024);
+    if (!patch) { fail(400, '请求体不是合法 JSON'); return true; }
+    try {
+      const updated = store.update(one[1], patch);
+      log('info', '已更新自定义提供方', { id: one[1] });
+      json(res, 200, { ok: true, provider: redact(store, updated), providers: store.list() });
+    } catch (e) { fail(e instanceof ProviderError ? 400 : 500, e.message, e.field); }
+    return true;
+  }
+
+  if (req.method === 'POST' && /^\/api\/providers\/[a-z0-9-]+\/discover$/.test(url)) {
+    const want = (await readBody(req, 64 * 1024)) || {};
+    try {
+      const found = await fetchModelCandidates({
+        baseUrl: want.baseUrl, protocol: want.protocol, apiKey: want.apiKey, pathPrefix: want.pathPrefix,
+      });
+      log('info', '已拉取提供方模型目录', { count: found.models.length, url: found.url });
+      json(res, 200, { ok: true, url: found.url, models: found.models });
+    } catch (e) {
+      log('warn', '拉取提供方模型目录失败', { error: e.message });
+      fail(e instanceof ProviderError ? 400 : 500, e.message, e.field);
+    }
+    return true;
+  }
+
+  return false;
+}

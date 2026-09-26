@@ -9,11 +9,12 @@ import { readFileSync, existsSync, openSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
-import { exec, execSync, spawn } from 'node:child_process';
+import { exec, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { SseParser } from './util/sse.mjs';
 import { UsageLedger } from './util/usage.mjs';
-import { ProviderStore, ProviderError, PROTOCOLS, fetchModelCandidates, chatUrl } from './util/providers.mjs';
+import { SERVICE_LOG, servicePid, isManaged, autostartInstalled } from './util/service.mjs';
+import { ProviderStore, ProviderError, chatUrl, handleProviderApi } from './util/providers.mjs';
+import { pumpSse } from './util/stream.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // 数据目录三级回退：MODELTESTER_DATA_DIR（启动器 / LaunchAgent 显式指定）→
@@ -205,26 +206,8 @@ async function resolveImage(p) {
   return 'data:' + mime + ';base64,' + buf.toString('base64');
 }
 
-// ---------- 设置 / 开机自启（LaunchAgent 生命周期管理） ----------
-// plist 生成规则与 tools/install-service.mjs 保持一致：日志固定落 ~/Library/Logs，
-// 避免 launchd 打不开 ~/Documents 等 TCC 保护目录里的重定向文件（exit 78 EX_CONFIG）
-const SERVICE_LABEL = 'com.modeltester.app';
-const SERVICE_DOMAIN = `gui/${process.getuid()}`;
-const PLIST_PATH = join(homedir(), 'Library/LaunchAgents', `${SERVICE_LABEL}.plist`);
-const SERVICE_LOG = join(homedir(), 'Library/Logs', `${SERVICE_LABEL}.log`);
+// ---------- 设置 / 开机自启（LaunchAgent 生命周期见 util/service.mjs） ----------
 const INSTALLER = join(__dirname, 'tools', 'install-service.mjs');
-const sh = (cmd) => {
-  try { return execSync(cmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }); }
-  catch (e) { return `${e.stdout || ''}${e.stderr || ''}`; }
-};
-/** launchd 里本服务的 pid；未安装/未运行返回 0 */
-function servicePid() {
-  const out = sh(`launchctl print ${SERVICE_DOMAIN}/${SERVICE_LABEL} 2>/dev/null`);
-  const m = out.match(/^\s*pid\s*=\s*(\d+)\s*$/m);
-  return m ? Number(m[1]) : 0;
-}
-/** 当前进程是否正由 LaunchAgent 托管（切换自启时决定能否安全 bootout） */
-const isManaged = () => servicePid() === process.pid;
 
 // ---------- 服务 ----------
 const server = createServer(async (req, res) => {
@@ -267,89 +250,9 @@ const server = createServer(async (req, res) => {
     }));
   }
 
-  // ---------- 自定义 Provider（借鉴 dsh Models 设置页：行 + 编辑器卡片 + 添加卡片） ----------
-  if (req.method === 'GET' && url === '/api/providers') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    return res.end(JSON.stringify({ ok: true, protocols: PROTOCOLS, providers: providers.list() }));
-  }
-  if (req.method === 'POST' && url === '/api/providers') {
-    let raw = '';
-    req.on('data', (d) => { raw += d; if (raw.length > 256 * 1024) req.destroy(); });
-    req.on('end', () => {
-      let draft = null;
-      try { draft = JSON.parse(raw || '{}'); } catch { draft = null; }
-      if (!draft) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ ok: false, error: '请求体不是合法 JSON' }));
-      }
-      try {
-        const created = providers.create(draft);
-        log('info', '已创建自定义提供方', { id: created.id, protocol: created.protocol });
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ ok: true, provider: redactProvider(created), providers: providers.list() }));
-      } catch (e) {
-        res.writeHead(e instanceof ProviderError ? 400 : 500, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ ok: false, error: e.message, field: e.field || '' }));
-      }
-    });
-    return;
-  }
-  const providerMatch = /^\/api\/providers\/([a-z0-9-]+)$/.exec(url);
-  if (providerMatch && (req.method === 'PUT' || req.method === 'DELETE')) {
-    const id = providerMatch[1];
-    if (req.method === 'DELETE') {
-      try {
-        providers.remove(id);
-        log('info', '已删除自定义提供方', { id });
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ ok: true, providers: providers.list() }));
-      } catch (e) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ ok: false, error: e.message, field: e.field || '' }));
-      }
-    }
-    let raw = '';
-    req.on('data', (d) => { raw += d; if (raw.length > 256 * 1024) req.destroy(); });
-    req.on('end', () => {
-      let patch = null;
-      try { patch = JSON.parse(raw || '{}'); } catch { patch = null; }
-      if (!patch) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ ok: false, error: '请求体不是合法 JSON' }));
-      }
-      try {
-        const updated = providers.update(id, patch);
-        log('info', '已更新自定义提供方', { id });
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ ok: true, provider: redactProvider(updated), providers: providers.list() }));
-      } catch (e) {
-        res.writeHead(e instanceof ProviderError ? 400 : 500, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ ok: false, error: e.message, field: e.field || '' }));
-      }
-    });
-    return;
-  }
-  if (req.method === 'POST' && /^\/api\/providers\/[a-z0-9-]+\/discover$/.test(url)) {
-    let raw = '';
-    req.on('data', (d) => { raw += d; if (raw.length > 64 * 1024) req.destroy(); });
-    req.on('end', async () => {
-      let want = {};
-      try { want = JSON.parse(raw || '{}'); } catch { want = {}; }
-      try {
-        const found = await fetchModelCandidates({
-          baseUrl: want.baseUrl, protocol: want.protocol, apiKey: want.apiKey, pathPrefix: want.pathPrefix,
-        });
-        log('info', '已拉取提供方模型目录', { count: found.models.length, url: found.url });
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ ok: true, url: found.url, models: found.models }));
-      } catch (e) {
-        const status = e instanceof ProviderError ? 400 : 500;
-        log('warn', '拉取提供方模型目录失败', { error: e.message });
-        res.writeHead(status, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ ok: false, error: e.message, field: e.field || '' }));
-      }
-    });
-    return;
+  // 自定义 Provider（/api/providers*，实现见 util/providers.mjs 的 handleProviderApi）
+  if (url.startsWith('/api/providers')) {
+    if (await handleProviderApi(req, res, url, { store: providers, log })) return;
   }
 
   if (req.method === 'GET' && url === '/api/settings') {
@@ -358,7 +261,7 @@ const server = createServer(async (req, res) => {
     return res.end(JSON.stringify({
       ok: true,
       version: VERSION,
-      autostart: existsSync(PLIST_PATH),
+      autostart: autostartInstalled(),
       managed: pid === process.pid,
       serviceRunning: pid > 0,
       servicePid: pid || null,
@@ -518,31 +421,7 @@ const server = createServer(async (req, res) => {
 
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' });
         reader = upstream.body.getReader();
-        const decoder = new TextDecoder();
-        const parser = new SseParser();
-        // 借鉴 dsh cancellableStream：abort 时即使 read() 未立即拒绝，也能立刻跳出循环
-        let rejectOnAbort;
-        const abortRace = new Promise((_, reject) => { rejectOnAbort = reject; });
-        abortRace.catch(() => {}); // 防止循环正常结束后才 abort 导致未处理的拒绝
-        entry.controller.signal.addEventListener('abort', () => {
-          const reason = entry.controller.signal.reason;
-          rejectOnAbort(reason instanceof Error ? reason : new Error('已中止'));
-        }, { once: true });
-        for (;;) {
-          const { done, value } = await Promise.race([reader.read(), abortRace]);
-          if (done) break;
-          res.write(Buffer.from(value));
-          // 顺手用 SSE 解析器从流里提取 usage 记账
-          for (const ev of parser.feed(decoder.decode(value, { stream: true }))) {
-            if (ev.data === '[DONE]') continue;
-            try { const j = JSON.parse(ev.data); if (j.usage) { entry.usage = j.usage; } } catch {}
-          }
-        }
-        for (const ev of parser.end()) {
-          if (ev.data === '[DONE]') continue;
-          try { const j = JSON.parse(ev.data); if (j.usage) entry.usage = j.usage; } catch {}
-        }
-        res.end();
+        await pumpSse(reader, res, entry);
         const rec = settleUsage(entry, Date.now() - started);
         log('info', '对话完成', { ms: rec.ms, inputTokens: rec.inputTokens, outputTokens: rec.outputTokens, cost: rec.cost, requestId });
       } catch (err) {
