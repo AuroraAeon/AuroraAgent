@@ -405,6 +405,9 @@ await test('Harness：三档契约与未知 id 回退', () => {
   eq(HARNESSES.length, 3, 'v1 实现 Minimal / Standard / Ultimate');
   eq(getHarness('minimal').tools.length, 0, 'Minimal 不挂工具');
   eq(getHarness('ultimate').maxRounds > getHarness('standard').maxRounds, true, 'Ultimate 轮次上限更高');
+  eq(getHarness('standard').tools.includes('task'), true, 'Standard 应挂 task（提示要求派发子代理）');
+  eq(getHarness('ultimate').tools.includes('task'), true, 'Ultimate 应挂 task（提示要求派发子代理）');
+  eq(getHarness('minimal').tools.includes('task'), false, 'Minimal 不挂 task');
   eq(getHarness('nope').id, 'standard', '未知 id 回退 standard');
   const ids = harnessSummaries().map((h) => h.id);
   eq(ids.join(','), 'minimal,standard,ultimate');

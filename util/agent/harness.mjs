@@ -40,7 +40,7 @@ export const HARNESSES = [
     id: 'ultimate',
     label: 'Ultimate',
     summary: '复杂任务：充分探索、逐步验证、汇总结果',
-    tools: ['read_file', 'list_dir', 'write_file', 'edit_file', 'shell', 'web_fetch', 'grep', 'glob', 'todo'],
+    tools: ['read_file', 'list_dir', 'write_file', 'edit_file', 'shell', 'web_fetch', 'grep', 'glob', 'todo', 'task'],
     maxRounds: 64,
     compactRatio: 0.6,
     systemPrompt: [
