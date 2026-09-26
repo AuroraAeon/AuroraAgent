@@ -1208,6 +1208,17 @@ try {
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'tokens.css'), 'utf8');
     assert(css.includes('--diff-add:') && css.includes('--diff-del:'), 'tokens.css 应有 diff 语义令牌');
   });
+  await test('MCP 管理面板源码契约：设置弹层可管理服务器与实验门控提示', () => {
+    const panel = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'McpPanel.tsx'), 'utf8');
+    assert(panel.includes('AURORAAGENT_EXPERIMENTAL_MCP=1'), '未开启实验时应给出开启指引');
+    assert(panel.includes('mcp__') && panel.includes('测试连接') && panel.includes('stdio') && panel.includes('http'), '面板应呈现工具命名规则、连接测试与两种传输');
+    const settings = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SettingsDialog.tsx'), 'utf8');
+    assert(settings.includes('<McpPanel />'), '设置弹层应嵌入 MCP 面板');
+    const api = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'api.ts'), 'utf8');
+    assert(api.includes('listMcpServers') && api.includes('createMcpServer') && api.includes('deleteMcpServer') && api.includes('probeMcpServer'), 'api 客户端应覆盖 MCP 四个调用');
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    assert(css.includes('.mcp-form') && css.includes('.mcp-form-row'), 'app.css 应有 MCP 表单样式');
+  });
   await test('旧 UI 已退役：提供方模块与样式不再服务', async () => {
     eq((await fetch(`${BASE}/providers.mjs`)).status, 404);
     eq((await fetch(`${BASE}/providers.css`)).status, 404);

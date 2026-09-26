@@ -414,6 +414,20 @@
   transition:color .15s var(--ease), border-color .15s var(--ease);
 }
 .pv-add:hover { color:var(--accent-hi); border-color:var(--accent-line); }
+/* MCP 管理面板（设置弹层） */
+.mcp-form {
+  border:1px solid var(--accent-line); background:var(--accent-glow); border-radius:12px;
+  padding:14px; display:flex; flex-direction:column; gap:11px;
+}
+.mcp-form-row { display:flex; gap:10px; flex-wrap:wrap; }
+.mcp-form-row label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--dim); flex:1; min-width:150px; }
+.mcp-form-row label.mcp-grow { flex:2; }
+.mcp-form-row input, .mcp-form-row select {
+  border:1px solid var(--line-strong); border-radius:9px; background:var(--bg-input, transparent);
+  color:var(--text); font-size:13px; padding:8px 10px; font-family:inherit;
+}
+.mcp-form-row input:focus, .mcp-form-row select:focus { border-color:var(--accent-line); box-shadow:0 0 0 3px var(--accent-glow); outline:none; }
+.mcp-err { color:var(--danger-ink, #c0392b); word-break:break-all; }
 .pv-card {
   border:1px solid var(--accent-line); background:var(--accent-glow); border-radius:12px;
   padding:14px; display:flex; flex-direction:column; gap:11px;

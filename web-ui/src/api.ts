@@ -1,5 +1,5 @@
 /** API 客户端：全部走 web.mjs 的同源 /api/*；turn 用 fetch 读 SSE（EventSource 不支持 POST） */
-import type { AgentEvent, Harness, ModelInfo, ProviderRow, SessionMeta, SessionRecord, SettingsInfo } from './types';
+import type { AgentEvent, Harness, McpServerRow, ModelInfo, ProviderRow, SessionMeta, SessionRecord, SettingsInfo } from './types';
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(path, {
@@ -28,6 +28,11 @@ export const updateProvider = (id: string, draft: unknown) => api<{ ok: boolean;
 export const deleteProvider = (id: string) => api<{ ok: boolean; providers: ProviderRow[] }>(`/api/providers/${id}`, { method: 'DELETE' });
 export const discoverModels = (draft: { baseUrl: string; protocol: string; apiKey?: string; pathPrefix?: string }) =>
   api<{ ok: boolean; url: string; models: { id: string; name?: string; contextWindow?: number; maxTokens?: number }[] }>('/api/providers/discover', { method: 'POST', body: JSON.stringify(draft) });
+export const listMcpServers = () => api<{ servers: McpServerRow[] }>('/api/mcp/servers').then((r) => r.servers);
+export const createMcpServer = (draft: { id: string; name?: string; transport: string; command?: string; args?: string[]; url?: string }) =>
+  api<{ ok: boolean; server: McpServerRow; servers: McpServerRow[] }>('/api/mcp/servers', { method: 'POST', body: JSON.stringify(draft) });
+export const deleteMcpServer = (id: string) => api<{ ok: boolean; removed: number; servers: McpServerRow[] }>(`/api/mcp/servers/${id}`, { method: 'DELETE' });
+export const probeMcpServer = (id: string) => api<{ ok: boolean; serverInfo?: unknown; tools?: string[]; error?: string }>(`/api/mcp/servers/${id}/probe`, { method: 'POST' });
 export const respondPermission = (requestId: string, decision: 'allow' | 'deny' | 'always') =>
   api<{ ok: boolean }>('/api/agent/permission', { method: 'POST', body: JSON.stringify({ requestId, decision }) });
 export const respondPlan = (sessionId: string, decision: 'approve' | 'reject') =>

@@ -44,6 +44,12 @@ export type ProviderRow = {
   builtin: boolean; hasKey: boolean; model: string; models: ModelInfo[]; price?: { input?: number; output?: number };
 };
 
+export type McpServerRow = {
+  id: string; name: string; transport: 'stdio' | 'http';
+  enabled: boolean; connected: boolean; error: string; tools: number;
+  serverInfo: { name?: string; version?: string } | null;
+};
+
 export type SettingsInfo = {
   ok: boolean; version: string; autostart: boolean; managed: boolean;
   serviceRunning: boolean; servicePid: number | null; port: number; dataDir: string;
