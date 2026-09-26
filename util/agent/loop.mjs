@@ -8,7 +8,8 @@
  * 工具集执行；权限三档（permissionMode）叠加在规则集之上，见 policy.mjs。
  */
 import { randomUUID } from 'node:crypto';
-import { buildChatRequest, anthropicFrame, fetchUpstream, upstreamHint } from '../wire.mjs';
+import { buildChatRequest, anthropicFrame, fetchUpstream } from '../wire.mjs';
+import { upstreamHint } from '../llm/errors.mjs';
 import { consumeAgentStream } from '../stream.mjs';
 import { resolveTool, toolResource } from './tools.mjs';
 import { PermissionPolicy, defaultRules } from './policy.mjs';

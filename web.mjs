@@ -15,7 +15,8 @@ import { UsageLedger } from './util/usage.mjs';
 import { SERVICE_LOG, servicePid, isManaged, autostartInstalled } from './util/service.mjs';
 import { ProviderStore, ProviderError, handleProviderApi } from './util/providers.mjs';
 import { pumpSse, pumpTranslated } from './util/stream.mjs';
-import { buildChatRequest, anthropicFrame, upstreamHint, fetchUpstream } from './util/wire.mjs';
+import { buildChatRequest, anthropicFrame, fetchUpstream } from './util/wire.mjs';
+import { upstreamHint } from './util/llm/errors.mjs';
 import { createAgentApi } from './util/agent/http.mjs';
 import { resolveDataDir, loadConfig, PRICE } from './util/config.mjs';
 

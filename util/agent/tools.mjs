@@ -451,14 +451,15 @@ export function getTool(name) {
 export function toolSchemas(names, extraTools = []) {
   const picked = names.length ? TOOLS.filter((t) => names.includes(t.name)) : [];
   const extra = extraTools.filter((t) => names.includes(t.name));
-  return [...picked, ...extra].map((t) => toOpenAIFunction(t));
+  // deferred 工具不进请求顶层 tools[]：保持字节稳定以命中提示缓存；Loop 侧仍可解析执行
+  return [...picked, ...extra].filter((t) => t.deferred !== true).map((t) => toOpenAIFunction(t));
 }
 
 /** Anthropic Messages 形状（input_schema 而非 parameters） */
 export function anthropicToolSchemas(names, extraTools = []) {
   const picked = names.length ? TOOLS.filter((t) => names.includes(t.name)) : [];
   const extra = extraTools.filter((t) => names.includes(t.name));
-  return [...picked, ...extra].map((t) => toAnthropicTool(t));
+  return [...picked, ...extra].filter((t) => t.deferred !== true).map((t) => toAnthropicTool(t));
 }
 
 /** 工具解析：内置优先，其次 extraTools（MCP 工具经 loop 注入） */
