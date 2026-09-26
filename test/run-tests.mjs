@@ -3,7 +3,7 @@
  * 运行: npm test
  */
 import { spawn } from 'node:child_process';
-import { writeFileSync, mkdtempSync, rmSync, existsSync, appendFileSync } from 'node:fs';
+import { writeFileSync, mkdtempSync, rmSync, existsSync, appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,8 @@ import { buildChatRequest, anthropicFrame } from '../util/wire.mjs';
 import { agentEvent, sseFrame } from '../util/agent/events.mjs';
 import { HARNESSES, getHarness, harnessSummaries, DEFAULT_HARNESS } from '../util/agent/harness.mjs';
 import { SessionStore } from '../util/agent/session.mjs';
+import { getTool, toolSchemas, anthropicToolSchemas, toolResource, resolveInside } from '../util/agent/tools.mjs';
+import { PermissionPolicy, defaultRules, mostRestrictive } from '../util/agent/policy.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MOCK_PORT = 18901;
@@ -329,6 +331,93 @@ await test('会话存储：创建 / 追加 / 投影 / 更新 / 删除', () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+await test('工具集：路径禁锢与读写编辑', () => {
+  const ws = mkdtempSync(join(tmpdir(), 'mt-ws-'));
+  const ctx = { workspace: ws };
+  try {
+    let threw = false;
+    try { resolveInside(ws, '../outside.txt'); } catch (e) { threw = e.code === 'path_escape'; }
+    assert(threw, '.. 穿越必须被拒');
+    threw = false;
+    try { resolveInside(ws, '/etc/passwd'); } catch (e) { threw = e.code === 'path_escape'; }
+    assert(threw, '工作目录外的绝对路径必须被拒');
+    eq(resolveInside(ws, 'a/b.txt'), join(ws, 'a/b.txt'));
+
+    writeFileSync(join(ws, 'a.txt'), '第一行\n第二行\n第三行\n');
+    const read = getTool('read_file').run({ path: 'a.txt', limit: 2 }, ctx);
+    assert(read.includes('共 3 行'), '应报告总行数');
+    assert(read.includes('第一行') && !read.includes('第三行'), 'limit 应生效');
+    assert(getTool('read_file').run({ path: 'a.txt', offset: 3 }, ctx).includes('第三行'), 'offset 应生效');
+
+    mkdirSync(join(ws, 'sub'));
+    const ls = getTool('list_dir').run({}, ctx);
+    assert(ls.includes('sub/') && ls.includes('a.txt'), '目录应带 / 后缀');
+
+    getTool('write_file').run({ path: 'deep/dir/b.txt', content: '内容' }, ctx);
+    eq(readFileSync(join(ws, 'deep/dir/b.txt'), 'utf8'), '内容', 'write_file 应建父目录并写入');
+
+    getTool('edit_file').run({ path: 'a.txt', old_string: '第二行', new_string: '第二行改' }, ctx);
+    assert(readFileSync(join(ws, 'a.txt'), 'utf8').includes('第二行改'), 'edit_file 应精确替换');
+    threw = false;
+    try { getTool('edit_file').run({ path: 'a.txt', old_string: '不存在', new_string: 'x' }, ctx); } catch (e) { threw = e.code === 'no_match'; }
+    assert(threw, '未命中应报 no_match');
+    writeFileSync(join(ws, 'dup.txt'), 'x\nx\n');
+    threw = false;
+    try { getTool('edit_file').run({ path: 'dup.txt', old_string: 'x', new_string: 'y' }, ctx); } catch (e) { threw = e.code === 'not_unique'; }
+    assert(threw, '多处命中且未设 replace_all 应报 not_unique');
+    getTool('edit_file').run({ path: 'dup.txt', old_string: 'x', new_string: 'y', replace_all: true }, ctx);
+    eq(readFileSync(join(ws, 'dup.txt'), 'utf8'), 'y\ny\n', 'replace_all 应替换全部');
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+await test('工具集：shell 执行、退出码与超时终止', async () => {
+  const ws = mkdtempSync(join(tmpdir(), 'mt-sh-'));
+  const ctx = { workspace: ws };
+  try {
+    const ok = await getTool('shell').run({ command: 'echo 你好' }, ctx);
+    assert(ok.includes('退出码: 0') && ok.includes('你好'), 'echo 应成功');
+    const bad = await getTool('shell').run({ command: 'exit 3' }, ctx);
+    assert(bad.includes('退出码: 3'), '退出码应透传');
+    const slow = await getTool('shell').run({ command: 'sleep 8', timeout_seconds: 5 }, ctx);
+    assert(slow.includes('已超时终止'), '超时应终止并标注');
+    threwCheck: {
+      let threw = false;
+      try { await getTool('web_fetch').run({ url: 'ftp://x' }, ctx); } catch (e) { threw = e.code === 'bad_args'; }
+      assert(threw, '非 http(s) URL 必须拒绝');
+    }
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+await test('工具 schema：OpenAI 与 Anthropic 两种形状', () => {
+  const names = ['read_file', 'shell'];
+  const oa = toolSchemas(names);
+  eq(oa.length, 2);
+  eq(oa[0].type, 'function');
+  eq(oa[0].function.parameters.type, 'object');
+  const an = anthropicToolSchemas(names);
+  assert(an[0].input_schema && !('parameters' in an[0]), 'Anthropic 用 input_schema');
+  eq(toolResource('shell', { command: 'ls' }), 'ls', 'shell 资源取命令');
+  eq(toolResource('read_file', { path: 'a.txt' }), 'a.txt', '文件类资源取路径');
+});
+
+await test('权限策略：默认姿态、后匹配赢与总是允许', () => {
+  const p = new PermissionPolicy();
+  eq(p.evaluate('read_file', 'a.txt'), 'allow', '只读默认放行');
+  eq(p.evaluate('shell', 'rm -rf x'), 'ask', 'shell 默认要问');
+  eq(p.evaluate('未知工具', 'x'), 'ask', '未命中默认 ask（安全侧）');
+  p.grantAlways('shell', 'echo hi');
+  eq(p.evaluate('shell', 'echo hi'), 'allow', '总是允许应精确生效');
+  eq(p.evaluate('shell', 'echo bye'), 'ask', '总是允许不应外溢');
+  const p2 = new PermissionPolicy([...defaultRules(), { action: 'shell', resource: 'rm *', effect: 'deny' }]);
+  eq(p2.evaluate('shell', 'rm -rf /'), 'deny', '后匹配的 deny 应赢');
+  eq(mostRestrictive('allow', 'ask'), 'ask');
+  eq(mostRestrictive('deny', 'allow'), 'deny');
 });
 
 // ---------- e2e ----------
