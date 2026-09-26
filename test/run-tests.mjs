@@ -17,6 +17,7 @@ import { HARNESSES, getHarness, harnessSummaries, DEFAULT_HARNESS } from '../uti
 import { SessionStore } from '../util/agent/session.mjs';
 import { getTool, toolSchemas, anthropicToolSchemas, toolResource, resolveInside } from '../util/agent/tools.mjs';
 import { PermissionPolicy, defaultRules, mostRestrictive } from '../util/agent/policy.mjs';
+import { assembleMessages, needsCompaction, planCompaction, compactionMessages, contextWindowOf, estimateMessagesTokens } from '../util/agent/context.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MOCK_PORT = 18901;
@@ -482,6 +483,54 @@ await test('Agent 流读取：文本 / 思考 / 工具调用增量累积', async
   eq(out.finishReason, 'tool_calls');
   eq(deltas, 2, '两次参数增量都应通知 UI');
   eq(entry.usage.prompt_tokens, 5, '用量应累积到 entry');
+});
+
+await test('上下文组装：记录投影为上游消息', () => {
+  const records = [
+    { t: 'user', text: '你好' },
+    { t: 'thinking', text: '内部思考' },
+    { t: 'assistant', text: '你好！' },
+    { t: 'user', text: '读文件' },
+    { t: 'tool_call', id: 'tc1', name: 'read_file', args: { path: 'a.txt' } },
+    { t: 'tool_result', id: 'tc1', output: '1  内容' },
+    { t: 'usage', inputTokens: 10, outputTokens: 5 },
+  ];
+  const msgs = assembleMessages({ harness: getHarness('standard'), workspace: '/tmp/ws', records });
+  eq(msgs[0].role, 'system');
+  assert(msgs[0].content.includes('/tmp/ws'), '系统提示应带工作目录');
+  eq(msgs[1].content, '你好');
+  eq(msgs[2].content, '你好！');
+  eq(msgs[3].content, '读文件');
+  eq(msgs[4].role, 'assistant');
+  eq(msgs[4].tool_calls[0].function.name, 'read_file');
+  eq(msgs[5].role, 'tool');
+  eq(msgs[5].tool_call_id, 'tc1');
+  eq(msgs.length, 6, 'thinking 与 usage 不应进上下文');
+  const withSummary = assembleMessages({ harness: getHarness('minimal'), workspace: '/tmp/ws', records: [{ t: 'summary', text: '摘要内容' }, { t: 'user', text: '继续' }] });
+  assert(withSummary[1].content.includes('摘要内容'), 'summary 应投影为系统消息');
+});
+
+await test('上下文压缩：阈值判定与头尾切分', () => {
+  const big = Array.from({ length: 400 }, () => ({ role: 'user', content: 'x'.repeat(400) }));
+  eq(needsCompaction(big, { windowTokens: 1000, ratio: 0.7 }), true, '超阈值应压缩');
+  eq(needsCompaction([{ role: 'user', content: '短' }], { windowTokens: 100000, ratio: 0.7 }), false, '未超不压缩');
+  const records = [];
+  for (let i = 0; i < 10; i++) {
+    records.push({ t: 'user', text: `问题${i}` });
+    records.push({ t: 'assistant', text: `回答${i}` });
+  }
+  eq(planCompaction(records, 10), null, '用户轮数不超过保留轮数时不压缩');
+  const long = [];
+  for (let i = 0; i < 12; i++) { long.push({ t: 'user', text: `问题${i}` }); long.push({ t: 'assistant', text: `回答${i}` }); }
+  const plan = planCompaction(long, 4);
+  assert(plan, '记录足够应给出计划');
+  eq(plan.tail[0].text, '问题8', '应保留最近 4 个用户轮');
+  assert(plan.head.length > 0 && plan.head.at(-1).text === '回答7', '头部应截止到保留区之前');
+  const cm = compactionMessages(plan.head);
+  eq(cm[0].role, 'system');
+  assert(cm[1].content.includes('问题0'), '总结输入应含早期对话');
+  eq(contextWindowOf({}), 128000, '未声明窗口回退 128k');
+  eq(contextWindowOf({ capacity: { contextWindow: 262144 } }), 262144, '应读取提供方声明窗口');
 });
 
 // ---------- e2e ----------
