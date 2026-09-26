@@ -966,6 +966,45 @@ await test('Loop：计划模式批准后进入执行（计划轮只读工具）'
   assert(!requests[1].body.messages.some((m) => m.role === 'system' && String(m.content).includes('当前为计划模式')), '执行轮系统提示不应再带计划模式附加块');
 });
 
+await test('Loop：task 工具派发子代理并聚合结果', async () => {
+  const { events, result, store } = await runLoopOnce({
+    framesByCall: (call) => {
+      if (call === 0) return toolFrames('task', { tasks: ['子任务甲', '子任务乙'] });
+      if (call === 1) return toolFrames('read_file', { path: 'a.txt' });
+      if (call === 2) return textFrames('子代理甲结果');
+      if (call === 3) return textFrames('子代理乙结果');
+      return textFrames('汇总完毕');
+    },
+  });
+  eq(result.text, '汇总完毕', '父轮终稿来自汇总轮');
+  const taskEv = events.find((e) => e.type === 'tool_event' && e.toolName === 'task' && e.phase === 'completed');
+  assert(taskEv, 'task 工具应执行完成');
+  assert(Array.isArray(taskEv.extra?.children) && taskEv.extra.children.length === 2, 'completed 事件应带 2 个子代理结果');
+  assert(taskEv.extra.children.every((c) => c.ok && c.sessionId), '子代理应成功且会话可查');
+  assert(taskEv.output.includes('子代理甲结果') && taskEv.output.includes('子代理乙结果'), '聚合输出应含各子代理终稿');
+  eq(store.list().filter((m) => m.name.startsWith('子任务：')).length, 2, '应创建 2 个真实子会话');
+  assert(events.some((e) => e.type === 'tool_event' && e.subAgent === true), '子代理工具事件应带 subAgent 标记（供嵌套渲染）');
+  assert(!events.some((e) => e.type === 'text_chunk' && e.subAgent === true), '子代理文本不应透出到父事件流');
+});
+
+await test('Loop：子代理嵌套深度封顶（孙代理不再派发）', async () => {
+  const { events, result, requests, store } = await runLoopOnce({
+    framesByCall: (call) => {
+      if (call === 0) return toolFrames('task', { task: '父派发' });
+      if (call === 1) return toolFrames('task', { task: '子派发' });
+      if (call === 2) return toolFrames('task', { task: '孙派发' });
+      if (call === 3) return textFrames('孙代理终稿');
+      if (call === 4) return textFrames('子代理终稿');
+      return textFrames('父终稿');
+    },
+  });
+  eq(result.text, '父终稿', '父轮终稿来自汇总轮');
+  const refused = events.filter((e) => e.type === 'tool_event' && e.toolName === 'task' && e.phase === 'completed' && String(e.output).includes('嵌套深度已达上限'));
+  assert(refused.length >= 1, '孙代理的派发应被深度上限拒绝');
+  eq(store.list().filter((m) => m.name.startsWith('子任务：')).length, 2, '应创建子、孙两个层级的子会话');
+  assert(requests.length >= 6, '各层回合都应真实请求上游');
+});
+
 await test('Loop：计划模式驳回后不执行', async () => {
   const { events, result, requests } = await runLoopOnce({
     framesByCall: [textFrames('计划：先读后改')],
@@ -1683,6 +1722,30 @@ await test('Agent turn：计划模式批准后进入执行', async () => {
   const detail = await (await fetch(`${AGENT}/sessions/${s.id}`)).json();
   assert(detail.records.some((r) => r.t === 'assistant' && String(r.text).includes('计划：')), '计划文本应落转录');
   assert(detail.records.some((r) => r.t === 'user' && String(r.text).includes('【已批准的计划】')), '批准注入应落转录');
+});
+
+await test('Agent turn：task 派发子代理并汇总，子会话可查', async () => {
+  const before = await (await fetch(`${AGENT}/sessions`)).json();
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_SWARM 派发两个子任务' }),
+  });
+  const all = await drainAgentStream(openAgentStream(resp));
+  const taskEv = all.find((e) => e.type === 'tool_event' && e.toolName === 'task' && e.phase === 'completed');
+  assert(taskEv, 'task 工具应执行完成');
+  assert(Array.isArray(taskEv.extra?.children) && taskEv.extra.children.length === 2, '应派发 2 个子代理');
+  assert(taskEv.extra.children.every((c) => c.ok), '子代理应成功');
+  assert(taskEv.output.includes('子代理甲结果') && taskEv.output.includes('子代理乙结果'), '聚合输出应含两个子代理终稿');
+  assert(all.at(-1).type === 'turn_completed', '应以 turn_completed 收尾');
+  const after = await (await fetch(`${AGENT}/sessions`)).json();
+  const kids = after.sessions.filter((m) => m.name.startsWith('子任务：'));
+  eq(kids.length, 2, '应新增 2 个真实子会话');
+  const kid = await (await fetch(`${AGENT}/sessions/${kids[0].id}`)).json();
+  assert(kid.records.some((r) => r.t === 'user' && String(r.text).includes('子任务')), '子会话转录应含子任务原文');
+  assert(kid.records.some((r) => r.t === 'assistant' && String(r.text).includes('子代理')), '子会话转录应含子代理终稿');
+  const beforeIds = new Set(before.sessions.map((m) => m.id));
+  assert(after.sessions.filter((m) => m.name.startsWith('子任务：')).every((m) => !beforeIds.has(m.id)), '子会话应为本次新建');
 });
 
 await test('Agent turn：计划模式驳回后不执行', async () => {
