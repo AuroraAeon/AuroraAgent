@@ -12,7 +12,7 @@
 执行顺序永远是：
 
 1. 改代码（一个可独立验证的小改动，例如「修复一个错误映射」「新增一个厂商标识」）
-2. `npm test` 全绿（基线 92 个测试；不绿不准提交）
+2. `npm test` 全绿（基线 102 个测试；不绿不准提交）
 3. `git add <具体文件>` → `git commit -m "中文描述"` → `git push`
 
 规约：
@@ -34,7 +34,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 
 - 单用户本地工具，**仅支持 macOS**（依赖 LaunchAgent 与 `~/Library` 目录约定）
 - **后端零依赖**：只用 Node 18+ 内置模块；ESM `.mjs`；无构建步骤
-- **前端依赖例外（唯一）**：`web-ui/` 用 React 19 + Vite 7 + TypeScript，依赖（react / react-dom / vite / typescript / @vitejs/plugin-react / @types/*）经用户明确同意引入，**仅限 `web-ui/`**；构建产物随仓库提交在 `public/app/`，后端与 Bundle 运行时不接触 node_modules
+- **前端依赖例外（唯二）**：`web-ui/` 用 React 19 + Vite 7 + TypeScript，依赖（react / react-dom / vite / typescript / @vitejs/plugin-react / @types/*、以及公式渲染用的 katex）经用户明确同意引入，**仅限 `web-ui/`**；构建产物随仓库提交在 `public/app/`，后端与 Bundle 运行时不接触 node_modules
 - 双客户端：终端（`chat.mjs` → `util/agent/terminal.mjs`）+ 网页（`web.mjs` 服务 `public/app/` React 产物），共享同一套配置、会话、账本数据目录
 - 可打包为独立 macOS Application（`~/Applications/AuroraAgent.app`，显示名 AuroraAgent），由 LaunchAgent `com.auroraagent.app` 常驻
 - 当前接入厂商：美团 LongCat-2.5-Preview。Base URL / 模型目录 / Key 全部是配置项——**代码不绑定厂商**，接入新厂商不改架构
@@ -63,7 +63,9 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 | `util/agent/loop.mjs` | turn 运行器：轮次循环至无 tool_calls 或触顶；权限经 pending map 挂起等前端决策；`AbortController` 中断保留已生成内容；SSE 断开即中止；每轮经 `usage.mjs` 记账 |
 | `util/agent/http.mjs` | `/api/agent/*` HTTP 面（web.mjs 前缀委派）：会话 CRUD + PATCH、turn SSE、abort、permission、harnesses；单活跃 turn（409） |
 | `util/agent/terminal.mjs` | 终端 REPL：同一 loop 驱动；思考暗色流式、工具单行状态、权限 readline（y/n/a）、`/new /sessions /model /harness /think /temp /max /key /help /quit`、`-p` 单次提问 |
-| `web-ui/` | React + Vite + TS 工作台（唯一前端依赖例外）：`src/App.tsx` + `components/{Sidebar,ChatView,Message,ToolCard,Composer,ProviderEditor,SettingsDialog}.tsx` + 手写 Markdown 子集渲染器 + 内联 SVG 图标 + `tokens.css` 设计令牌（`app.css` 引用） |
+| `web-ui/` | React + Vite + TS 工作台（唯二前端依赖例外之一）：`src/App.tsx` + `components/{Sidebar,ChatView,Message,ToolCard,Composer,ProviderEditor,SettingsDialog}.tsx` + 手写 Markdown 子集渲染器 + 内联 SVG 图标 + `tokens.css` 设计令牌（`app.css` 引用） |
+| `web-ui/src/latex.tsx` | LaTeX 渲染：KaTeX 自托管（`trust: false`，`\href` / `\includegraphics` / HTML 扩展一律拒绝），`htmlAndMathml` 输出；解析失败回退展示原始源码而非红色错误墙 |
+| `web-ui/src/math-split.mjs` | 公式分段纯函数（零依赖，Node 测试直接 import 同一份）：识别 `$...$` / `\(...\)` / `$$...$$` / `\[...\]` / 裸 `\begin{env}`，代码段与货币区间假阳性防护；`.d.mts` 供 TS 取类型 |
 | `public/app/` | web-ui 构建产物（随仓库提交）：`/` 与 `/app/` 同一份 index.html，哈希资产长缓存 |
 | `public/icon.svg` `public/vendors/` | 品牌标识 / 各接入厂商标识（`/vendor/` 白名单路由） |
 | `test/` | e2e 测试：mock 上游 + 真实 socket（见第 8 节） |
@@ -111,7 +113,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 - 2 空格缩进、单引号、行尾分号，与现有文件保持一致
 - 注释与面向用户的文案一律中文；错误消息必须「说清原因 + 给出下一步动作」（参考 401 / 402 的友好映射）
 - **产品内零 emoji**：网页 UI、错误消息、终端 banner 都不允许 emoji；图标一律内联 SVG 或 `public/vendors/*.svg`。终端 CLI 的 `✓` / `✗` 属命令行惯例，允许保留
-- 前端不引 CDN、不引 Markdown / 状态管理等第三方库（React + Vite + TS 之外的依赖新增需再次征求同意）；动画用原生 CSS（`@starting-style`、top-layer 过渡）
+- 前端不引 CDN、不引 Markdown / 状态管理等第三方库（React + Vite + TS 之外的依赖新增需再次征求同意；既有例外：公式渲染 katex）；动画用原生 CSS（`@starting-style`、top-layer 过渡）
 - 服务路由集中在 `web.mjs` 单个 `createServer` 处理器内按「方法 + 路径」平铺，不引路由库；Agent HTTP 面已拆 `util/agent/http.mjs`
 - 单文件控制在约 500 行内；`web.mjs` 已接近上限，新功能优先拆到 `util/` 等模块
 
@@ -139,8 +141,10 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 - **数据隔离**：测试以临时目录作 `AURORAAGENT_DATA_DIR`，绝不许写真实数据目录
 - 新路由 / 新行为 / 新错误映射必须带中文测试名进入 `test/run-tests.mjs`；mock 需要新行为时改 `test/mock-longcat.mjs`
 - mock 触发词：消息含 `USE_TOOL` → 模型发起 `read_file mock.txt`；含 `USE_TOOL_WRITE` → 发起 `write_file written_by_agent.txt`；`FLAKY` 断网重试；`SLOW` 慢速
-- 前端契约测试（`/app` 服务、哈希资产、令牌 CSS 在场、零 emoji、旧路由 404、ProviderEditor 源码校验规则）守着构建产物与 `web-ui/` 的同步；改了 `web-ui/` 忘了 `build:web` 会红
-- 基线 92/92 通过。提交前 `npm test` 必须全绿；不许 `skip`，不许放宽断言迁就失败
+- 前端契约测试（`/app` 服务、哈希资产、令牌 CSS 在场、零 emoji、旧路由 404、ProviderEditor 源码校验规则、KaTeX 样式与 woff2 字体可服务）守着构建产物与 `web-ui/` 的同步；改了 `web-ui/` 忘了 `build:web` 会红
+- 公式分段逻辑是 `web-ui/src/math-split.mjs`（零依赖纯函数），Node 测试直接 import 同一份做真实断言，不拿源码契约糊弄
+- **踩坑记录**：KaTeX 的符号表自带 ♣ ♭ ✓ 等字形，「构建产物零 emoji」断言会红。正解是 `vite.config.ts` 的 `esbuild.charset='ascii'`（产物统一 ASCII 转义）与只保留 woff2 字体的插件，**不是**放宽 emoji 断言
+- 基线 102/102 通过。提交前 `npm test` 必须全绿；不许 `skip`，不许放宽断言迁就失败
 - `npm run check` 走真实上游，只在改上游集成时跑（花少量钱）
 - 跑 `npm test` 前确认 18901 无常驻 mock 占用（`pkill -f mock-longcat`）；exec 沙箱会杀后台进程，常驻服务 / mock 用 exec_command 前台会话跑
 
@@ -158,7 +162,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 
 ## 10. 验证基线（改动后自查）
 
-- `npm test` → 92/92
+- `npm test` → 102/102
 - `curl -s localhost:8787/api/health` → `{"ok":true,...}`；`/api/settings` → `version` / `managed` / `dataDir` 符合预期
 - 浏览器打开 http://localhost:8787 ：无 emoji、模型选择器按提供方分组、完整 turn（工具卡 / 权限卡 / 用量脚注）正常、设置弹层可开关开机自启
 - 终端 `npm run chat`：`/help`、权限 y/n/a、`/sessions` 切换正常

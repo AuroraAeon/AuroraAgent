@@ -158,6 +158,15 @@
 .md pre code { background:none; border:0; padding:0; font-size:12.8px; line-height:1.65; }
 .md strong { color:var(--text); font-weight:650; }
 
+/* ---------- LaTeX 公式（KaTeX，见 latex.tsx） ---------- */
+/* 包装层不参与布局：显示公式以块级身份直接落在段落里，行内公式则贴合文字流 */
+.md .math { display:contents; }
+.md .katex { font-size:1.06em; }
+/* 宽公式在容器内横向滚动，不撑破气泡 */
+.md .katex-display { margin:.75em 0; padding:1px 0; overflow-x:auto; overflow-y:hidden; }
+/* 公式解析失败时回退展示原始源码，用虚线边框与正文代码区分 */
+.md .math-err { border-style:dashed; color:var(--dim); }
+
 /* ---------- 工具卡片 ---------- */
 .toolcard { border:1px solid var(--line); border-radius:11px; background:var(--surface); overflow:hidden; }
 .toolcard > details > summary {

@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SseParser, estimateTokens } from '../util/sse.mjs';
+import { splitMathSegments, takeDisplayMath, isDisplayMathStart, mathDisplay, MATH_ENVIRONMENTS } from '../web-ui/src/math-split.mjs';
 import { startMock } from './mock-longcat.mjs';
 import { ProviderStore, ProviderError, parseCapacity, formatCapacity, normalizeEndpoint, validateProviderDraft, chatUrl, modelsUrl, messagesUrl } from '../util/providers.mjs';
 import { buildChatRequest, anthropicFrame } from '../util/wire.mjs';
@@ -288,6 +289,83 @@ await test('anthropicFrame 翻译文本、思考、用量与错误事件', () =>
   eq(f({ type: 'ping' }), null);
   eq(f({ type: 'message_stop' }), null);
   eq(anthropicFrame({ data: 'not-json' }), null);
+});
+
+// ---------- 单元测试: LaTeX 公式分段 ----------
+console.log('\nLaTeX 公式分段单元测试');
+await test('splitMathSegments 识别五种公式分隔符', () => {
+  const segs = splitMathSegments('行内 $x^2$ 与 \\(y\\) 混合');
+  eq(segs.length, 5, '应切成 文本/公式/文本/公式/文本');
+  eq(segs[0].text, '行内 ');
+  eq(segs[1].kind, 'math'); eq(segs[1].tex, 'x^2'); eq(segs[1].raw, '$x^2$'); eq(segs[1].display, false);
+  eq(segs[3].tex, 'y'); eq(segs[3].raw, '\\(y\\)'); eq(segs[3].display, false, '\\(\\) 是行内公式');
+  const disp = splitMathSegments('显示 $$E=mc^2$$ 结束');
+  eq(disp[1].display, true, '$$ 是显示公式');
+  eq(disp[1].tex, 'E=mc^2');
+  const bracket = splitMathSegments('显示 \\[ x = 1 \\] 结束');
+  eq(bracket[1].display, true, '\\[\\] 是显示公式');
+  eq(bracket[1].tex, 'x = 1');
+  const bare = splitMathSegments('裸环境 \\begin{aligned} a&=b \\\\ c&=d \\end{aligned} 收尾');
+  eq(bare[1].display, true, '裸数学环境按显示公式处理');
+  eq(bare[1].tex, '\\begin{aligned} a&=b \\\\ c&=d \\end{aligned}', '裸环境的 TeX 保留环境包裹');
+});
+await test('反引号代码段里的 $ 不当公式', () => {
+  const segs = splitMathSegments('代码 `$x$` 与 $$y$$');
+  eq(segs[1].kind, 'code', '代码段应原样切出');
+  eq(segs[1].text, '$x$');
+  eq(segs[3].kind, 'math', '代码段之外照常识别');
+});
+await test('货币与区间写法不误判为公式', () => {
+  for (const text of ['价格 $5 到 $10 之间', '区间 $100-$200 不成立', 'a $ b 空格', '只有一半 $abc']) {
+    const segs = splitMathSegments(text);
+    eq(segs.length, 1, `${text} 应整段按普通文本处理`);
+    eq(segs[0].kind, 'text');
+    eq(segs[0].text, text);
+  }
+  const esc = splitMathSegments('转义 \\$5 与 $x$');
+  eq(esc.length, 2, '\\$ 是转义美元符，不应开启公式');
+  eq(esc[0].text, '转义 \\$5 与 ');
+  eq(esc[1].tex, 'x');
+});
+await test('分隔符未闭合时按普通文本，不吞后续内容', () => {
+  const segs = splitMathSegments('未闭合 $abc 与 \\[ def');
+  eq(segs.length, 1);
+  eq(segs[0].text, '未闭合 $abc 与 \\[ def');
+  eq(takeDisplayMath(['$$', 'a+b'], 0), null, '未闭合的显示公式块返回 null，交回普通段落');
+});
+await test('takeDisplayMath 吃掉跨行显示公式块', () => {
+  const block = (lines) => takeDisplayMath(lines, 0);
+  eq(block(['$$', 'a+b', '$$', '后']).tex, 'a+b');
+  eq(block(['$$', 'a+b', '$$', '后']).raw, '$$\na+b\n$$');
+  eq(block(['$$', 'a+b', '$$', '后']).next, 3, '吃块后应从闭合行之后继续');
+  eq(block(['\\[ x = 1 \\]', '后']).tex, 'x = 1');
+  eq(block(['\\[ x = 1 \\]', '后']).next, 1, '同行闭合只吃一行');
+  eq(block(['\\begin{align}', 'a&=b', '\\end{align}', '后']).tex, '\\begin{align}\na&=b\n\\end{align}');
+  eq(block(['\\begin{align}', 'a&=b', '\\end{align}', '后']).next, 3);
+  eq(isDisplayMathStart('$$x'), true);
+  eq(isDisplayMathStart('  \\begin{aligned}'), true, '行首空白不影响识别');
+  eq(isDisplayMathStart('普通段落'), false);
+});
+await test('多行裸环境保留 \begin/\end 包裹（KaTeX 拒绝裸 &）', () => {
+  const lines = ['\\begin{aligned}', 'f(x) &= (x+1)^2 \\\\', '&= x^2 + 2x + 1', '\\end{aligned}', '后'];
+  const got = takeDisplayMath(lines, 0);
+  eq(got.tex, lines.slice(0, 4).join('\n'), '多行环境的 TeX 必须自带环境包裹，否则 KaTeX 会拒绝裸 &');
+  eq(got.next, 4);
+});
+await test('闭合行尾部还有正文时不丢字', () => {
+  const got = takeDisplayMath(['$$x=1$$ 这句话应该保留', '下一段'], 0);
+  eq(got.tex, 'x=1');
+  eq(got.next, 0, '闭合行还有正文时应停在本行');
+  eq(got.rest, ' 这句话应该保留');
+  const noTail = takeDisplayMath(['$$x=1$$', '下一段'], 0);
+  eq(noTail.next, 1, '无尾部正文时直接进入下一行');
+  assert(!('rest' in noTail), '无尾部正文时不应带回 rest');
+});
+
+await test('行内公式含只准显示模式的环境时升格', () => {
+  eq(mathDisplay('\\begin{align}a&=b\\end{align}', false), true, 'KaTeX 拒绝行内 align，需升格');
+  eq(mathDisplay('x^2', false), false);
+  assert(MATH_ENVIRONMENTS.has('pmatrix') && MATH_ENVIRONMENTS.has('aligned'), '常见矩阵/对齐环境应在清单内');
 });
 
 // ---------- 单元测试: Agent 事件协议与 Harness ----------
@@ -795,6 +873,30 @@ try {
     assert(css.includes('--ok:') && css.includes('--danger:'), '语义色令牌应在场');
     const emoji = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/u;
     assert(!emoji.test(css) && !emoji.test(js) && !emoji.test(html), '构建产物不应含 emoji');
+  });
+  await test('构建产物内置 KaTeX 公式渲染：样式、woff2 字体与回退样式都在场', async () => {
+    const html = await (await fetch(`${BASE}/`)).text();
+    const cssUrl = /\/app\/assets\/[A-Za-z0-9._-]+\.css/.exec(html)[0];
+    const css = await (await fetch(`${BASE}${cssUrl}`)).text();
+    assert(css.includes('.katex{'), 'KaTeX 基础样式应打进产物');
+    assert(css.includes('.katex-display{'), '显示公式样式应打进产物');
+    assert(css.includes('.math-err{'), '公式解析失败的回退样式应打进产物');
+    const font = /url\(([^)]+\.woff2)\)/.exec(css);
+    assert(font, 'KaTeX 字体应以 woff2 引用（ttf/woff 回退不入库）');
+    const fr = await fetch(`${BASE}${font[1]}`);
+    eq(fr.status, 200, '字体资产应可服务');
+    eq(fr.headers.get('content-type'), 'font/woff2', '字体应按 woff2 MIME 服务');
+  });
+  await test('公式渲染源码契约：不开 trust、异常回退源码、Markdown 已接入', () => {
+    const latex = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'latex.tsx'), 'utf8');
+    assert(latex.includes('trust: false'), '不得开启 trust：\\href / \\includegraphics / HTML 扩展必须被 KaTeX 拒绝');
+    assert(latex.includes('throwOnError: true'), '解析异常必须可捕获');
+    assert(latex.includes("output: 'htmlAndMathml'"), '应同时输出视觉排版与 MathML');
+    assert(latex.includes('math-err'), '解析失败应回退展示原始源码');
+    const md = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'markdown.tsx'), 'utf8');
+    assert(md.includes("from './math-split.mjs'"), 'Markdown 渲染器应接入公式分段');
+    assert(md.includes('isDisplayMathStart'), '段落累积应在显示公式块前断开');
+    assert(md.includes('<MathView'), '显示公式应经 KaTeX 组件渲染');
   });
   await test('旧 UI 已退役：提供方模块与样式不再服务', async () => {
     eq((await fetch(`${BASE}/providers.mjs`)).status, 404);
