@@ -144,6 +144,27 @@ await test('validateProviderDraft 接受合法草稿并剥离空行', () => {
   eq(r.value.baseUrl, 'https://gw.example.com/v1', '末尾斜杠应被去掉');
   assert(!('apiKey' in r.value), '空 Key 不应进草稿');
 });
+await test('validateProviderDraft 校验 API 密钥格式（与 dsh 同规约）', () => {
+  const base = { id: 'my-gw', name: '网关', protocol: 'openai', baseUrl: 'https://a.com', models: [{ id: 'm' }] };
+  const legal = validateProviderDraft({ ...base, apiKey: 'sk-Ab3!~x-9' });
+  assert(legal.ok, '可见 ASCII 密钥应通过: ' + JSON.stringify(legal.errors));
+  eq(legal.value.apiKey, 'sk-Ab3!~x-9');
+  const blank = validateProviderDraft({ ...base, apiKey: '   ' });
+  eq(blank.ok, false);
+  eq(blank.errors.apiKey !== undefined, true, '全空格应定位到 apiKey');
+  const envLine = validateProviderDraft({ ...base, apiKey: 'MY_KEY=sk-123' });
+  eq(envLine.ok, false);
+  eq(envLine.errors.apiKey !== undefined, true, 'NAME=value 环境变量行应定位到 apiKey');
+  const quoted = validateProviderDraft({ ...base, apiKey: '"sk-123"' });
+  eq(quoted.ok, false);
+  eq(quoted.errors.apiKey !== undefined, true, '成对引号应定位到 apiKey');
+  const spaced = validateProviderDraft({ ...base, apiKey: 'sk 123' });
+  eq(spaced.ok, false);
+  eq(spaced.errors.apiKey !== undefined, true, '含空格应定位到 apiKey');
+  const nonAscii = validateProviderDraft({ ...base, apiKey: 'sk-密钥' });
+  eq(nonAscii.ok, false);
+  eq(nonAscii.errors.apiKey !== undefined, true, '非 ASCII 应定位到 apiKey');
+});
 await test('validateProviderDraft 校验计费单价：只填一侧也接受，非法值定位到 price.<side>', () => {
   const base = { id: 'my-gw', name: '网关', protocol: 'openai', baseUrl: 'https://a.com', models: [{ id: 'm' }] };
   const oneSide = validateProviderDraft({ ...base, price: { input: 2 } });
@@ -470,6 +491,17 @@ try {
     assert(noModel.error.includes('至少需要一个模型'), '空目录提示不符');
     const badUrl = await createProvider({ ...draft, id: 'bad-url', baseUrl: 'not-a-url' });
     eq(badUrl.field, 'baseUrl');
+    const list = await (await fetch(`${BASE}/api/providers`)).json();
+    eq(list.providers.length, 2, '失败创建不应落盘');
+  });
+  await test('POST /api/providers 拒绝非法 API 密钥并指出 apiKey 字段', async () => {
+    const r = await fetch(`${BASE}/api/providers`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: 'bad-key-gw', name: '坏密钥网关', protocol: 'openai', baseUrl: 'https://a.com', models: [{ id: 'm' }], apiKey: 'MY_KEY=sk-1' }),
+    });
+    eq(r.status, 400);
+    const j = await r.json();
+    eq(j.field, 'apiKey', '错误应定位到 apiKey 字段');
     const list = await (await fetch(`${BASE}/api/providers`)).json();
     eq(list.providers.length, 2, '失败创建不应落盘');
   });

@@ -17,6 +17,29 @@ const MODEL_ID_RE = /^[A-Za-z0-9._:-]{1,80}$/;
 const CAPACITY_RE = /^(\d+(?:\.\d+)?)([km])?$/i;
 const CAPACITY_SCALE = { k: 1e3, m: 1e6 };
 const MAX_MODELS = 200;
+/**
+ * API 密钥格式校验（与 dsh 的 apiKeyFailure 同规约，镜像自其 llm 层 normalizeApiKey）：
+ * 只含可见 ASCII（不含空格）；拒绝整行 NAME=value 环境变量写法与成对引号包裹，
+ * 这两类形状几乎总是粘贴失误，放行只会让上游以 401 拒绝。
+ */
+const LEGAL_API_KEY = /^[\x21-\x7E]+$/;
+const ENV_LINE = /^[A-Z][A-Z0-9_]*=[^=]/;
+function isQuoted(value) {
+  const first = value[0];
+  if (first !== '"' && first !== "'" && first !== '`') return false;
+  return value.length > 1 && value.endsWith(first);
+}
+/** 校验一个密钥原文；不合法返回中文错误消息（说清原因 + 下一步），合法返回 undefined */
+export function apiKeyFailure(raw) {
+  const value = String(raw ?? '');
+  if (value.length === 0) return undefined; // 留空 = 保持不变，由调用方决定语义
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return 'API 密钥不能全是空格：请输入密钥，或留空保持不变。';
+  if (ENV_LINE.test(trimmed) || isQuoted(trimmed) || !LEGAL_API_KEY.test(trimmed)) {
+    return 'API 密钥含不支持的字符：只能使用英文可见字符（不含空格），也不要粘贴 NAME=value 环境变量行或带引号的值。';
+  }
+  return undefined;
+}
 /** 内置提供方（美团 LongCat）的固定 ID：不可创建同名、不可删除 */
 export const BUILTIN_ID = 'longcat';
 
@@ -106,8 +129,13 @@ export function validateProviderDraft(draft, taken = []) {
   if (!errors.models && !models.length) errors.models = '至少需要一个模型：点「获取可用模型」拉取，或手填一个模型 ID。';
 
   const value = { id, name, protocol, baseUrl: endpoint.ok ? endpoint.url : String(draft.baseUrl ?? '').trim(), models };
-  const apiKey = String(draft.apiKey ?? '').trim();
-  if (apiKey) value.apiKey = apiKey;
+  // API 密钥：非空才校验格式（留空表示保持不变）；全空格视为输入失误，不静默丢弃
+  const rawKey = typeof draft.apiKey === 'string' ? draft.apiKey : '';
+  if (rawKey.length > 0) {
+    const keyError = apiKeyFailure(rawKey);
+    if (keyError) errors.apiKey = keyError;
+    else value.apiKey = rawKey.trim();
+  }
   // 计费单价（¥/百万 tokens）可选：只填一侧也接受，未填侧计价时回退内置价；传空对象表示清空
   if (draft.price !== undefined && draft.price !== null) {
     const price = {};
@@ -162,7 +190,9 @@ function normalizeStored(raw) {
     price: Object.keys(price).length ? price : undefined,
     thinking: raw.thinking === true,
     maxTokens: Number.isFinite(maxTokens) && maxTokens > 0 ? Math.round(maxTokens) : undefined,
-    apiKey: String(raw.apiKey ?? '').trim(),
+    // 非法密钥直接丢弃：与 dsh 的解析层一致——这类形状永远无法通过上游鉴权，
+    // 留在这里只会在下次保存时炸出难懂的错误，不如让界面回到「未配置」让用户重填
+    apiKey: (() => { const k = String(raw.apiKey ?? '').trim(); return k && !apiKeyFailure(k) ? k : ''; })(),
   };
 }
 
