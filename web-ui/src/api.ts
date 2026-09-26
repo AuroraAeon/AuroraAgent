@@ -16,7 +16,7 @@ export const createSession = (body: { name?: string; model?: string; harness?: s
   api<{ session: SessionMeta }>('/api/agent/sessions', { method: 'POST', body: JSON.stringify(body) }).then((r) => r.session);
 export const getSession = (id: string) => api<{ meta: SessionMeta; records: SessionRecord[] }>(`/api/agent/sessions/${id}`);
 export const deleteSession = (id: string) => api<{ deleted: boolean }>(`/api/agent/sessions/${id}`, { method: 'DELETE' });
-export const patchSession = (id: string, body: { harness?: string; name?: string; model?: string; provider?: string }) =>
+export const patchSession = (id: string, body: { harness?: string; name?: string; model?: string; provider?: string; permissionMode?: string; planMode?: boolean }) =>
   api<{ meta: SessionMeta }>(`/api/agent/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(body) }).then((r) => r.meta);
 export const listHarnesses = () => api<{ harnesses: Harness[]; default: string }>('/api/agent/harnesses');
 export const listModels = () => api<{ models: ModelInfo[]; status: string }>('/api/models');
@@ -30,6 +30,8 @@ export const discoverModels = (draft: { baseUrl: string; protocol: string; apiKe
   api<{ ok: boolean; url: string; models: { id: string; name?: string; contextWindow?: number; maxTokens?: number }[] }>('/api/providers/discover', { method: 'POST', body: JSON.stringify(draft) });
 export const respondPermission = (requestId: string, decision: 'allow' | 'deny' | 'always') =>
   api<{ ok: boolean }>('/api/agent/permission', { method: 'POST', body: JSON.stringify({ requestId, decision }) });
+export const respondPlan = (sessionId: string, decision: 'approve' | 'reject') =>
+  api<{ ok: boolean }>('/api/agent/plan', { method: 'POST', body: JSON.stringify({ sessionId, decision }) });
 export const abortTurn = (sessionId: string) => api<{ aborted: boolean }>('/api/agent/abort', { method: 'POST', body: JSON.stringify({ sessionId }) });
 
 /** 跑一个 turn：逐事件回调，流结束即 resolve */

@@ -7,6 +7,9 @@ export type AgentEvent =
   | { type: 'text_chunk'; sessionId: string; turnId: string; text: string }
   | { type: 'thinking_chunk'; sessionId: string; turnId: string; text: string }
   | { type: 'tool_event'; sessionId: string; turnId: string; phase: ToolPhase; toolId: string; toolName: string; params?: unknown; resource?: string; requestId?: string; output?: string; durationMs?: number; extra?: unknown }
+  | { type: 'plan_proposed'; sessionId: string; turnId: string; plan: string }
+  | { type: 'plan_approved'; sessionId: string; turnId: string; plan: string }
+  | { type: 'plan_rejected'; sessionId: string; turnId: string; plan: string }
   | { type: 'token_usage_updated'; sessionId: string; turnId: string; model: string; inputTokens: number; outputTokens: number; cost: number }
   | { type: 'context_compression_started'; sessionId: string; turnId: string; headRecords: number }
   | { type: 'context_compression_completed'; sessionId: string; turnId: string; keptRecords: number }
@@ -22,6 +25,8 @@ export type SessionMeta = {
   createdAt: string; updatedAt: string; turns: number;
   rules: { action: string; resource: string; effect: string }[];
   todos?: TodoItem[];
+  permissionMode?: string;
+  planMode?: boolean;
   inputTokens: number; outputTokens: number; cost: number; preview?: string;
 };
 
@@ -55,8 +60,10 @@ export type MsgView =
   | { kind: 'system'; key: string; text: string };
 
 /** 进行中的 turn（流式渲染，与历史投影共用 ToolCard） */
+export type PlanView = { text: string; decided: 'pending' | 'approved' | 'rejected' };
 export type LiveTurn = {
   turnId: string; text: string; thinking: string; tools: ToolView[];
   usage: { inputTokens: number; outputTokens: number; cost: number } | null;
   compression: string | null;
+  plan: PlanView | null;
 };

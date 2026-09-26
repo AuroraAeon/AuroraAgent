@@ -4,6 +4,7 @@ import { Message, ThinkingBlock } from './Message';
 import { Markdown } from '../markdown';
 import { ToolCard } from './ToolCard';
 import { TodoPanel } from './Todo';
+import { PlanCard } from './PlanCard';
 import { IconSpark } from '../icons';
 import type { LiveTurn, MsgView, TodoItem } from '../types';
 
@@ -14,7 +15,7 @@ const SUGGESTIONS = [
   '帮我列出最近的 git 提交记录',
 ];
 
-function LiveRow({ live, onDecide }: { live: LiveTurn; onDecide?: (requestId: string, decision: 'allow' | 'deny' | 'always') => void }) {
+function LiveRow({ live, onDecide, onDecidePlan }: { live: LiveTurn; onDecide?: (requestId: string, decision: 'allow' | 'deny' | 'always') => void; onDecidePlan?: (decision: 'approve' | 'reject') => void }) {
   const empty = !live.text && !live.thinking && live.tools.length === 0;
   return (
     <div className="row row-ai">
@@ -22,6 +23,7 @@ function LiveRow({ live, onDecide }: { live: LiveTurn; onDecide?: (requestId: st
       <div className="col-ai">
         {live.thinking ? <ThinkingBlock text={live.thinking} defaultOpen streaming /> : null}
         {live.text ? <Markdown text={live.text} /> : null}
+        {live.plan ? <PlanCard plan={live.plan} onDecide={onDecidePlan} /> : null}
         {live.tools.map((t) => <ToolCard key={t.id} tool={t} onDecide={onDecide} />)}
         {live.compression ? <div className="row-system">{live.compression}</div> : null}
         {live.usage ? (
@@ -42,9 +44,10 @@ type Props = {
   onDecide?: (requestId: string, decision: 'allow' | 'deny' | 'always') => void;
   onPick: (text: string) => void;
   todos: TodoItem[];
+  onDecidePlan?: (decision: 'approve' | 'reject') => void;
 };
 
-export function ChatView({ messages, live, hasSession, onDecide, onPick, todos }: Props) {
+export function ChatView({ messages, live, hasSession, onDecide, onPick, todos, onDecidePlan }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' });
@@ -82,7 +85,7 @@ export function ChatView({ messages, live, hasSession, onDecide, onPick, todos }
       <div className="chat-inner">
         <TodoPanel todos={todos} />
         {messages.map((m) => <Message key={m.key} msg={m} onDecide={onDecide} />)}
-        {live ? <LiveRow live={live} onDecide={onDecide} /> : null}
+        {live ? <LiveRow live={live} onDecide={onDecide} onDecidePlan={onDecidePlan} /> : null}
         <div ref={endRef} />
       </div>
     </div>

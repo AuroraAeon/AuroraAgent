@@ -10,9 +10,11 @@ import { SettingsDialog } from './components/SettingsDialog';
 import { projectRecords } from './projection';
 import {
   abortTurn, createSession, deleteSession, getSession, getSettings, listHarnesses, listModels,
-  listProviders, listSessions, patchSession, respondPermission, runTurn,
+  listProviders, listSessions, patchSession, respondPermission, respondPlan, runTurn,
 } from './api';
-import type { AgentEvent, Harness, LiveTurn, ModelInfo, MsgView, ProviderRow, SessionMeta, SettingsInfo, TodoItem, ToolView } from './types';
+import type { AgentEvent, Harness, LiveTurn, ModelInfo, MsgView, PlanView, ProviderRow, SessionMeta, SettingsInfo, TodoItem, ToolView } from './types';
+
+const planView = (text: string, decided: PlanView['decided']): PlanView => ({ text, decided });
 import { IconAlert, IconClose } from './icons';
 
 /** 工具事件 → live turn 的工具卡片状态机 */
@@ -58,6 +60,8 @@ export default function App() {
   const [messages, setMessages] = useState<MsgView[]>([]);
   const [live, setLive] = useState<LiveTurn | null>(null);
   const [todos, setTodos] = useState<TodoItem[]>([]);
+  const [permMode, setPermMode] = useState('ask_when_needed');
+  const [planOn, setPlanOn] = useState(false);
   const [busy, setBusy] = useState(false);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelStatus, setModelStatus] = useState('idle');
@@ -90,6 +94,8 @@ export default function App() {
       const got = await getSession(id);
       setMessages(projectRecords(got.records));
       setTodos(Array.isArray(got.meta.todos) ? got.meta.todos : []);
+      setPermMode(got.meta.permissionMode || 'ask_when_needed');
+      setPlanOn(got.meta.planMode === true);
     } catch {
       setMessages([]);
     }
@@ -128,7 +134,7 @@ export default function App() {
     setBusy(true);
     setError('');
     setMessages((prev) => [...prev, { kind: 'user', key: `opt-${Date.now()}`, text }]);
-    setLive({ turnId: '', text: '', thinking: '', tools: [], usage: null, compression: null });
+    setLive({ turnId: '', text: '', thinking: '', tools: [], usage: null, compression: null, plan: null });
     try {
       await runTurn(
         { sessionId: cur.id, input: text, thinking, model: cur.model, provider: cur.provider },
@@ -140,6 +146,9 @@ export default function App() {
             const list = (ev.extra as { todos?: TodoItem[] } | undefined)?.todos;
             if (Array.isArray(list)) setTodos(list);
           }
+          else if (ev.type === 'plan_proposed') setLive((l) => (l ? { ...l, plan: planView(ev.plan, 'pending') } : l));
+          else if (ev.type === 'plan_approved') setLive((l) => (l ? { ...l, plan: planView(ev.plan, 'approved') } : l));
+          else if (ev.type === 'plan_rejected') setLive((l) => (l ? { ...l, plan: planView(ev.plan, 'rejected') } : l));
           else if (ev.type === 'token_usage_updated') {
             setLive((l) => (l ? {
               ...l,
@@ -180,6 +189,40 @@ export default function App() {
       ...l,
       tools: l.tools.map((t) => (t.requestId === requestId ? { ...t, phase: decision === 'deny' ? 'rejected' : 'running' } : t)),
     } : l));
+  };
+
+  const decidePlan = async (decision: 'approve' | 'reject') => {
+    if (!currentId) return;
+    try {
+      await respondPlan(currentId, decision);
+    } catch (e) {
+      setError(`计划回传失败：${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+    // 乐观更新：服务端会随即推进并推送 plan_approved / plan_rejected 校正
+    setLive((l) => (l && l.plan ? { ...l, plan: { ...l.plan, decided: decision === 'approve' ? 'approved' : 'rejected' } } : l));
+  };
+
+  const changePermMode = async (mode: string) => {
+    if (!current) return;
+    try {
+      const meta = await patchSession(current.id, { permissionMode: mode });
+      setSessions((prev) => prev.map((s) => (s.id === meta.id ? meta : s)));
+      setPermMode(mode);
+    } catch (e) {
+      setError(`切换权限模式失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  const changePlan = async (on: boolean) => {
+    if (!current) return;
+    try {
+      const meta = await patchSession(current.id, { planMode: on });
+      setSessions((prev) => prev.map((s) => (s.id === meta.id ? meta : s)));
+      setPlanOn(on);
+    } catch (e) {
+      setError(`切换计划模式失败：${e instanceof Error ? e.message : String(e)}`);
+    }
   };
 
   const stop = useCallback(async () => {
@@ -263,6 +306,7 @@ export default function App() {
           live={live}
           hasSession={Boolean(current)}
           onDecide={decide}
+          onDecidePlan={decidePlan}
           onPick={send}
           todos={todos}
         />
@@ -280,6 +324,10 @@ export default function App() {
           harnesses={harnesses}
           harness={current?.harness || 'standard'}
           onHarness={changeHarness}
+          permissionMode={permMode}
+          onPermissionMode={changePermMode}
+          planMode={planOn}
+          onPlanMode={changePlan}
           disabled={!current}
         />
       </main>

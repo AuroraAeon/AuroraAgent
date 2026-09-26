@@ -245,6 +245,19 @@
 .perm-head { display:flex; align-items:center; gap:8px; color:var(--accent-hi); font-size:13px; font-weight:600; }
 .perm-actions { display:flex; gap:8px; flex-wrap:wrap; }
 
+
+/* ---------- 计划卡 ---------- */
+.plancard { border:1px solid var(--accent-line); background:var(--accent-soft); border-radius:10px; overflow:hidden; }
+.plancard.pc-approved { border-color:var(--ok-line); background:var(--ok-bg); }
+.plancard.pc-rejected { border-color:var(--danger-line); background:var(--danger-bg); }
+.plancard-head {
+  display:flex; align-items:center; gap:8px; width:100%; padding:9px 12px;
+  background:none; border:0; cursor:pointer; color:var(--accent-hi); font-size:13px; font-weight:600; text-align:left;
+}
+.plancard.pc-approved .plancard-head { color:var(--ok-ink); }
+.plancard.pc-rejected .plancard-head { color:var(--danger-ink); }
+.plancard-state { margin-left:auto; display:inline-flex; color:inherit; }
+.plancard-body { border-top:1px solid var(--line); padding:10px 12px; display:flex; flex-direction:column; gap:10px; }
 /* ---------- 输入区 ---------- */
 .composer { padding:10px 20px 14px; }
 .composer-card {

@@ -1060,6 +1060,18 @@ try {
     assert(md.includes('isDisplayMathStart'), '段落累积应在显示公式块前断开');
     assert(md.includes('<MathView'), '显示公式应经 KaTeX 组件渲染');
   });
+  await test('计划模式与权限三档源码契约：计划卡 / 权限选择器 / 计划开关在场', () => {
+    const plan = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'PlanCard.tsx'), 'utf8');
+    assert(plan.includes('批准执行') && plan.includes('驳回'), '计划卡应有批准 / 驳回动作');
+    assert(plan.includes("decided: 'pending'") || plan.includes("plan.decided === 'pending'"), '计划卡应区分待决状态');
+    const composer = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Composer.tsx'), 'utf8');
+    assert(composer.includes('PERM_LABEL') && composer.includes('always_ask') && composer.includes('never_ask'), '输入区应有权限三档选择器');
+    assert(composer.includes('onPlanMode'), '输入区应有计划模式开关');
+    const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
+    assert(app.includes('respondPlan') && app.includes('plan_proposed') && app.includes('plan_approved'), 'App 应接线计划决策回传与计划事件');
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'tokens.css'), 'utf8');
+    assert(css.includes('--diff-add:') && css.includes('--diff-del:'), 'tokens.css 应有 diff 语义令牌');
+  });
   await test('旧 UI 已退役：提供方模块与样式不再服务', async () => {
     eq((await fetch(`${BASE}/providers.mjs`)).status, 404);
     eq((await fetch(`${BASE}/providers.css`)).status, 404);
