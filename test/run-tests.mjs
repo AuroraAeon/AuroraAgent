@@ -331,6 +331,122 @@ try {
     assert(s.raw.includes('LongCat-2.5-Preview'), '重试后仍未拿到回答');
     assert(mock.state.requests.length >= before + 2, '没有发生连接期重试');
   });
+  // ---------- 自定义 Provider（e2e） ----------
+  const MOCK_ORIGIN = `http://127.0.0.1:${MOCK_PORT}`;
+  const draft = {
+    id: 'mock-gw', name: '测试网关', protocol: 'openai',
+    baseUrl: `${MOCK_ORIGIN}/v1`, apiKey: 'sk-custom-key',
+    models: [{ id: 'custom-alpha', name: 'Alpha 模型', contextWindow: '128K' }],
+  };
+  async function createProvider(body) {
+    const r = await fetch(`${BASE}/api/providers`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    return { status: r.status, ...(await r.json()) };
+  }
+  async function deleteProvider(id) {
+    return (await fetch(`${BASE}/api/providers/${id}`, { method: 'DELETE' })).json();
+  }
+  await test('GET /api/providers 返回内置提供方与协议列表', async () => {
+    const j = await (await fetch(`${BASE}/api/providers`)).json();
+    eq(j.ok, true);
+    eq(j.providers.length, 1, '初始只有内置提供方');
+    eq(j.providers[0].id, 'longcat');
+    eq(j.providers[0].builtin, true);
+    eq(j.providers[0].hasKey, true);
+    assert(!JSON.stringify(j).includes('ak-test-key'), '列表泄漏了内置 API Key');
+    assert(j.protocols.map((p) => p.id).join(',') === 'openai,anthropic', '协议列表不符');
+  });
+  await test('POST /api/providers 创建自定义提供方', async () => {
+    const j = await createProvider(draft);
+    eq(j.ok, true, '创建失败: ' + j.error);
+    eq(j.provider.id, 'mock-gw');
+    eq(j.provider.hasKey, true);
+    assert(!JSON.stringify(j).includes('sk-custom-key'), '回显泄漏了 API Key');
+    eq(j.providers.length, 2, '列表应包含新提供方');
+  });
+  await test('POST /api/providers 拒绝重名 ID 并指出字段', async () => {
+    const j = await createProvider(draft);
+    eq(j.ok, false);
+    eq(j.status, 400);
+    eq(j.field, 'id');
+    assert(j.error.includes('已有提供方'), '重名提示不友好: ' + j.error);
+  });
+  await test('POST /api/providers 拒绝空模型目录与坏端点', async () => {
+    const noModel = await createProvider({ ...draft, id: 'no-model', models: [] });
+    eq(noModel.field, 'models');
+    assert(noModel.error.includes('至少需要一个模型'), '空目录提示不符');
+    const badUrl = await createProvider({ ...draft, id: 'bad-url', baseUrl: 'not-a-url' });
+    eq(badUrl.field, 'baseUrl');
+    const list = await (await fetch(`${BASE}/api/providers`)).json();
+    eq(list.providers.length, 2, '失败创建不应落盘');
+  });
+  await test('POST /api/providers/:id/discover 拉取可用模型（只读）', async () => {
+    const j = await (await fetch(`${BASE}/api/providers/mock-gw/discover`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ baseUrl: draft.baseUrl, protocol: 'openai', apiKey: draft.apiKey }),
+    })).json();
+    eq(j.ok, true, '拉取失败: ' + j.error);
+    eq(j.models.length, 2);
+    eq(j.models[1].name, 'Beta 模型');
+    eq(j.models[1].contextWindow, 262144);
+    eq(j.models[1].maxTokens, 16384);
+  });
+  await test('POST /api/providers/:id/discover 对坏端点给出可读错误', async () => {
+    const r = await fetch(`${BASE}/api/providers/mock-gw/discover`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ baseUrl: 'http://127.0.0.1:1/none', protocol: 'openai', apiKey: 'x' }),
+    });
+    const j = await r.json();
+    eq(r.status, 400);
+    assert(j.error.includes('无法连接'), '错误提示不可读: ' + j.error);
+  });
+  await test('PUT /api/providers/:id 更新模型目录与协议', async () => {
+    const j = await (await fetch(`${BASE}/api/providers/mock-gw`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ models: [{ id: 'custom-alpha' }, { id: 'custom-gamma' }] }),
+    })).json();
+    eq(j.ok, true, '更新失败: ' + j.error);
+    eq(j.provider.models.length, 2);
+    assert(j.provider.models.some((m) => m.id === 'custom-gamma'), '新模型未保存');
+  });
+  await test('GET /api/models 汇总自定义提供方的模型', async () => {
+    const j = await (await fetch(`${BASE}/api/models`)).json();
+    eq(j.ok, true);
+    eq(j.providers.length, 2);
+    const gamma = j.models.find((m) => m.id === 'custom-gamma');
+    assert(gamma, '自定义模型未进目录');
+    eq(gamma.provider, 'mock-gw');
+    assert(j.models.some((m) => m.id === 'LongCat-2.5-Preview' && m.provider === 'longcat'), '内置模型缺失');
+  });
+  await test('/api/chat 按 provider 路由到自定义上游', async () => {
+    const s = await readStream(await chat({ messages: [{ role: 'user', content: '自定义路由' }], provider: 'mock-gw', model: 'custom-gamma' }));
+    assert(s.raw.includes('custom-gamma'), '未走到自定义上游: ' + s.raw.slice(0, 200));
+    eq(mock.state.lastChatMeta.url, '/v1/chat/completions');
+    eq(mock.state.lastChatMeta.authorization, 'Bearer sk-custom-key');
+  });
+  await test('/api/chat 未传 provider 时按模型 ID 反查提供方', async () => {
+    const s = await readStream(await chat({ messages: [{ role: 'user', content: '反查' }], model: 'custom-alpha' }));
+    assert(s.raw.includes('custom-alpha'), '未按模型反查到自定义上游');
+    eq(mock.state.lastChatMeta.url, '/v1/chat/completions');
+  });
+  await test('/api/chat 未知模型仍回退内置提供方', async () => {
+    await readStream(await chat({ messages: [{ role: 'user', content: '未知模型' }], model: 'LongCat-2.0' }));
+    eq(mock.state.lastChatMeta.url, '/openai/v1/chat/completions');
+  });
+  await test('DELETE /api/providers/longcat 拒绝删除内置提供方', async () => {
+    const j = await deleteProvider('longcat');
+    eq(j.ok, false);
+    assert(j.error.includes('不能删除'), '内置提供方应受保护');
+  });
+  await test('DELETE /api/providers/:id 删除自定义提供方', async () => {
+    const j = await deleteProvider('mock-gw');
+    eq(j.ok, true);
+    eq(j.providers.length, 1, '删除后只剩内置');
+    const j2 = await (await fetch(`${BASE}/api/models`)).json();
+    assert(!j2.models.some((m) => m.provider === 'mock-gw'), '删除后模型仍留在目录');
+  });
+
   await test('未知路径 404', async () => {
     const r = await fetch(`${BASE}/nope`);
     eq(r.status, 404);

@@ -1,21 +1,34 @@
 /**
  * LongCat 上游的离线 mock：复刻真实的 SSE 帧结构（reasoning_content + content + usage、
  * lastOne 字段、[DONE] 收尾），并支持按消息内容触发 401/402 错误，用于测试错误映射。
+ * 同时复刻一个「自定义提供方」端点 /v1/models，供自定义 Provider 的质问与路由测试使用。
  */
 import http from 'node:http';
 
 export function startMock(port = 18901) {
-  const state = { requests: [], lastChatBody: null, flakyDone: false };
+  const state = { requests: [], lastChatBody: null, lastChatMeta: null, flakyDone: false };
   const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (d) => { body += d; });
     req.on('end', () => {
       state.requests.push({ method: req.method, url: req.url, body });
+      state.lastChatMeta = { url: req.url, authorization: req.headers.authorization || '', apiKey: req.headers['x-api-key'] || '' };
       if (req.method === 'GET' && req.url === '/openai/v1/models') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ data: [{ id: 'LongCat-2.5-Preview' }, { id: 'LongCat-2.0' }] }));
       }
-      if (req.method === 'POST' && req.url === '/openai/v1/chat/completions') {
+      // 自定义提供方的模型列表端点（OpenAI 兼容形状 + display_name / 容量字段）
+      if (req.method === 'GET' && req.url === '/v1/models') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          data: [
+            { id: 'custom-alpha' },
+            { id: 'custom-beta', display_name: 'Beta 模型', context_window: 262144, max_output_tokens: 16384 },
+          ],
+        }));
+      }
+      // 内置与自定义提供方走同一条 OpenAI 兼容对话实现，仅路径不同
+      if (req.method === 'POST' && (req.url === '/openai/v1/chat/completions' || req.url === '/v1/chat/completions')) {
         const j = JSON.parse(body || '{}');
         state.lastChatBody = j;
         const lastText = JSON.stringify(j.messages?.at(-1)?.content ?? '');
@@ -28,7 +41,7 @@ export function startMock(port = 18901) {
           return res.end(JSON.stringify({ error: { code: 'too_many_requests', message: 'AppId:**bI3t Usage limit reached.' } }));
         }
         const isImg = Array.isArray(j.messages?.at(-1)?.content);
-        const answer = isImg ? '图中有一个蓝色的圆形。' : '你好！我是 LongCat-2.5-Preview。';
+        const answer = isImg ? '图中有一个蓝色的圆形。' : `你好！我是 ${j.model}。`;
         // FLAKY：首次请求直接掐断 socket，模拟网络层失败（用于测试连接期重试）
         if (lastText.includes('FLAKY') && !state.flakyDone) {
           state.flakyDone = true;

@@ -136,6 +136,7 @@ function normalizeStored(raw) {
     name: String(raw.name ?? id).trim() || id,
     protocol,
     baseUrl: endpoint.url,
+    pathPrefix: typeof raw.pathPrefix === 'string' ? raw.pathPrefix : '',
     models,
     apiKey: String(raw.apiKey ?? '').trim(),
   };
@@ -153,7 +154,8 @@ export class ProviderStore {
       name: builtin.name || '美团 LongCat',
       protocol: 'openai',
       baseUrl: String(builtin.baseUrl || '').replace(/\/+$/, ''),
-      apiKey: String(builtin.apiKey || ''),
+      pathPrefix: typeof builtin.pathPrefix === 'string' ? builtin.pathPrefix : '',
+      apiKey: builtin.apiKey,
       model: builtin.model || '',
     };
     this.builtinModels = builtinModels;
@@ -181,14 +183,16 @@ export class ProviderStore {
     }
   }
 
-  /** 内置提供方记录（模型目录由调用方按上游结果注入） */
+  /** 内置提供方记录（模型目录由调用方按上游结果注入；apiKey 可为函数，便于跟随配置热更新） */
   builtinProvider() {
+    const raw = this.builtin.apiKey;
     return {
       id: this.builtin.id,
       name: this.builtin.name,
       protocol: this.builtin.protocol,
       baseUrl: this.builtin.baseUrl,
-      apiKey: this.builtin.apiKey,
+      pathPrefix: this.builtin.pathPrefix || '',
+      apiKey: typeof raw === 'function' ? raw() : raw,
       model: this.builtin.model,
       models: this.builtinModels(),
       builtin: true,
@@ -207,6 +211,7 @@ export class ProviderStore {
       name: p.name,
       protocol: p.protocol,
       baseUrl: p.baseUrl,
+      pathPrefix: p.pathPrefix || '',
       builtin: Boolean(p.builtin),
       hasKey: Boolean(p.apiKey),
       model: p.model || '',
@@ -275,6 +280,14 @@ export class ProviderStore {
   get exists() { return existsSync(this.path); }
 }
 
+/**
+ * 线路地址拼装：自定义提供方的「API 地址」就是端点根，直接拼 /chat/completions；
+ * 内置提供方多一段 /openai/v1 前缀（MODELTESTER_BASE_URL 仍按既有语义取站点根）。
+ */
+export function chatUrl(p) { return `${p.baseUrl}${p.pathPrefix || ''}/chat/completions`; }
+export function modelsUrl(p) { return `${p.baseUrl}${p.pathPrefix || ''}/models`; }
+export function messagesUrl(p) { return `${p.baseUrl}${p.pathPrefix || ''}/messages`; }
+
 /** 上游返回的单个模型记录 -> 候选 { id, name?, contextWindow?, maxTokens? } */
 function candidateFrom(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -315,7 +328,7 @@ function parseModelList(j) {
 export async function fetchModelCandidates(provider) {
   const endpoint = normalizeEndpoint(provider.baseUrl);
   if (!endpoint.ok) throw new ProviderError(endpoint.error, 'baseUrl');
-  const url = `${endpoint.url}/models`;
+  const url = modelsUrl({ baseUrl: endpoint.url, pathPrefix: provider.pathPrefix });
   const headers = { 'Accept': 'application/json' };
   if (provider.apiKey) {
     if (provider.protocol === 'anthropic') {

@@ -13,6 +13,7 @@ import { exec, execSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { SseParser } from './util/sse.mjs';
 import { UsageLedger } from './util/usage.mjs';
+import { ProviderStore, ProviderError, PROTOCOLS, fetchModelCandidates, chatUrl } from './util/providers.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // 数据目录三级回退：MODELTESTER_DATA_DIR（启动器 / LaunchAgent 显式指定）→
@@ -30,6 +31,59 @@ const BASE = process.env.MODELTESTER_BASE_URL || 'https://api.longcat.chat';
 const PORT = Number(process.env.PORT || 8787);
 const PRICE = { input: 2, output: 8 }; // 限时折扣价 ¥/百万 tokens
 const VERSION = '4.0.0';
+// 自定义 Provider 仓库：内置提供方（美团 LongCat）由 env/配置合成，自定义提供方落 providers.json
+const providers = new ProviderStore(DATA_DIR, {
+  name: '美团 LongCat',
+  baseUrl: BASE,
+  pathPrefix: '/openai/v1',
+  apiKey: () => loadConfig().apiKey,
+  model: () => loadConfig().model,
+}, () => modelCatalog.models);
+
+/** 脱敏后的单个提供方（供保存后回显，形状与 /api/providers 列表一致） */
+function redactProvider(p) {
+  const row = providers.list().find((x) => x.id === p.id);
+  if (row) return row;
+  return { id: p.id, name: p.name, protocol: p.protocol, baseUrl: p.baseUrl, builtin: Boolean(p.builtin), hasKey: Boolean(p.apiKey), model: p.model || '', models: p.models || [] };
+}
+
+/** 对话目标提供方：显式指定 > 按模型 ID 反查 > 内置（未知模型仍走内置，保持既有默认行为） */
+function resolveChatProvider(wantId, model) {
+  if (wantId) {
+    const found = providers.get(String(wantId));
+    if (found) return found;
+  }
+  return providers.providerForModel(model);
+}
+
+/** 上游请求头：按线路协议区分鉴权方式 */
+function providerHeaders(provider) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (!provider.apiKey) return headers;
+  if (provider.protocol === 'anthropic') {
+    headers['x-api-key'] = provider.apiKey;
+    headers['anthropic-version'] = '2023-06-01';
+  } else {
+    headers['Authorization'] = `Bearer ${provider.apiKey}`;
+  }
+  return headers;
+}
+
+/** 上游错误的中文提示：内置提供方保留美团专属指引，自定义提供方指向设置页 */
+function upstreamHint(provider, status, errText) {
+  const builtin = Boolean(provider.builtin);
+  const keyHint = builtin
+    ? '请检查 modeltester.config.json 里的 apiKey，或访问 https://longcat.chat/platform/api_keys 重新获取'
+    : `请到「设置 → 提供方」检查「${provider.name}」的 API 密钥，或到该厂商控制台重新获取`;
+  const quotaHint = builtin
+    ? '请到 https://longcat.chat/platform/ 充值，或抢购 Token 资源包（每日 10:00/16:00/21:00/23:00），或完成邀请任务领取奖励'
+    : `请到「${provider.name}」对应的厂商控制台充值后重试`;
+  if (status === 401) return `API Key 无效：${keyHint}`;
+  if (status === 402) return `账号额度已用尽：${quotaHint}`;
+  if (status === 429) return '请求过于频繁，请稍等几秒再发';
+  if (QUOTA_WORDING.test(errText)) return `账号额度可能已用尽：${quotaHint}`;
+  try { return JSON.parse(errText).error?.message || JSON.parse(errText).message || errText; } catch { return errText; }
+}
 
 // ---------- 日志（LOG_LEVEL 模式） ----------
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 };
@@ -89,7 +143,7 @@ async function loadModelCatalog(force = false) {
         .filter((id) => (seen.has(id) ? false : (seen.add(id), true)))
         .map((id) => {
           const p = prettyModel(id);
-          return { id, name: p.name, tag: p.tag, owned: id === cfg.model };
+          return { id, name: p.name, tag: p.tag, owned: id === cfg.model, provider: providers.builtin.id };
         });
       if (!modelCatalog.models.length) throw new Error('上游未返回可用模型');
       modelCatalog.status = 'ready';
@@ -199,14 +253,103 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'GET' && url === '/api/models') {
     const cat = await loadModelCatalog(req.url.includes('force=1'));
+    // 自定义提供方的模型目录就在本地，无需等上游；内置目录失败时它们仍可选用
+    const extra = providers.list().filter((p) => !p.builtin)
+      .flatMap((p) => p.models.map((m) => ({ ...m, provider: p.id })));
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     return res.end(JSON.stringify({
       ok: cat.status === 'ready',
       status: cat.status,
       default: cfg.model,
-      models: cat.models,
+      models: [...cat.models, ...extra],
+      providers: providers.list(),
       error: cat.error,
     }));
+  }
+
+  // ---------- 自定义 Provider（借鉴 dsh Models 设置页：行 + 编辑器卡片 + 添加卡片） ----------
+  if (req.method === 'GET' && url === '/api/providers') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    return res.end(JSON.stringify({ ok: true, protocols: PROTOCOLS, providers: providers.list() }));
+  }
+  if (req.method === 'POST' && url === '/api/providers') {
+    let raw = '';
+    req.on('data', (d) => { raw += d; if (raw.length > 256 * 1024) req.destroy(); });
+    req.on('end', () => {
+      let draft = null;
+      try { draft = JSON.parse(raw || '{}'); } catch { draft = null; }
+      if (!draft) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: '请求体不是合法 JSON' }));
+      }
+      try {
+        const created = providers.create(draft);
+        log('info', '已创建自定义提供方', { id: created.id, protocol: created.protocol });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, provider: redactProvider(created), providers: providers.list() }));
+      } catch (e) {
+        res.writeHead(e instanceof ProviderError ? 400 : 500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: e.message, field: e.field || '' }));
+      }
+    });
+    return;
+  }
+  const providerMatch = /^\/api\/providers\/([a-z0-9-]+)$/.exec(url);
+  if (providerMatch && (req.method === 'PUT' || req.method === 'DELETE')) {
+    const id = providerMatch[1];
+    if (req.method === 'DELETE') {
+      try {
+        providers.remove(id);
+        log('info', '已删除自定义提供方', { id });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, providers: providers.list() }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: e.message, field: e.field || '' }));
+      }
+    }
+    let raw = '';
+    req.on('data', (d) => { raw += d; if (raw.length > 256 * 1024) req.destroy(); });
+    req.on('end', () => {
+      let patch = null;
+      try { patch = JSON.parse(raw || '{}'); } catch { patch = null; }
+      if (!patch) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: '请求体不是合法 JSON' }));
+      }
+      try {
+        const updated = providers.update(id, patch);
+        log('info', '已更新自定义提供方', { id });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, provider: redactProvider(updated), providers: providers.list() }));
+      } catch (e) {
+        res.writeHead(e instanceof ProviderError ? 400 : 500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: e.message, field: e.field || '' }));
+      }
+    });
+    return;
+  }
+  if (req.method === 'POST' && /^\/api\/providers\/[a-z0-9-]+\/discover$/.test(url)) {
+    let raw = '';
+    req.on('data', (d) => { raw += d; if (raw.length > 64 * 1024) req.destroy(); });
+    req.on('end', async () => {
+      let want = {};
+      try { want = JSON.parse(raw || '{}'); } catch { want = {}; }
+      try {
+        const found = await fetchModelCandidates({
+          baseUrl: want.baseUrl, protocol: want.protocol, apiKey: want.apiKey, pathPrefix: want.pathPrefix,
+        });
+        log('info', '已拉取提供方模型目录', { count: found.models.length, url: found.url });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, url: found.url, models: found.models }));
+      } catch (e) {
+        const status = e instanceof ProviderError ? 400 : 500;
+        log('warn', '拉取提供方模型目录失败', { error: e.message });
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: e.message, field: e.field || '' }));
+      }
+    });
+    return;
   }
 
   if (req.method === 'GET' && url === '/api/settings') {
@@ -305,6 +448,8 @@ const server = createServer(async (req, res) => {
         let messages = Array.isArray(body.messages) ? body.messages.slice() : [];
         // 模型选择：体验新模型时前端直接传 model，无需改代码；非法值回退到配置默认
         const model = MODEL_RE.test(String(body.model || '')) ? String(body.model) : cfg.model;
+        // 提供方路由：前端可直接传 provider，未传时按模型 ID 反查所属提供方
+        const provider = resolveChatProvider(body.provider, model);
 
         if (body.imagePath) {
           try {
@@ -337,17 +482,22 @@ const server = createServer(async (req, res) => {
         let upstream;
         for (let attempt = 0; ; attempt++) {
           try {
-            upstream = await fetch(`${BASE}/openai/v1/chat/completions`, {
+            const payload = { model, messages, stream: true };
+            // 内置提供方沿用全局 maxTokens/temperature/thinking；自定义提供方只在显式声明后发送，
+            // 避免上游把未支持的字段当 400 拒绝
+            if (provider.builtin) {
+              payload.max_tokens = cfg.maxTokens;
+              payload.temperature = cfg.temperature;
+              payload.thinking = { type: body.thinking === false ? 'disabled' : 'enabled' };
+            } else {
+              if (provider.thinking) payload.thinking = { type: body.thinking === false ? 'disabled' : 'enabled' };
+              if (provider.maxTokens) payload.max_tokens = provider.maxTokens;
+              if (provider.temperature !== undefined && provider.temperature !== null) payload.temperature = provider.temperature;
+            }
+            upstream = await fetch(chatUrl(provider), {
               method: 'POST',
-              headers: { 'Authorization': `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                model,
-                messages,
-                stream: true,
-                max_tokens: cfg.maxTokens,
-                temperature: cfg.temperature,
-                thinking: { type: body.thinking === false ? 'disabled' : 'enabled' },
-              }),
+              headers: providerHeaders(provider),
+              body: JSON.stringify(payload),
               signal: entry.controller.signal,
             });
             break;
@@ -360,16 +510,8 @@ const server = createServer(async (req, res) => {
 
         if (!upstream.ok) {
           const errText = await upstream.text();
-          let hint = errText;
-          try {
-            const e = JSON.parse(errText).error || {};
-            if (upstream.status === 401) hint = 'API Key 无效：请检查 modeltester.config.json 里的 apiKey，或访问 https://longcat.chat/platform/api_keys 重新获取';
-            else if (upstream.status === 402) hint = '账号额度已用尽：请到 https://longcat.chat/platform/ 充值，或抢购 Token 资源包（每日 10:00/16:00/21:00/23:00），或完成邀请任务领取奖励';
-            else if (upstream.status === 429) hint = '请求过于频繁，请稍等几秒再发';
-            else if (QUOTA_WORDING.test(errText)) hint = '账号额度可能已用尽：请到 https://longcat.chat/platform/ 充值，或抢购 Token 资源包（每日 10:00/16:00/21:00/23:00），或完成邀请任务领取奖励';
-            else hint = e.message || errText;
-          } catch {}
-          log('warn', '上游错误', { status: upstream.status });
+          const hint = upstreamHint(provider, upstream.status, errText);
+          log('warn', '上游错误', { status: upstream.status, provider: provider.id });
           res.writeHead(upstream.status, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ error: { message: hint } }));
         }
