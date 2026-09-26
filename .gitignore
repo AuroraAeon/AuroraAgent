@@ -6,6 +6,7 @@ node_modules/
 __pycache__/
 .DS_Store
 providers.json
+mcp.json
 
 # 前端依赖（web-ui 构建用）
 web-ui/node_modules/
