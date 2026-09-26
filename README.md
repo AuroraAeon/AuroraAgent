@@ -201,6 +201,7 @@ npm run docs:dev    # 本地起文档站
 - **指南**：快速开始 / Agent Loop / 网页工作台 / 终端客户端 / 技能 / MCP / 自定义提供方
 - **速查**：斜杠命令 / HTTP API / 配置项 / 终端设计规范（对话框与选择器的单一真值源）
 - **发布笔记**：`npm run docs:notes` 从 git 历史生成，里程碑段落可手写补充
+- **里程碑变更**：根目录 `CHANGELOG.md`（Keep a Changelog 格式，逐提交细节走发布笔记页）
 
 ## 接到其他工具
 
