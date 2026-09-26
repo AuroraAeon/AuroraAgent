@@ -20,6 +20,7 @@ import { getTool, toolSchemas, anthropicToolSchemas, toolResource, resolveInside
 import { PermissionPolicy, defaultRules, mostRestrictive } from '../util/agent/policy.mjs';
 import { assembleMessages, needsCompaction, planCompaction, compactionMessages, contextWindowOf, estimateMessagesTokens } from '../util/agent/context.mjs';
 import { runAgentTurn } from '../util/agent/loop.mjs';
+import { connectMcp, callResultText, McpError } from '../util/mcp/client.mjs';
 import { UsageLedger } from '../util/usage.mjs';
 import { runTuiToolkitTests } from './tui-toolkit.mjs';
 import { runGuardTests } from './guards.mjs';
@@ -741,6 +742,54 @@ await test('上下文压缩：阈值判定与头尾切分', () => {
 });
 
 // ---------- 单元测试: Agent Loop ----------
+console.log('\nMCP 客户端单元测试（mock stdio 服务器）');
+
+await test('MCP：stdio initialize 握手与 tools/list', async () => {
+  const client = await connectMcp({ transport: 'stdio', command: process.execPath, args: [join(__dirname, 'mock-mcp-server.mjs')] });
+  try {
+    eq(client.serverInfo.name, 'mock-mcp', '握手应返回服务器信息');
+    const tools = await client.listTools();
+    eq(tools.length, 2, '应发现 2 个工具');
+    const echo = tools.find((t) => t.name === 'echo');
+    assert(echo && echo.description && echo.inputSchema && echo.inputSchema.properties && echo.inputSchema.properties.text, '工具 schema 应完整');
+  } finally { client.close(); }
+});
+
+await test('MCP：tools/call 文本结果与错误路径', async () => {
+  const client = await connectMcp({ transport: 'stdio', command: process.execPath, args: [join(__dirname, 'mock-mcp-server.mjs')] });
+  try {
+    const ok = await client.callTool('echo', { text: '你好' });
+    eq(callResultText(ok), 'MCP回声:你好', 'content 文本块应拼为纯文本');
+    const bad = await client.callTool('fail', {});
+    let err = null;
+    try { callResultText(bad); } catch (e) { err = e; }
+    assert(err instanceof McpError && err.message.includes('恒失败'), 'isError 结果应抛出可读错误');
+    let err2 = null;
+    try { await client.callTool('nope', {}); } catch (e) { err2 = e; }
+    assert(err2 instanceof McpError && err2.message.includes('未知工具'), 'JSON-RPC error 应映射为 McpError');
+  } finally { client.close(); }
+});
+
+await test('MCP：HTTP 传输走 POST 并解析 JSON 响应', async () => {
+  const seen = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => {
+    seen.push({ url: String(url), body: JSON.parse(opts.body || '{}') });
+    const msg = JSON.parse(opts.body);
+    const result = msg.method === 'initialize'
+      ? { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'http-mcp', version: '2.0.0' } }
+      : msg.method === 'tools/list' ? { tools: [{ name: 'ping', description: 'pong', inputSchema: { type: 'object', properties: {} } }] } : {};
+    return new Response(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  try {
+    const client = await connectMcp({ transport: 'http', url: 'https://mcp.test/rpc' });
+    eq(client.serverInfo.name, 'http-mcp', 'HTTP 传输应完成握手');
+    const tools = await client.listTools();
+    eq(tools[0].name, 'ping', 'HTTP 传输应能列出工具');
+    assert(seen.every((s) => s.url === 'https://mcp.test/rpc' && s.body.jsonrpc === '2.0'), '请求应为 JSON-RPC 2.0 POST');
+  } finally { globalThis.fetch = realFetch; }
+});
+
 console.log('\nAgent Loop 单元测试（stub fetch）');
 
 /** 构造 SSE 响应（真实 Response + ReadableStream，loop 用 getReader 消费） */
