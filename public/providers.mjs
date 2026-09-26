@@ -53,8 +53,8 @@ const state = {
 let hooks = { onChanged: () => {} };
 // 后端字段错误 → 输入框 ID（添加卡片与编辑卡片的前缀不同）
 const FIELD_MAP = {
-  add: { id: 'nwId', name: 'nwName', baseUrl: 'nwBaseUrl', 'price.input': 'nwPriceIn', 'price.output': 'nwPriceOut' },
-  edit: { name: 'pvName', baseUrl: 'pvBaseUrl', 'price.input': 'pvPriceIn', 'price.output': 'pvPriceOut' },
+  add: { id: 'nwId', name: 'nwName', baseUrl: 'nwBaseUrl', apiKey: 'nwApiKey', 'price.input': 'nwPriceIn', 'price.output': 'nwPriceOut' },
+  edit: { name: 'pvName', baseUrl: 'pvBaseUrl', apiKey: 'pvApiKey', 'price.input': 'pvPriceIn', 'price.output': 'pvPriceOut' },
 };
 
 // ---------- 网络 ----------
@@ -95,8 +95,8 @@ function rowHtml(p) {
   const acts = p.builtin
     ? '<span class="pv-meta">由配置与上游目录决定</span>'
     : '<span class="pv-acts">'
-      + '<button type="button" class="pv-iconbtn" data-act="edit" data-id="' + esc(p.id) + '" aria-label="编辑 ' + esc(p.name) + '" title="编辑">' + SVG.edit + '</button>'
-      + '<button type="button" class="pv-iconbtn danger" data-act="del" data-id="' + esc(p.id) + '" aria-label="删除 ' + esc(p.name) + '" title="删除">' + SVG.trash + '</button>'
+      + '<button type="button" class="pv-link" data-act="edit" data-id="' + esc(p.id) + '">编辑</button>'
+      + '<button type="button" class="pv-link danger" data-act="del" data-id="' + esc(p.id) + '">删除</button>'
       + '</span>';
   return '<div class="pv-row" data-open="' + (open ? 'true' : 'false') + '" data-id="' + esc(p.id) + '">'
     + dot
@@ -113,10 +113,11 @@ function renderRows() {
 }
 
 // ---------- 字段骨架 ----------
-function fieldHtml({ id, label, value, type, placeholder, hint, autocomplete, inputmode, spellcheck }) {
+function fieldHtml({ id, label, value, type, placeholder, hint, autocomplete, inputmode, spellcheck, required }) {
   return '<div class="pv-field">'
-    + '<label for="' + id + '">' + esc(label) + '</label>'
+    + '<label for="' + id + '">' + esc(label) + (required ? '<span class="pv-req" aria-hidden="true">*</span>' : '') + '</label>'
     + '<input class="pv-input" id="' + id + '" name="' + id + '" type="' + (type || 'text') + '"'
+    + (required ? ' required' : '')
     + ' value="' + esc(value ?? '') + '"'
     + (placeholder ? ' placeholder="' + esc(placeholder) + '"' : '')
     + (hint ? ' aria-describedby="' + id + 'Hint"' : '')
@@ -135,22 +136,26 @@ function showFieldError(id, message) {
   const err = $(id + 'Err');
   if (!input || !err) return;
   input.setAttribute('aria-invalid', 'true');
+  input.setAttribute('data-err', '1');
   err.hidden = false;
   err.innerHTML = SVG.alert + '<span>' + esc(message) + '</span>';
   input.setAttribute('aria-describedby', id + 'Err');
 }
 function clearFieldErrors(form) {
-  form.querySelectorAll('[aria-invalid="true"]').forEach((el) => el.removeAttribute('aria-invalid'));
+  form.querySelectorAll('[aria-invalid="true"]').forEach((el) => { el.removeAttribute('aria-invalid'); el.removeAttribute('data-err'); });
   form.querySelectorAll('.pv-err').forEach((el) => { el.hidden = true; el.innerHTML = ''; });
 }
 
 // ---------- 模型目录编辑器 ----------
 function modelRowHtml(m, idx) {
+  // 容量两项收进每行独立的折叠（dsh 同款「容量」disclosure）：默认收起，保持目录紧凑
   return '<div class="pv-model" data-idx="' + idx + '">'
     + '<input class="pv-input pv-mid" aria-label="模型 ID" placeholder="模型 ID" value="' + esc(m.id) + '" spellcheck="false">'
     + '<input class="pv-input pv-mname" aria-label="显示名称" placeholder="显示名称" value="' + esc(m.name || '') + '">'
+    + '<details class="pv-mfold"><summary>' + SVG.chev + '容量</summary><div class="pv-mfold-body">'
     + '<input class="pv-input pv-mcap" aria-label="上下文窗口" placeholder="上下文窗口" inputmode="numeric" value="' + esc(m.contextWindow ? fmtCap(m.contextWindow) : '') + '">'
     + '<input class="pv-input pv-mcap" aria-label="最大输出 token 数" placeholder="最大输出" inputmode="numeric" value="' + esc(m.maxTokens ? fmtCap(m.maxTokens) : '') + '">'
+    + '</div></details>'
     + '<button type="button" class="pv-iconbtn danger" data-act="delmodel" aria-label="删除模型 ' + esc(m.id) + '">' + SVG.close + '</button>'
     + '</div>';
 }
@@ -206,16 +211,15 @@ function editorCardHtml(p) {
     '<option value="' + esc(x.id) + '"' + (x.id === p.protocol ? ' selected' : '') + '>' + esc(x.label) + '</option>').join('');
   const models = p.models.length ? p.models.map(modelRowHtml).join('') : modelRowHtml({ id: '' }, 0);
   return '<form class="pv-card" id="pvEditor" novalidate>'
-    + '<div class="pv-card-head"><h3>编辑 ' + esc(p.name) + '</h3><span class="pv-tag">' + esc(p.id) + '</span></div>'
+    + '<div class="pv-card-head"><h3>' + esc(p.id) + '</h3><span class="pv-tag">自定义</span></div>'
     + fieldHtml({ id: 'pvApiKey', label: 'API 密钥', type: 'password', autocomplete: 'new-password',
         placeholder: '已配置——输入新值可替换', hint: '输入新值可替换已存储的密钥；留空则保持不变。' })
     + '<details class="pv-fold"><summary>' + SVG.chev + '自定义设置</summary><div class="pv-fold-body">'
-    + fieldHtml({ id: 'pvName', label: '显示名称', value: p.name, placeholder: '用于界面标识' })
-    + '<div class="pv-row2">'
-    + '<div class="pv-field"><label for="pvProtocol">API 协议</label><select class="pv-select" id="pvProtocol">' + protocols + '</select></div>'
-    + fieldHtml({ id: 'pvBaseUrl', label: 'API 地址', value: p.baseUrl, placeholder: 'https://api.example.com/v1', spellcheck: false })
-    + '</div>'
+    + fieldHtml({ id: 'pvName', label: '显示名称', value: p.name, placeholder: '用于界面标识', required: true })
+    + fieldHtml({ id: 'pvBaseUrl', label: 'API 地址', value: p.baseUrl, placeholder: 'https://api.example.com/v1', spellcheck: false, required: true,
+        hint: '端点根地址：会在其后拼 /chat/completions 与 /models。' })
     + '<p class="pv-resolve" id="pvResolve"></p>'
+    + '<div class="pv-field"><label for="pvProtocol">API 协议</label><select class="pv-select" id="pvProtocol">' + protocols + '</select></div>'
     + '<div class="pv-field"><label for="pvMaxTokens">最大输出 token 数（可选）</label>'
     + '<input class="pv-input" id="pvMaxTokens" inputmode="numeric" value="' + esc(p.maxTokens ? fmtCap(p.maxTokens) : '') + '" placeholder="留空则用上游默认">'
     + '<p class="pv-hint">仅在提供方支持时发送，避免上游把陌生字段当错误拒绝。</p></div>'
@@ -243,10 +247,10 @@ function addCardHtml() {
   return '<form class="pv-card" id="pvAdd" novalidate>'
     + '<div class="pv-card-head"><h3>添加自定义提供方</h3></div>'
     + '<p class="pv-hint" style="margin-top:-4px">OpenAI 兼容网关、自建服务，或比内置目录更新的厂商，都可以在这里接进来。</p>'
-    + fieldHtml({ id: 'nwId', label: 'Provider ID', placeholder: 'my-gateway', spellcheck: false,
+    + fieldHtml({ id: 'nwId', label: 'Provider ID', placeholder: 'my-gateway', spellcheck: false, required: true,
         hint: '以小写字母开头的标识，在请求中唯一标识该提供方，并用于派生凭据名。' })
-    + fieldHtml({ id: 'nwName', label: '显示名称', placeholder: '我的网关', hint: '用于界面标识这个提供方。' })
-    + fieldHtml({ id: 'nwBaseUrl', label: 'API 地址', placeholder: 'https://api.example.com/v1', spellcheck: false,
+    + fieldHtml({ id: 'nwName', label: '显示名称', placeholder: '我的网关', required: true, hint: '用于界面标识这个提供方。' })
+    + fieldHtml({ id: 'nwBaseUrl', label: 'API 地址', placeholder: 'https://api.example.com/v1', spellcheck: false, required: true,
         hint: '端点根地址：会在其后拼 /chat/completions 与 /models。' })
     + '<div class="pv-field"><label for="nwProtocol">API 协议</label><select class="pv-select" id="nwProtocol">' + protocols + '</select></div>'
     + '<p class="pv-resolve" id="pvResolve"></p>'
@@ -256,6 +260,7 @@ function addCardHtml() {
     + '<div class="pv-field"><label>模型目录</label>'
     + '<div class="pv-cat-head"><span class="pv-cat-meta" id="pvCatMeta"></span>'
     + '<button type="button" class="pv-link" data-act="fetch">' + SVG.refresh.replace('<svg', '<svg style="width:12px;height:12px;vertical-align:-2px"') + '获取可用模型</button></div>'
+    + '<p class="pv-hint">模型选择器中将不显示任何模型；目录外 ID 仍可通过终端 /model 直接发送。</p>'
     + '<div class="pv-cat-list" id="pvModels">' + modelRowHtml({ id: '' }, 0) + '</div>'
     + '<p class="pv-err" id="pvModelsErr" hidden></p>'
     + '<button type="button" class="pv-btn ghost block" data-act="addmodel">' + SVG.plus + '添加模型</button>'
@@ -297,7 +302,28 @@ function renderCard() {
   urlInput.addEventListener('input', showResolve);
   proto.addEventListener('change', showResolve);
   showResolve();
+  // 「获取可用模型」在 API 地址为空时禁用（dsh 同款：没有端点就无从质问）
+  const fetchBtn = form.querySelector('[data-act="fetch"]');
+  if (fetchBtn) {
+    const syncFetch = () => {
+      fetchBtn.disabled = urlInput.value.trim() === '';
+      fetchBtn.title = fetchBtn.disabled ? '请先填写 API 地址，再获取。' : '';
+    };
+    urlInput.addEventListener('input', syncFetch);
+    syncFetch();
+  }
+  // modern-web-guidance：:user-invalid 是视觉态，需把 aria-invalid 同步给读屏
+  form.addEventListener('blur', (ev) => { if (ev.target.matches('.pv-input')) syncAria(ev.target); }, true);
+  form.addEventListener('input', (ev) => { if (ev.target.matches('.pv-input') && ev.target.hasAttribute('aria-invalid')) syncAria(ev.target); });
+  form.addEventListener('submit', () => { form.querySelectorAll('.pv-input[required]').forEach(syncAria); });
   e.add.scrollIntoView({ block: 'nearest' });
+}
+
+/** 把原生 :user-invalid 状态同步到 aria-invalid（提交时贴上的自定义错误优先保留） */
+function syncAria(el) {
+  if (!el.checkValidity) return;
+  if (!el.checkValidity() || el.hasAttribute('data-err')) el.setAttribute('aria-invalid', 'true');
+  else el.removeAttribute('aria-invalid');
 }
 
 // ---------- 保存 / 创建 ----------
@@ -428,6 +454,7 @@ async function openPicker(target) {
   state.picker.loading = false;
   if (!r.ok) { state.picker.error = r.error; renderPicker(); return; }
   state.picker.models = r.models || [];
+  state.picker.picked = new Set(state.picker.models.map((m) => m.id)); // dsh 同款：默认全选，去掉不要的即可
   renderPicker();
 }
 
@@ -509,6 +536,7 @@ function applyPicked() {
 function openDelete(id) {
   const p = state.providers.find((x) => x.id === id);
   if (!p) return;
+  $('pvDelTitle').textContent = '删除 ' + p.name + '？';
   $('pvDelText').innerHTML = '删除 <b>' + esc(p.name) + '</b> 会移除其配置和存储的 API 密钥，模型选择器里它的模型也会一起消失。此操作不可撤销。';
   $('pvDelOk').onclick = async () => {
     $('pvDelOk').disabled = true;
