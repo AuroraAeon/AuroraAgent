@@ -1,0 +1,30 @@
+/* 设计令牌：自 public/index.html 原样迁移（暗色 / 强调蓝 #4d8df6 / 零 emoji）。
+   组件内禁止硬编码语义色，一律引用本表变量。 */
+:root {
+  /* 中性色：背景 / 面板 / 表面 / 线条 / 文字 */
+  --bg:#0e1014; --panel:#151820; --surface:#1b1f2a; --surface-hover:#232936;
+  --line:#2a3040; --line-strong:#39415a; --panel-line:#333b52;
+  --text:#e8ebf2; --dim:#8b93a7; --faint:#5d6478; --code-bg:#0a0c10;
+  /* 品牌主色：取自 public/icon.svg 渐变（靛蓝→蓝→青）的蓝段，全站强调色唯一来源 */
+  --accent:#4d8df6; --accent-hi:#6ba4f8; --accent-soft:rgb(77 141 246 / 14%); --accent-line:rgb(77 141 246 / 45%); --accent-ink:#0b0e14;
+  --accent-glow:rgb(77 141 246 / 7%); --accent-shadow:rgb(77 141 246 / 30%);
+  /* 语义色：成功 / 危险 / 思考各有专属令牌，组件内禁止硬编码颜色 */
+  --ok:#4ec97f; --ok-ink:#8fe3b4; --ok-bg:rgb(78 201 127 / 12%); --ok-line:rgb(78 201 127 / 32%);
+  --danger:#ff6b6b; --danger-ink:#ff9a9a; --danger-bg:rgb(255 107 107 / 12%); --danger-bg-hi:rgb(255 107 107 / 20%); --danger-line:rgb(255 107 107 / 35%); --danger-line-hi:rgb(255 107 107 / 55%);
+  --think:#5ec8d8; --think-soft:rgb(94 200 216 / 6%);
+  --radius:14px;
+  --ease:cubic-bezier(.22,.9,.28,1);
+  color-scheme:dark;
+}
+
+* { box-sizing:border-box; margin:0; padding:0; }
+[hidden] { display:none !important; }
+html, body, #root { height:100%; }
+body {
+  background:var(--bg); color:var(--text);
+  font:15px/1.65 -apple-system,"PingFang SC","SF Pro Text","Helvetica Neue",Arial,sans-serif;
+  overflow:hidden;
+}
+::selection { background:var(--accent-line); }
+:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:6px; }
+.boot { display:flex; height:100%; align-items:center; justify-content:center; color:var(--dim); }

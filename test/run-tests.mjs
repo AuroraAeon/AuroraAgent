@@ -1353,6 +1353,39 @@ await test('Agent 权限：未知 requestId 返回 ok:false', async () => {
   eq(r.ok, false);
 });
 
+await test('/app 服务 React 构建产物（HTML / 哈希资产 / SPA 回退）', async () => {
+  const html = await (await fetch(`${BASE}/app/`)).text();
+  assert(html.includes('id="root"'), '应返回应用挂载点');
+  assert(html.includes('/app/assets/'), '应引用 /app 基准的资产路径');
+  const noSlash = await fetch(`${BASE}/app`);
+  eq(noSlash.status, 200);
+  assert((await noSlash.text()).includes('id="root"'), '/app 无斜杠也应回退 index.html');
+  const assetMatch = /\/app\/assets\/[A-Za-z0-9._-]+\.js/.exec(html);
+  assert(assetMatch, 'HTML 应引用 JS 资产');
+  const asset = await fetch(`${BASE}${assetMatch[0]}`);
+  eq(asset.status, 200);
+  assert((asset.headers.get('content-type') || '').includes('javascript'), 'JS 资产 MIME 正确');
+  assert((asset.headers.get('cache-control') || '').includes('immutable'), '哈希资产应可长缓存');
+  const spa = await fetch(`${BASE}/app/some/deep/route`);
+  assert((await spa.text()).includes('id="root"'), '未知子路径应 SPA 回退');
+  const missing = await fetch(`${BASE}/app/assets/nope-xyz.js`);
+  eq(missing.status, 404, '不存在的资产应 404');
+});
+
+await test('/app 防目录穿越（原始 socket 不过滤 ..）', async () => {
+  const net = await import('node:net');
+  const raw = await new Promise((done) => {
+    const sock = net.connect(WEB_PORT, '127.0.0.1', () => {
+      sock.write('GET /app/../web.mjs HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n');
+    });
+    let buf = '';
+    sock.on('data', (d) => { buf += d; });
+    sock.on('end', () => done(buf));
+    sock.on('error', () => done(''));
+  });
+  assert(raw.startsWith('HTTP/1.1 403'), '目录穿越必须 403，实际: ' + raw.slice(0, 40));
+});
+
   await test('未知路径 404', async () => {
     const r = await fetch(`${BASE}/nope`);
     eq(r.status, 404);
