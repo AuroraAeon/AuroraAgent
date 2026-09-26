@@ -11,6 +11,7 @@ import { SseParser, estimateTokens } from '../util/sse.mjs';
 import { startMock } from './mock-longcat.mjs';
 import { ProviderStore, ProviderError, parseCapacity, formatCapacity, normalizeEndpoint, validateProviderDraft, chatUrl, modelsUrl, messagesUrl } from '../util/providers.mjs';
 import { buildChatRequest, anthropicFrame } from '../util/wire.mjs';
+import { consumeAgentStream } from '../util/stream.mjs';
 import { agentEvent, sseFrame } from '../util/agent/events.mjs';
 import { HARNESSES, getHarness, harnessSummaries, DEFAULT_HARNESS } from '../util/agent/harness.mjs';
 import { SessionStore } from '../util/agent/session.mjs';
@@ -272,7 +273,13 @@ await test('anthropicFrame 翻译文本、思考、用量与错误事件', () =>
   eq(f({ type: 'message_start', message: { usage: { input_tokens: 3, output_tokens: 0 } } }).usage.prompt_tokens, 3);
   eq(f({ type: 'message_delta', usage: { output_tokens: 9 } }).usage.completion_tokens, 9);
   const stop = f({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 9 } });
-  eq(stop.chunk.choices[0].finish_reason, 'end_turn');
+  eq(stop.chunk.choices[0].finish_reason, 'stop', 'end_turn 应映射为 OpenAI 词表 stop');
+  const toolStop = f({ type: 'message_delta', delta: { stop_reason: 'tool_use' } });
+  eq(toolStop.chunk.choices[0].finish_reason, 'tool_calls', 'tool_use 应映射为 tool_calls');
+  const tuStart = f({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'toolu_1', name: 'read_file' } });
+  eq(tuStart.chunk.choices[0].delta.tool_calls[0].id, 'toolu_1', 'tool_use 开始应转出 id 与名称');
+  const tuDelta = f({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"a":1}' } });
+  eq(tuDelta.chunk.choices[0].delta.tool_calls[0].function.arguments, '{"a":1}', 'input_json_delta 应转出参数增量');
   const err = f({ type: 'error', error: { message: '过载' } });
   assert(err.chunk.choices[0].delta.content.includes('过载'), '错误事件应转成可见内容');
   eq(f({ type: 'ping' }), null);
@@ -418,6 +425,63 @@ await test('权限策略：默认姿态、后匹配赢与总是允许', () => {
   eq(p2.evaluate('shell', 'rm -rf /'), 'deny', '后匹配的 deny 应赢');
   eq(mostRestrictive('allow', 'ask'), 'ask');
   eq(mostRestrictive('deny', 'allow'), 'deny');
+});
+
+await test('线路拼装：tools 参数进入 OpenAI 与 Anthropic 两种形状', () => {
+  const provider = { protocol: 'openai', baseUrl: 'https://x', apiKey: 'k' };
+  const req = buildChatRequest(provider, { model: 'm', messages: [{ role: 'user', content: 'hi' }], toolNames: ['read_file', 'shell'] });
+  eq(req.body.tools.length, 2);
+  eq(req.body.tools[0].type, 'function');
+  eq(req.body.tools[0].function.name, 'read_file');
+  eq(req.body.tool_choice, 'auto');
+  const anProvider = { protocol: 'anthropic', baseUrl: 'https://x', apiKey: 'k' };
+  const anReq = buildChatRequest(anProvider, { model: 'm', messages: [{ role: 'user', content: 'hi' }], toolNames: ['read_file'] });
+  assert(anReq.body.tools[0].input_schema, 'Anthropic tools 用 input_schema');
+  const messages = [
+    { role: 'user', content: '读文件' },
+    { role: 'assistant', content: '', tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'read_file', arguments: '{"path":"a.txt"}' } }] },
+    { role: 'tool', tool_call_id: 'call_1', content: '1  内容' },
+    { role: 'tool', tool_call_id: 'call_2', content: '2  内容2' },
+  ];
+  const anReq2 = buildChatRequest(anProvider, { model: 'm', messages });
+  const turns = anReq2.body.messages;
+  const asst = turns.find((t) => t.role === 'assistant');
+  eq(asst.content[0].type, 'tool_use', 'assistant.tool_calls 应翻成 tool_use 块');
+  eq(asst.content[0].input.path, 'a.txt', 'arguments JSON 应解析进 input');
+  const toolTurn = turns.filter((t) => Array.isArray(t.content) && t.content.some((b) => b.type === 'tool_result'));
+  eq(toolTurn.length, 1, '连续 tool 结果应合并进同一条 user 消息');
+  eq(toolTurn[0].content.length, 2, '两个 tool_result 块');
+});
+
+await test('Agent 流读取：文本 / 思考 / 工具调用增量累积', async () => {
+  const frames = [
+    { choices: [{ index: 0, delta: { reasoning_content: '想' } }] },
+    { choices: [{ index: 0, delta: { content: '答' } }] },
+    { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'c1', type: 'function', function: { name: 'read_file', arguments: '{"path":' } }] } }] },
+    { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '"a.txt"}' } }] } }] },
+    { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 5, completion_tokens: 6 } },
+  ];
+  const enc = new TextEncoder();
+  const chunks = frames.map((f) => enc.encode(`data: ${JSON.stringify(f)}\n\n`));
+  chunks.push(enc.encode('data: [DONE]\n\n'));
+  let i = 0;
+  const reader = { read: async () => (i < chunks.length ? { done: false, value: chunks[i++] } : { done: true, value: undefined }), cancel: async () => {} };
+  const entry = { controller: new AbortController(), usage: null };
+  let text = '', think = '', deltas = 0;
+  const out = await consumeAgentStream(reader, entry, {
+    onText: (t) => { text += t; },
+    onThinking: (t) => { think += t; },
+    onToolCallDelta: () => { deltas++; },
+  });
+  eq(text, '答');
+  eq(think, '想');
+  eq(out.toolCalls.length, 1, '应汇出 1 个工具调用');
+  eq(out.toolCalls[0].name, 'read_file');
+  eq(out.toolCalls[0].arguments, '{"path":"a.txt"}', '参数增量应完整拼接');
+  eq(out.toolCalls[0].id, 'c1');
+  eq(out.finishReason, 'tool_calls');
+  eq(deltas, 2, '两次参数增量都应通知 UI');
+  eq(entry.usage.prompt_tokens, 5, '用量应累积到 entry');
 });
 
 // ---------- e2e ----------

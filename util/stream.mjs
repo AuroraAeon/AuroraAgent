@@ -3,6 +3,7 @@
  * abort 语义借鉴 dsh 的 cancellableStream：即使 read() 未立即拒绝，也能立刻跳出循环。
  */
 import { SseParser } from './sse.mjs';
+import { randomUUID } from 'node:crypto';
 
 /** 建立「abort 即让 read() 赛跑失败」的Promise；返回 { race, dispose } */
 function abortRaceFor(controller) {
@@ -67,4 +68,59 @@ export async function pumpTranslated(reader, res, entry, translate) {
   }
   res.write('data: [DONE]\n\n');
   res.end();
+}
+
+/**
+ * Agent 消费式 SSE 读取：把上游帧解成「文本 / 思考 / 工具调用 / 用量」四类事实交给 handlers，
+ * 不写回客户端——由 Agent Loop 决定去向。与 pumpSse 的区别仅此一点。
+ * @param reader 上游响应体 reader
+ * @param entry  活跃流条目（提供 controller 与 usage 累积位）
+ * @param handlers { onText, onThinking, onToolCallDelta, onToolCalls, onUsage }
+ * @param opts { translate } 传 anthropicFrame 时按 Anthropic 线路翻译
+ * @returns {{ toolCalls: Array, finishReason: string|null, usage: object|null }}
+ */
+export async function consumeAgentStream(reader, entry, handlers = {}, { translate } = {}) {
+  const decoder = new TextDecoder();
+  const parser = new SseParser();
+  const abortRace = abortRaceFor(entry.controller);
+  const calls = new Map(); // index -> { id, name, args }
+  const handleFrame = (j) => {
+    if (!j || typeof j !== 'object') return;
+    if (j.usage) { entry.usage = { ...entry.usage, ...j.usage }; handlers.onUsage?.(j.usage); }
+    const choice = j.choices?.[0];
+    if (!choice) return;
+    const d = choice.delta;
+    if (!d) { if (choice.finish_reason) finishReason = choice.finish_reason; return; }
+    if (d.reasoning_content) handlers.onThinking?.(d.reasoning_content);
+    if (d.content) handlers.onText?.(d.content);
+    if (Array.isArray(d.tool_calls)) {
+      for (const tc of d.tool_calls) {
+        const i = tc.index ?? 0;
+        const cur = calls.get(i) || { id: '', name: '', args: '' };
+        if (tc.id) cur.id = tc.id;
+        if (tc.function?.name) cur.name += tc.function.name;
+        if (tc.function?.arguments) { cur.args += tc.function.arguments; handlers.onToolCallDelta?.(i, cur); }
+        calls.set(i, cur);
+      }
+    }
+    if (choice.finish_reason) finishReason = choice.finish_reason;
+  };
+  let finishReason = null;
+  const handleEvent = (ev) => {
+    if (translate) { const out = translate(ev); if (out?.chunk) handleFrame(out.chunk); return; }
+    try { handleFrame(JSON.parse(ev.data)); } catch {}
+  };
+  for (;;) {
+    const { done, value } = await Promise.race([reader.read(), abortRace]);
+    if (done) break;
+    for (const ev of parser.feed(decoder.decode(value, { stream: true }))) handleEvent(ev);
+  }
+  for (const ev of parser.end()) handleEvent(ev);
+  const toolCalls = [...calls.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => ({
+    id: v.id || `call_${randomUUID().slice(0, 8)}`,
+    name: v.name,
+    arguments: v.args,
+  }));
+  handlers.onToolCalls?.(toolCalls, finishReason);
+  return { toolCalls, finishReason, usage: entry.usage || null };
 }

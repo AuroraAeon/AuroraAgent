@@ -46,14 +46,24 @@ export function startMock(port = 18901) {
           return res.end(JSON.stringify({ error: { code: 'too_many_requests', message: 'AppId:**bI3t Usage limit reached.' } }));
         }
         const isImg = Array.isArray(j.messages?.at(-1)?.content);
-        const answer = isImg ? '图中有一个蓝色的圆形。' : `你好！我是 ${j.model}。`;
+        // Agent 工具轮：USE_TOOL 且尚无工具结果时先要一次 read_file；带回结果后原文复述（供测试断言回填）
+        const hasToolResult = Array.isArray(j.messages) && j.messages.some((m) => m.role === 'tool');
+        const toolEcho = hasToolResult ? j.messages.filter((m) => m.role === 'tool').map((m) => (typeof m.content === 'string' ? m.content : '')).join(' | ') : '';
+        const isToolRound = lastText.includes('USE_TOOL') && !hasToolResult;
+        const answer = isToolRound ? '' : hasToolResult ? `工具结果已收到：${toolEcho}` : isImg ? '图中有一个蓝色的圆形。' : `你好！我是 ${j.model}。`;
         // FLAKY：首次请求直接掐断 socket，模拟网络层失败（用于测试连接期重试）
         if (lastText.includes('FLAKY') && !state.flakyDone) {
           state.flakyDone = true;
           req.socket.destroy();
           return;
         }
-        const frames = [
+        const frames = isToolRound ? [
+          { id: 'x', choices: [{ index: 0, delta: { reasoning_content: '需要读文件，' } }], lastOne: false },
+          { id: 'x', choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_mock_1', type: 'function', function: { name: 'read_file', arguments: '{"path":' } }] } }], lastOne: false },
+          { id: 'x', choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '"mock.txt"}' } }] } }], lastOne: false },
+          { id: 'x', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }], lastOne: false,
+            usage: { prompt_tokens: 20, completion_tokens: 15, total_tokens: 35, completion_tokens_details: { reasoning_tokens: 42 } } },
+        ] : [
           { id: 'x', choices: [{ index: 0, delta: { reasoning_content: '用户在提问，' } }], lastOne: false },
           { id: 'x', choices: [{ index: 0, delta: { reasoning_content: '我应该友好地回答。' } }], lastOne: false },
           { id: 'x', choices: [{ index: 0, delta: { content: answer } }], lastOne: false },
@@ -62,7 +72,8 @@ export function startMock(port = 18901) {
         ];
         if (!j.stream) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: answer }, finish_reason: 'stop' }], usage: frames[3].usage }));
+          const msg = isToolRound ? { role: 'assistant', content: '', tool_calls: [{ id: 'call_mock_1', type: 'function', function: { name: 'read_file', arguments: '{"path":"mock.txt"}' } }] } : { role: 'assistant', content: answer };
+          return res.end(JSON.stringify({ choices: [{ message: msg, finish_reason: isToolRound ? 'tool_calls' : 'stop' }], usage: frames[3].usage }));
         }
         res.writeHead(200, { 'Content-Type': 'text/event-stream' });
         // SLOW：放慢吐字，给测试留出调用 /api/abort 的时间窗
