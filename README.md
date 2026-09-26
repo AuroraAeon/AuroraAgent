@@ -23,7 +23,7 @@ npm run chat      # 终端 Agent 会话
 npm run web       # 网页工作台 http://localhost:8787
 ```
 
-没配 Key 时按提示操作：打开 <https://longcat.chat/platform/api_keys> 创建 Key，然后三选一——对话里 `/key sk-你的Key`（自动保存）、`export MODELTESTER_API_KEY="sk-你的Key"`、或写进配置文件的 `apiKey` 字段。
+没配 Key 时按提示操作：打开 <https://longcat.chat/platform/api_keys> 创建 Key，然后三选一——对话里 `/key sk-你的Key`（自动保存）、`export AURORAAGENT_API_KEY="sk-你的Key"`、或写进配置文件的 `apiKey` 字段。
 
 ## Harness 模式
 
@@ -101,18 +101,20 @@ Agent 运行时（`/api/agent/*`，单活跃 turn：已有 turn 在跑时返回 
 
 | 内容 | 位置 |
 | --- | --- |
-| API Key / 模型 / 温度等配置 | `~/Library/Application Support/ModelTester/modeltester.config.json` |
-| 会话（meta + 追加式转录） | `~/Library/Application Support/ModelTester/sessions/<id>.meta.json` + `.jsonl` |
-| 用量账本（含被中止的请求） | `~/Library/Application Support/ModelTester/usage.jsonl` |
-| 自定义提供方（Key / 端点 / 模型目录 / 单价） | `~/Library/Application Support/ModelTester/providers.json` |
-| 服务日志 | `~/Library/Logs/com.modeltester.app.log` |
+| API Key / 模型 / 温度等配置 | `~/Library/Application Support/AuroraAgent/auroraagent.config.json` |
+| 会话（meta + 追加式转录） | `~/Library/Application Support/AuroraAgent/sessions/<id>.meta.json` + `.jsonl` |
+| 用量账本（含被中止的请求） | `~/Library/Application Support/AuroraAgent/usage.jsonl` |
+| 自定义提供方（Key / 端点 / 模型目录 / 单价） | `~/Library/Application Support/AuroraAgent/providers.json` |
+| 服务日志 | `~/Library/Logs/com.auroraagent.app.log` |
 
-数据目录三级回退：`MODELTESTER_DATA_DIR` 环境变量 → 同目录已存在 `modeltester.config.json` 时用当前目录（源码开发态）→ `~/Library/Application Support/ModelTester`（App 态）。`modeltester.config.json`、`usage.jsonl`、`providers.json`、`sessions/` 永不进仓库。
+数据目录三级回退：`AURORAAGENT_DATA_DIR` 环境变量 → 同目录已存在 `auroraagent.config.json` 时用当前目录（源码开发态）→ `~/Library/Application Support/AuroraAgent`（App 态）。`auroraagent.config.json`、`usage.jsonl`、`providers.json`、`sessions/` 永不进仓库。
+
+> 5.0.0 更名迁移：首次运行会把旧目录 `~/Library/Application Support/ModelTester` 整体搬迁到新目录（Key 与账本保留），旧 LaunchAgent label `com.modeltester.app` 在重新安装服务时自动卸载。
 
 ## 启动与常驻
 
-- **双击 `~/Applications/ModelTester.app`**（macOS 里显示名 AuroraAgent，Bundle ID 与 LaunchAgent label 不变）：服务已在运行就直接打开浏览器；否则后台拉起服务再打开。整个 Bundle 可随意搬移，启动器自定位目录
-- **开机自启**：LaunchAgent `com.modeltester.app`（开机自启 + 崩溃自恢复）；登录自启不弹浏览器（`NO_OPEN=1`）
+- **双击 `~/Applications/AuroraAgent.app`**：服务已在运行就直接打开浏览器；否则后台拉起服务再打开。整个 Bundle 可随意搬移，启动器自定位目录
+- **开机自启**：LaunchAgent `com.auroraagent.app`（开机自启 + 崩溃自恢复）；登录自启不弹浏览器（`NO_OPEN=1`）
 - **卸载服务**：设置页关闭「开机自启」，或 `npm run service:remove`（数据保留）
 
 ## 打包与重建
@@ -127,8 +129,8 @@ npm run app:build   # 只构建不重启
 Bundle 结构：
 
 ```
-~/Applications/ModelTester.app/Contents/
-├── MacOS/ModelTester        # zsh 启动器（自定位目录，Bundle 可随意搬移）
+~/Applications/AuroraAgent.app/Contents/
+├── MacOS/AuroraAgent        # zsh 启动器（自定位目录，Bundle 可随意搬移）
 ├── Resources/app/           # 全部后端代码（零依赖，Node 18+）
 │   ├── web.mjs              # 网页服务：/api/* 路由 + SSE 代理 + /app/ 静态服务
 │   ├── chat.mjs             # 终端客户端入口（可 import：loadConfig / streamChat）
@@ -149,7 +151,7 @@ Bundle 结构：
 │   └── tools/               # color-test / install-service / build-app
 ├── Resources/docs/          # figures/（学术图与原始数据）+ figure-work/（图表脚本）
 ├── AppIcon.icns
-└── Info.plist               # com.modeltester.app · LSUIElement · 5.0.0
+└── Info.plist               # com.auroraagent.app · LSUIElement · 5.0.0
 ```
 
 ## 自定义提供方（接任意上游）
@@ -198,7 +200,7 @@ Bundle 结构：
 - 网页工作台经浏览器实测完整 turn：权限卡允许 → 写文件 → 二轮终稿 → 按轮分组的思考 / 工具 / 用量脚注
 - 终端实测：权限 y/n 两条路径、`/help` `/sessions` `/new` `/model` `/harness`、拒绝后续跑均正常
 - 自定义提供方：设置页可接任意 OpenAI 兼容网关或 Anthropic Messages 上游；账本按提供方单价计价（只填一侧时另一侧回退内置价）；内置 LongCat 请求载荷与接入前逐字节一致（有专门测试守着）
-- LaunchAgent `com.modeltester.app`：running / managed，数据目录指向 `~/Library/Application Support/ModelTester`
+- LaunchAgent `com.auroraagent.app`：running / managed，数据目录指向 `~/Library/Application Support/AuroraAgent`
 - UI：零 emoji（全 Bundle 代码 `Extended_Pictographic` 零匹配）；动画遵循 `modern-web-guidance`，全局 `prefers-reduced-motion` 降级
 
 ## 常见问题
