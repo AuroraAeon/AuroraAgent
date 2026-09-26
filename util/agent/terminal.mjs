@@ -9,7 +9,8 @@ import { SessionStore } from './session.mjs';
 import { UsageLedger } from '../usage.mjs';
 import { ProviderStore } from '../providers.mjs';
 import { HARNESSES, getHarness } from './harness.mjs';
-import { loadConfig, saveConfig, PRICE, resolveDataDir } from '../config.mjs';
+import { loadConfig, saveConfig, PRICE, resolveDataDir, experimentalEnabled } from '../config.mjs';
+import { McpRegistry } from '../mcp/registry.mjs';
 import { defineCommands, commandHelpLines, parseCommand } from '../tui/commands.mjs';
 import { renderFooter } from '../tui/footer.mjs';
 import { paletteFor, createPainter } from '../tui/theme.mjs';
@@ -59,6 +60,10 @@ export async function runTerminal({ argv = [] } = {}) {
   const providers = new ProviderStore(dataDir, {
     baseUrl: BASE, pathPrefix: '/openai/v1', apiKey: () => cfg.apiKey, model: () => cfg.model,
   }, () => []);
+
+  // MCP 注册表（实验特性门控）：启用时后台连接并发现工具，/mcp 查看状态
+  const mcp = experimentalEnabled('MCP') ? new McpRegistry({ dataDir }) : null;
+  if (mcp) mcp.refresh().catch(() => {});
 
   let meta = store.list()[0] || store.create({
     model: cfg.model, provider: providers.providerForModel(cfg.model).id, harness: 'standard',
@@ -208,6 +213,16 @@ export async function runTerminal({ argv = [] } = {}) {
     } },
     { name: 'harness', argHint: '<模式>', summary: '切换模式（无参数弹出选择器）', run: cmdHarness },
     { name: 'theme', argHint: '<dark|light|auto>', summary: '切换终端主题（无参数弹出选择器）', run: cmdTheme },
+    { name: 'mcp', summary: 'MCP 服务器与工具状态（实验特性）', run: () => {
+      if (!mcp) { console.log(painter().dim('MCP 未开启：设置 AURORAAGENT_EXPERIMENTAL_MCP=1 后重启')); return; }
+      const rows = mcp.status();
+      if (!rows.length) { console.log(painter().dim('尚未配置 MCP 服务器（数据目录 mcp.json）')); return; }
+      for (const s of rows) {
+        const state = s.enabled === false ? painter().dim('已停用') : s.connected ? painter().success(`已连接 · ${s.tools} 个工具`) : painter().error(`连接失败：${s.error || '未知原因'}`);
+        console.log(`  ${painter().text(s.name || s.id)} ${painter().dim(`(${s.transport})`)} ${state}`);
+      }
+      console.log(painter().dim(`  可用 MCP 工具 ${mcp.tools.length} 个：${mcp.tools.map((t) => t.name).join('、') || '（无）'}`));
+    } },
     { name: 'plan', argHint: 'on|off', summary: '计划模式开关（默认关；开启后下一轮先出计划，批准才执行）', run: (arg) => {
       const on = arg !== 'off';
       meta = store.patch(meta.id, { planMode: on }) || meta;
@@ -255,6 +270,7 @@ export async function runTerminal({ argv = [] } = {}) {
   });
 
   const runTurn = (input) => runTerminalTurn({
+    extraTools: mcp ? mcp.tools : [],
     store, usage, session: meta, input, skills,
     provider: providers.get(meta.provider) || providers.providerForModel(meta.model || cfg.model),
     model: meta.model || cfg.model,

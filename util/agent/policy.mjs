@@ -12,6 +12,14 @@
 
 const EFFECTS = ['allow', 'ask', 'deny'];
 
+/** action 匹配：精确值，或 '*' 全匹配，或 'mcp__*' 这类前缀通配（MCP 工具族） */
+function actionMatch(pattern, action) {
+  const p = String(pattern ?? '');
+  if (p === '*') return true;
+  if (p.endsWith('*')) return String(action).startsWith(p.slice(0, -1));
+  return p === String(action);
+}
+
 /** glob（仅支持 * 通配）→ 正则；resource 为 '*' 或空表示匹配一切 */
 function resourceMatch(pattern, resource) {
   if (pattern === undefined || pattern === null || pattern === '' || pattern === '*') return true;
@@ -30,6 +38,9 @@ export function defaultRules() {
     { action: 'glob', resource: '*', effect: 'allow' },
     { action: 'todo', resource: '*', effect: 'allow' },
     { action: 'task', resource: '*', effect: 'allow' },
+    // MCP 工具（mcp__<服务器>__<工具>）默认 ask：外部系统副作用必须确认；
+    // evaluate 对未命中规则本就回退 ask，此处显式声明便于阅读与 grep
+    { action: 'mcp__*', resource: '*', effect: 'ask' },
     { action: 'write_file', resource: '*', effect: 'ask' },
     { action: 'edit_file', resource: '*', effect: 'ask' },
     { action: 'shell', resource: '*', effect: 'ask' },
@@ -55,7 +66,7 @@ export class PermissionPolicy {
   match(action, resource) {
     let hit = null;
     for (const rule of this.rules) {
-      if (String(rule.action) !== String(action) && rule.action !== '*') continue;
+      if (!actionMatch(rule.action, action)) continue;
       if (!resourceMatch(rule.resource, resource)) continue;
       hit = rule;
     }

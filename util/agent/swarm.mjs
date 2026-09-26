@@ -19,7 +19,7 @@ export function createSpawner(ctx) {
   const {
     runTurn, store, usage, provider, model, harness, skills = [], builtinPrice,
     emit, controller, requestPermission, permissionMode = 'ask_when_needed',
-    rules = [], gen = {}, workspace = '', depth = 0, log = () => {},
+    rules = [], gen = {}, extraTools = [], workspace = '', depth = 0, log = () => {},
   } = ctx;
 
   /** 跑一个子代理：新建子会话（继承工作目录与权限规则）→ 嵌套 turn → 汇总 */
@@ -47,7 +47,7 @@ export function createSpawner(ctx) {
     try {
       result = await runTurn({
         store, usage, session: child, input: task, provider, model, harness,
-        builtinPrice, skills, gen,
+        builtinPrice, skills, gen, extraTools,
         emit: childEmit, controller: childController,
         requestPermission, permissionMode,
         planMode: false, // 计划是父层契约，子代理直接执行

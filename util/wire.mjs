@@ -111,7 +111,7 @@ export function buildChatRequest(provider, opts) {
     if (system) body.system = system;
     if (opts.temperature !== undefined && opts.temperature !== null) body.temperature = opts.temperature;
     if (Array.isArray(opts.toolNames) && opts.toolNames.length) {
-      body.tools = anthropicToolSchemas(opts.toolNames);
+      body.tools = anthropicToolSchemas(opts.toolNames, opts.extraTools || []);
       if (opts.toolChoice) body.tool_choice = opts.toolChoice;
     }
     const headers = { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01' };
@@ -123,7 +123,7 @@ export function buildChatRequest(provider, opts) {
   if (opts.temperature !== undefined && opts.temperature !== null) body.temperature = opts.temperature;
   if (opts.sendThinking) body.thinking = { type: opts.thinkingOn ? 'enabled' : 'disabled' };
   if (Array.isArray(opts.toolNames) && opts.toolNames.length) {
-    body.tools = toolSchemas(opts.toolNames);
+    body.tools = toolSchemas(opts.toolNames, opts.extraTools || []);
     body.tool_choice = opts.toolChoice || 'auto';
   }
   const headers = { 'Content-Type': 'application/json' };

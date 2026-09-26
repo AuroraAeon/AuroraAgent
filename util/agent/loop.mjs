@@ -10,7 +10,7 @@
 import { randomUUID } from 'node:crypto';
 import { buildChatRequest, anthropicFrame, fetchUpstream, upstreamHint } from '../wire.mjs';
 import { consumeAgentStream } from '../stream.mjs';
-import { getTool, toolResource } from './tools.mjs';
+import { resolveTool, toolResource } from './tools.mjs';
 import { PermissionPolicy, defaultRules } from './policy.mjs';
 import { createSpawner } from './swarm.mjs';
 import { PLAN_MAX_ROUNDS, PLAN_MODE_PROMPT, planExecutionNote, planToolNames } from './plan.mjs';
@@ -42,7 +42,7 @@ function settlePrice(provider, builtinPrice) {
 export async function runAgentTurn(ctx) {
   const {
     store, usage, session, input, provider, model, harness, builtinPrice,
-    gen = {}, skills = [], emit, controller, requestPermission, requestPlanDecision,
+    gen = {}, skills = [], extraTools = [], emit, controller, requestPermission, requestPlanDecision,
     permissionMode = 'ask_when_needed', planMode = false, depth = 0, log = () => {},
   } = ctx;
   const sessionId = session.id;
@@ -67,7 +67,7 @@ export async function runAgentTurn(ctx) {
   // 子代理派发器：task 工具经 ctx.spawn 派生子 turn；深度随嵌套递增（swarm.mjs 封顶）
   const spawn = createSpawner({
     runTurn: runAgentTurn, store, usage, provider, model, harness, skills, builtinPrice,
-    emit, controller, requestPermission, permissionMode, rules: sessionRules, gen,
+    emit, controller, requestPermission, permissionMode, rules: sessionRules, gen, extraTools,
     workspace: session.workspace, depth, log,
   });
 
@@ -177,7 +177,7 @@ export async function runAgentTurn(ctx) {
       const t0 = Date.now();
       store.append(sessionId, { t: 'tool_call', id: toolId, name: call.name, args: safeArgs(call.arguments) });
       emit('tool_event', { sessionId, turnId, phase: 'started', toolId, toolName: call.name, params: safeArgs(call.arguments) });
-      const tool = getTool(call.name);
+      const tool = resolveTool(call.name, extraTools);
       let ok = true;
       let output = '';
       let extra;
@@ -270,7 +270,7 @@ export async function runAgentTurn(ctx) {
     }
 
     // —— 执行阶段：完整工具集（计划批准后计划文本作为既定契约已在上下文中）——
-    const execToolNames = skills.length ? [...new Set([...harness.tools, 'skill'])] : harness.tools;
+    const execToolNames = [...new Set([...harness.tools, ...(skills.length ? ['skill'] : []), ...extraTools.map((t) => t.name)])];
     for (round = round + 1; round <= harness.maxRounds; round++) {
       const r = await runRound({ toolNames: execToolNames });
       if (r.failed) return { turnId, text: finalText, rounds: round, tools: totalTools, failed: true };

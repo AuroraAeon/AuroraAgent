@@ -447,16 +447,23 @@ export function getTool(name) {
   return TOOLS.find((t) => t.name === String(name || '')) || null;
 }
 
-/** OpenAI function calling 形状的 tools 参数 */
-export function toolSchemas(names) {
+/** OpenAI function calling 形状的 tools 参数；extraTools 承载 MCP 等外部工具 */
+export function toolSchemas(names, extraTools = []) {
   const picked = names.length ? TOOLS.filter((t) => names.includes(t.name)) : [];
-  return picked.map((t) => toOpenAIFunction(t));
+  const extra = extraTools.filter((t) => names.includes(t.name));
+  return [...picked, ...extra].map((t) => toOpenAIFunction(t));
 }
 
 /** Anthropic Messages 形状（input_schema 而非 parameters） */
-export function anthropicToolSchemas(names) {
+export function anthropicToolSchemas(names, extraTools = []) {
   const picked = names.length ? TOOLS.filter((t) => names.includes(t.name)) : [];
-  return picked.map((t) => toAnthropicTool(t));
+  const extra = extraTools.filter((t) => names.includes(t.name));
+  return [...picked, ...extra].map((t) => toAnthropicTool(t));
+}
+
+/** 工具解析：内置优先，其次 extraTools（MCP 工具经 loop 注入） */
+export function resolveTool(name, extraTools = []) {
+  return getTool(name) || extraTools.find((t) => t.name === String(name || '')) || null;
 }
 
 /** 权限判定的资源标识：文件类取路径，shell 取命令，web_fetch 取 URL */

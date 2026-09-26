@@ -14,7 +14,7 @@ import { toolLabel, fmtCost, indent, CLEAR } from './terminal-format.mjs';
  * hooks 由 coordinator 持有：readline 终端模式下 Ctrl+C 不产生真 SIGINT（raw mode 吞掉），
  * 改由 rl 的 'SIGINT' 事件经 hooks.abort 中转进来，保证「生成中 Ctrl+C 可中断」的承诺成立。
  */
-export async function runTerminalTurn({ store, usage, session, input, provider, model, harness, cfg, painter, ask, onUsage, onSession, hooks }) {
+export async function runTerminalTurn({ store, usage, session, input, provider, model, harness, cfg, painter, ask, onUsage, onSession, hooks, extraTools = [] }) {
   const started = Date.now();
   let phase = 'idle'; // idle -> think -> text
   let atLineStart = true;
@@ -153,7 +153,7 @@ export async function runTerminalTurn({ store, usage, session, input, provider, 
     await runAgentTurn({
       store, usage, session, input, provider, model, harness, builtinPrice: PRICE,
       gen: { maxTokens: cfg.maxTokens, temperature: cfg.temperature, thinkingOn: cfg.thinking },
-      emit, controller: turnController,
+      emit, controller: turnController, extraTools,
       permissionMode: cfg.permissionMode,
       planMode: session.planMode !== undefined ? session.planMode === true : cfg.planMode === true,
       // 权限询问与主输入共用同一条 line 通道（ask()），避免 readline 双消费；

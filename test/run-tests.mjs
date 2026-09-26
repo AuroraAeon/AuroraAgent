@@ -21,6 +21,7 @@ import { PermissionPolicy, defaultRules, mostRestrictive } from '../util/agent/p
 import { assembleMessages, needsCompaction, planCompaction, compactionMessages, contextWindowOf, estimateMessagesTokens } from '../util/agent/context.mjs';
 import { runAgentTurn } from '../util/agent/loop.mjs';
 import { connectMcp, callResultText, McpError } from '../util/mcp/client.mjs';
+import { McpRegistry, validateServerDraft, loadMcpServers, mcpToolName } from '../util/mcp/registry.mjs';
 import { UsageLedger } from '../util/usage.mjs';
 import { runTuiToolkitTests } from './tui-toolkit.mjs';
 import { runGuardTests } from './guards.mjs';
@@ -623,6 +624,11 @@ await test('权限三档：permissionMode 设定 ask 类动作的默认效应', 
   always.grantAlways('read_file', 'a.txt');
   eq(always.effective('read_file', 'a.txt'), 'allow', '总是允许沉淀的会话规则不被 always_ask 推翻');
   eq(always.effective('read_file', 'b.txt'), 'ask', '总是允许不应外溢');
+  const mcp = new PermissionPolicy(defaultRules());
+  eq(mcp.effective('mcp__srv__echo', 'x'), 'ask', 'MCP 工具默认 ask（外部副作用需确认）');
+  const mcpAllow = new PermissionPolicy([...defaultRules(), { action: 'mcp__*', resource: '*', effect: 'allow' }]);
+  eq(mcpAllow.effective('mcp__srv__echo', 'x'), 'allow', 'mcp__* 前缀规则应放行整个 MCP 工具族');
+  eq(mcpAllow.effective('shell', 'ls'), 'ask', '前缀规则不应外溢到内置工具');
   const bad = new PermissionPolicy(defaultRules(), { permissionMode: '乱写' });
   eq(bad.permissionMode, 'ask_when_needed', '非法档位回退缺省');
 });
@@ -743,6 +749,48 @@ await test('上下文压缩：阈值判定与头尾切分', () => {
 
 // ---------- 单元测试: Agent Loop ----------
 console.log('\nMCP 客户端单元测试（mock stdio 服务器）');
+
+await test('MCP 注册表：草稿校验与配置落盘', () => {
+  const bad = validateServerDraft({ id: '坏 id', transport: 'stdio' });
+  eq(bad.ok, false, '非法 ID 应拒绝');
+  assert(bad.errors.id && bad.errors.command, '应定位到 id 与 command 字段');
+  const badUrl = validateServerDraft({ id: 'web', transport: 'http', url: 'ftp://x' });
+  eq(badUrl.ok, false, 'HTTP 传输应拒绝非 http(s) 端点');
+  const ok = validateServerDraft({ id: 'mock', name: 'Mock', transport: 'stdio', command: 'node', args: ['s.mjs'], env: { A: '1' } });
+  eq(ok.ok, true, '合法 stdio 草稿应通过');
+  eq(ok.server.args[0], 's.mjs', 'args 应保留');
+  eq(ok.server.env.A, '1', 'env 应保留');
+  eq(mcpToolName('mock', 'echo'), 'mcp__mock__echo', '工具名应为 mcp__<服务器>__<工具>');
+  eq(mcpToolName('mock', '怪 名/工具'), 'mcp__mock________', '工具名应 sanitize 为安全字符');
+  const dir = mkdtempSync(join(tmpdir(), 'mt-mcp-'));
+  const reg = new McpRegistry({ dataDir: dir });
+  const r1 = reg.upsert({ id: 'mock', name: 'Mock', transport: 'stdio', command: process.execPath, args: [join(__dirname, 'mock-mcp-server.mjs')] });
+  eq(r1.ok, true, 'upsert 应成功');
+  eq(loadMcpServers(dir).length, 1, '配置应落盘 mcp.json');
+  reg.upsert({ id: 'mock', name: 'Mock2', transport: 'stdio', command: process.execPath, args: [] });
+  eq(loadMcpServers(dir).length, 1, '同 ID 应更新而非新增');
+  eq(loadMcpServers(dir)[0].name, 'Mock2', '更新应生效');
+  reg.remove('mock');
+  eq(loadMcpServers(dir).length, 0, '删除应生效');
+});
+
+await test('MCP 注册表：连接 mock 服务器发现工具并可调用', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mt-mcp-'));
+  const reg = new McpRegistry({ dataDir: dir });
+  reg.upsert({ id: 'mock', name: 'Mock', transport: 'stdio', command: process.execPath, args: [join(__dirname, 'mock-mcp-server.mjs')] });
+  reg.upsert({ id: 'off', name: '停用', transport: 'stdio', command: process.execPath, args: [], enabled: false });
+  const status = await reg.refresh();
+  const mockRow = status.find((s) => s.id === 'mock');
+  assert(mockRow && mockRow.connected && mockRow.tools === 2, 'mock 服务器应连接并发现 2 个工具');
+  eq(status.find((s) => s.id === 'off').connected, false, '停用服务器不应连接');
+  const echo = reg.tools.find((t) => t.name === 'mcp__mock__echo');
+  assert(echo && echo.description.includes('[MCP:Mock]'), '工具应包装为 kosong 形状并带服务器前缀描述');
+  assert(echo.parameters && echo.parameters.properties && echo.parameters.properties.text, 'inputSchema 应映射为 parameters');
+  eq(await echo.run({ text: '注册表' }), 'MCP回声:注册表', 'MCP 工具应可调用并回传文本');
+  const probe = await reg.probe('mock');
+  eq(probe.ok, true, 'probe 应成功');
+  eq(probe.tools.length, 2, 'probe 应列出工具名');
+});
 
 await test('MCP：stdio initialize 握手与 tools/list', async () => {
   const client = await connectMcp({ transport: 'stdio', command: process.execPath, args: [join(__dirname, 'mock-mcp-server.mjs')] });

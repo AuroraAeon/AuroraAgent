@@ -9,7 +9,8 @@ import { runAgentTurn } from './loop.mjs';
 import { getHarness, harnessSummaries } from './harness.mjs';
 import { sseFrame } from './events.mjs';
 import { loadSkills } from './skills.mjs';
-import { PERMISSION_MODES } from '../config.mjs';
+import { PERMISSION_MODES, experimentalEnabled } from '../config.mjs';
+import { McpRegistry } from '../mcp/registry.mjs';
 
 const SESSION_RE = /^\/api\/agent\/sessions\/([0-9a-f-]{36})$/;
 
@@ -38,6 +39,11 @@ export function createAgentApi(deps) {
   const activeTurns = new Map(); // sessionId -> { controller }
   const pendingPermissions = new Map(); // requestId -> { resolve, sessionId }
   const pendingPlans = new Map(); // sessionId -> { resolve }（计划模式等用户批准 / 驳回）
+  // MCP 注册表（实验特性门控）：启用时后台连接已配置服务器并发现工具；单服务器失败不阻塞
+  const mcpEnabled = experimentalEnabled('MCP');
+  const mcp = mcpEnabled ? new McpRegistry({ dataDir, log: (l, m, e) => log(l, m, e) }) : null;
+  const mcpTools = () => (mcp ? mcp.tools.slice() : []);
+  if (mcp) mcp.refresh().catch(() => {});
 
   return async function handleAgentApi(req, res, url) {
     if (req.method === 'GET' && url === '/api/agent/harnesses') {
@@ -151,7 +157,32 @@ export function createAgentApi(deps) {
       pending.resolve(body.decision === 'approve' ? 'approve' : 'reject');
       return json(res, 200, { ok: true });
     }
-    if (req.method === 'POST' && url === '/api/agent/turn') {
+
+    if (url === '/api/mcp/servers' && req.method === 'GET') {
+      if (!mcp) return json(res, 404, { error: { message: 'MCP 为实验特性：设置 AURORAAGENT_EXPERIMENTAL_MCP=1 开启' } });
+      return json(res, 200, { servers: mcp.status() });
+    }
+    if (url === '/api/mcp/servers' && req.method === 'POST') {
+      if (!mcp) return json(res, 404, { error: { message: 'MCP 为实验特性：设置 AURORAAGENT_EXPERIMENTAL_MCP=1 开启' } });
+      const body = await readBody(req, 256 * 1024);
+      const r = mcp.upsert(body);
+      if (!r.ok) return json(res, 400, { error: { message: '服务器配置不合法', fields: r.errors } });
+      await mcp.refresh();
+      log('info', 'MCP 服务器已保存', { id: r.server.id });
+      return json(res, 200, { ok: true, server: r.server, servers: mcp.status() });
+    }
+    const mcpMatch = /^\/api\/mcp\/servers\/([A-Za-z0-9._-]{1,48})(\/probe)?$/.exec(url);
+    if (mcpMatch && req.method === 'DELETE') {
+      if (!mcp) return json(res, 404, { error: { message: 'MCP 为实验特性：设置 AURORAAGENT_EXPERIMENTAL_MCP=1 开启' } });
+      const r = mcp.remove(mcpMatch[1]);
+      await mcp.refresh();
+      return json(res, 200, { ok: true, removed: r.removed, servers: mcp.status() });
+    }
+    if (mcpMatch && mcpMatch[2] && req.method === 'POST') {
+      if (!mcp) return json(res, 404, { error: { message: 'MCP 为实验特性：设置 AURORAAGENT_EXPERIMENTAL_MCP=1 开启' } });
+      const r = await mcp.probe(mcpMatch[1]);
+      return json(res, 200, r);
+    }    if (req.method === 'POST' && url === '/api/agent/turn') {
       const body = await readBody(req, 10 * 1024 * 1024);
       const sessionId = String(body.sessionId || '');
       const got = sessions.get(sessionId);
@@ -193,7 +224,7 @@ export function createAgentApi(deps) {
           store: sessions, usage, session: got.meta, input, provider, model, harness,
           builtinPrice, skills,
           gen: { maxTokens: cfg.maxTokens, temperature: cfg.temperature, thinkingOn: body.thinking !== false },
-          emit, controller, permissionMode, planMode,
+          emit, controller, permissionMode, planMode, extraTools: mcpTools(),
           requestPermission: ({ requestId }) => new Promise((resolve) => {
             pendingPermissions.set(requestId, { resolve, sessionId });
           }),
