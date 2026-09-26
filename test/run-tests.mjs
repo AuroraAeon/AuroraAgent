@@ -774,43 +774,40 @@ const child = spawn(process.execPath, ['web.mjs'], {
 await new Promise((r) => setTimeout(r, 1200));
 
 try {
-  await test('GET / 返回聊天页面', async () => {
+  await test('GET / 返回 AuroraAgent 工作台（React 构建产物）', async () => {
     const r = await fetch(`${BASE}/`);
     eq(r.status, 200);
     const html = await r.text();
-    assert(html.includes('ModelTester') && html.includes('id="send"'), '页面缺少关键元素');
-    assert(html.includes('id="stopBtn"') && html.includes('id="stopBtnTop"'), '页面缺少停止按钮');
-    assert(html.includes('class="cbar"') && html.includes('id="input"'), '页面缺少新版输入区（工具栏 + 输入框）');
-    assert(html.includes('id="thinkToggle"') && html.includes('id="modelTrigger"'), '页面缺少思考开关或模型选择器');
-    assert(html.includes('id="providersSec"') && html.includes('id="pvRows"'), '页面缺少提供方设置区');
-    assert(html.includes('id="pvPickDlg"') && html.includes('id="pvDelDlg"'), '页面缺少提供方弹层');
-    assert(html.includes('href="/providers.css"'), '页面未引用提供方样式');
-    // 回归防护：模型菜单一旦回到 footer 内，footer 的 backdrop-filter 会变成 position:fixed 的包含块，把菜单拽出视口
-    const fStart = html.indexOf('<footer>'), fEnd = html.indexOf('</footer>');
-    assert(fStart > -1 && fEnd > fStart, '页面缺少 footer');
-    assert(!html.slice(fStart, fEnd).includes('id="modelMenu"'), '模型菜单仍位于 footer 内（backdrop-filter 包含块会使其脱离视口）');
-    assert(html.slice(fEnd).includes('id="modelMenu"'), '模型菜单未移到 footer 之后成为 body 直接子元素');
+    assert(html.includes('<title>AuroraAgent</title>'), '标题应为 AuroraAgent');
+    assert(html.includes('id="root"'), '应返回应用挂载点');
+    assert(html.includes('/app/assets/'), '应引用 /app 基准的资产路径');
+    eq(await (await fetch(`${BASE}/index.html`)).text(), html, '/index.html 与 / 同一份产物');
+    eq(await (await fetch(`${BASE}/app/`)).text(), html, '/app/ 与 / 同一份产物');
   });
-  await test('提供方界面包含 dsh 对齐后的关键结构（容量折叠/aria 同步/弹层说明）', async () => {
-    const js = await (await fetch(`${BASE}/providers.mjs`)).text();
-    assert(js.includes('pv-mfold'), '模型行缺少「容量」disclosure');
-    assert(js.includes('syncAria'), '缺少 :user-invalid 的 aria-invalid 同步');
-    assert(js.includes('data-err'), '缺少字段错误标记（提交错误不应被 aria 同步清掉）');
-    assert(js.includes('fetchBtn.disabled = urlInput'), '「获取可用模型」缺少无地址禁用逻辑');
+  await test('构建产物契约：哈希资产存在、设计令牌在场、零 emoji', async () => {
     const html = await (await fetch(`${BASE}/`)).text();
-    assert(html.includes('pv-pick-intro'), '挑选弹层缺少说明文案');
-    assert(html.includes('id="pvDelTitle"'), '删除弹层缺少动态标题节点');
+    const cssMatch = /\/app\/assets\/[A-Za-z0-9._-]+\.css/.exec(html);
+    const jsMatch = /\/app\/assets\/[A-Za-z0-9._-]+\.js/.exec(html);
+    assert(cssMatch && jsMatch, 'HTML 应引用 CSS 与 JS 资产');
+    const css = await (await fetch(`${BASE}${cssMatch[0]}`)).text();
+    const js = await (await fetch(`${BASE}${jsMatch[0]}`)).text();
+    assert(css.includes('--accent:#4d8df6'), '设计令牌（强调蓝）应在构建产物中');
+    assert(css.includes('--ok:') && css.includes('--danger:'), '语义色令牌应在场');
+    const emoji = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/u;
+    assert(!emoji.test(css) && !emoji.test(js) && !emoji.test(html), '构建产物不应含 emoji');
   });
-  await test('GET /providers.css 与 /providers.mjs 提供静态资源', async () => {
-    const css = await fetch(`${BASE}/providers.css`);
-    eq(css.status, 200);
-    eq(css.headers.get('content-type'), 'text/css');
-    assert((await css.text()).includes('.pv-row'), '样式缺少提供方行');
-    const js = await fetch(`${BASE}/providers.mjs`);
-    eq(js.status, 200);
-    const jsText = await js.text();
-    assert(jsText.includes('mountProviders'), '模块缺少挂载入口');
-    assert(jsText.includes('pvPriceIn') && jsText.includes('nwPriceOut'), '模块缺少计费单价字段');
+  await test('旧 UI 已退役：提供方模块与样式不再服务', async () => {
+    eq((await fetch(`${BASE}/providers.mjs`)).status, 404);
+    eq((await fetch(`${BASE}/providers.css`)).status, 404);
+    assert(!existsSync(join(__dirname, '..', 'public', 'index.html')), '旧聊天页应已删除');
+  });
+  await test('提供方编辑器移植了服务端校验规则（源码契约）', async () => {
+    const src = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ProviderEditor.tsx'), 'utf8');
+    assert(src.includes('export function validateDraft'), '缺少草稿校验函数');
+    assert(src.includes('BUILTIN_ID') && src.includes('是内置提供方的 ID'), '缺少内置 ID 保留规则');
+    assert(src.includes('ENV_LINE') && src.includes('isQuoted'), '缺少 API 密钥格式规则');
+    assert(src.includes('MAX_MODELS'), '缺少模型数量上限');
+    assert(src.includes('至少需要一个模型'), '缺少空目录兜底话术');
   });
   await test('静态资源走白名单，目录穿越取不到文件', async () => {
     eq((await fetch(`${BASE}/web.mjs`)).status, 404);

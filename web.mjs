@@ -149,8 +149,6 @@ async function loadModelCatalog(force = false) {
 // ---------- 静态文件 ----------
 const STATIC_ASSETS = {
   '/util/sse.mjs': join(__dirname, 'util', 'sse.mjs'),
-  '/providers.mjs': join(__dirname, 'public', 'providers.mjs'),
-  '/providers.css': join(__dirname, 'public', 'providers.css'),
 };
 const MIME = { '.html': 'text/html; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml; charset=utf-8', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
 function serveStatic(res, filePath, { cache = 'no-store' } = {}) {
@@ -206,11 +204,10 @@ const server = createServer(async (req, res) => {
   const cfg = loadConfig();
   const url = req.url.split('?')[0];
 
-  if (req.method === 'GET' && (url === '/' || url === '/index.html')) return serveStatic(res, join(__dirname, 'public', 'index.html'));
-  // React 应用（web-ui 构建产物）：/app 与 /app/<资产>；SPA 回退 index.html，解析后越界即 403
-  if (req.method === 'GET' && (url === '/app' || url.startsWith('/app/'))) {
+  // AuroraAgent 工作台（web-ui 构建产物，随仓库提交、运行时零构建）：/ 与 /app 同一份 index.html
+  if (req.method === 'GET' && (url === '/' || url === '/index.html' || url === '/app' || url.startsWith('/app/'))) {
     const base = join(__dirname, 'public', 'app');
-    const rel = url === '/app' ? 'index.html' : url.slice('/app/'.length);
+    const rel = url.startsWith('/app/') ? url.slice('/app/'.length) : 'index.html';
     const target = resolve(base, rel);
     if (target !== base && !target.startsWith(base + sep)) { res.writeHead(403); res.end('forbidden'); return; }
     const isAsset = /\.[a-z0-9]+$/i.test(rel);
