@@ -1,10 +1,11 @@
 /** 对话区：历史消息 + 进行中的 turn（流式）+ 空态引导。 */
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Message, ThinkingBlock } from './Message';
 import { Markdown } from '../markdown';
 import { ToolCard } from './ToolCard';
 import { TodoPanel } from './Todo';
 import { PlanCard } from './PlanCard';
+import { fmtCostYen } from '../projection';
 import { IconSpark } from '../icons';
 import type { LiveTurn, MsgView, TodoItem } from '../types';
 
@@ -15,8 +16,20 @@ const SUGGESTIONS = [
   '帮我列出最近的 git 提交记录',
 ];
 
+/** 活动计时：turn 进行期间每秒走秒（>60s 转 m:ss） */
+function useElapsed(startedAt: number): string {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const s = Math.max(0, Math.floor((now - startedAt) / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
+}
+
 function LiveRow({ live, onDecide, onDecidePlan }: { live: LiveTurn; onDecide?: (requestId: string, decision: 'allow' | 'deny' | 'always') => void; onDecidePlan?: (decision: 'approve' | 'reject') => void }) {
   const empty = !live.text && !live.thinking && live.tools.length === 0;
+  const elapsed = useElapsed(live.startedAt);
   return (
     <div className="row row-ai">
       <div className="avatar avatar-ai" title="AuroraAgent"><IconSpark size={15} /></div>
@@ -28,10 +41,16 @@ function LiveRow({ live, onDecide, onDecidePlan }: { live: LiveTurn; onDecide?: 
         {live.compression ? <div className="row-system">{live.compression}</div> : null}
         {live.usage ? (
           <div className="usage-foot">
-            tokens 输入 {live.usage.inputTokens} · 输出 {live.usage.outputTokens} · 费用 {live.usage.cost < 0.01 ? `¥${live.usage.cost.toFixed(6)}` : `¥${live.usage.cost.toFixed(4)}`}
+            tokens 输入 {live.usage.inputTokens} · 输出 {live.usage.outputTokens} · 费用 {fmtCostYen(live.usage.cost)}
           </div>
         ) : null}
         {empty ? <div className="live-idle">正在思考<span className="dots" aria-hidden="true"><i /><i /><i /></span></div> : null}
+        {!empty ? (
+          <div className="live-status" aria-hidden="true">
+            <span className="dots"><i /><i /><i /></span>
+            第 {live.round || 1} 轮 · {live.tools.length} 个工具 · {elapsed}
+          </div>
+        ) : null}
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
 /** 会话转录 → 可见历史投影（纯函数，测试与组件共用）。
  *  一条 assistant 视图 = 一个模型轮的产出：文本 + 思考 + 工具卡片 + 用量脚注；
  *  出现新工具调用即开启新视图，保证多轮 turn 的历史按轮次分组。 */
-import { projectTurns } from '../../util/agent/transcript.mjs';
+import { fmtCost, projectTurns } from '../../util/agent/transcript.mjs';
 import type { MsgView, SessionRecord, ToolView } from './types';
 
 export function projectRecords(records: SessionRecord[]): MsgView[] {
@@ -21,6 +21,9 @@ export function projectRecords(records: SessionRecord[]): MsgView[] {
     };
   });
 }
+
+/** 费用行：零值 ¥0，其余走共享 fmtCost（终端同源） */
+export const fmtCostYen = (cost: number): string => (!cost ? '¥0' : `¥${fmtCost(cost)}`);
 
 /** 相对时间：刚刚 / n 分钟前 / n 小时前 / 昨天 / M-DD */
 export function fmtRel(iso?: string): string {

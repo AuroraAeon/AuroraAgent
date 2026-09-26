@@ -3,10 +3,9 @@ import { useState } from 'react';
 import { Markdown } from '../markdown';
 import { IconAlert, IconBulb, IconChevronDown, IconChevronRight, IconPerson, IconSpark } from '../icons';
 import type { MsgView } from '../types';
-import { fmtCost as fmtCostNum } from '../../../util/agent/transcript.mjs';
 
-const fmtCost = (cost: number): string => (!cost ? '¥0' : `¥${fmtCostNum(cost)}`);
 import { ToolCard } from './ToolCard';
+import { fmtCostYen } from '../projection';
 
 
 
@@ -56,7 +55,7 @@ export function Message({ msg, onDecide }: Props) {
         {msg.tools.map((t) => <ToolCard key={t.id} tool={t} onDecide={onDecide} />)}
         {msg.usage ? (
           <div className="usage-foot">
-            tokens 输入 {msg.usage.inputTokens} · 输出 {msg.usage.outputTokens} · 费用 {fmtCost(msg.usage.cost)}
+            tokens 输入 {msg.usage.inputTokens} · 输出 {msg.usage.outputTokens} · 费用 {fmtCostYen(msg.usage.cost)}
           </div>
         ) : null}
       </div>

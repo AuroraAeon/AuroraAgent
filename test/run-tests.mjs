@@ -1275,6 +1275,17 @@ try {
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'tokens.css'), 'utf8');
     assert(css.includes('--diff-add:') && css.includes('--diff-del:'), 'tokens.css 应有 diff 语义令牌');
   });
+  await test('流式活动状态行源码契约：轮次 / 工具数 / 计时与费用行统一', () => {
+    const cv = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ChatView.tsx'), 'utf8');
+    assert(cv.includes('live-status') && cv.includes('useElapsed') && cv.includes('第 {live.round || 1} 轮'), '流式行应有活动状态（轮次 / 工具 / 计时）');
+    assert(cv.includes('fmtCostYen'), '流式费用行应走统一格式化');
+    const msg = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Message.tsx'), 'utf8');
+    assert(msg.includes('fmtCostYen') && !msg.includes('toFixed(6)'), '历史费用行应走统一格式化且不再私持逻辑');
+    const proj = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'projection.ts'), 'utf8');
+    assert(proj.includes('export const fmtCostYen'), 'projection 应导出费用行助手');
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    assert(css.includes('.live-status'), 'app.css 应有状态行样式');
+  });
   await test('代码高亮源码契约：Markdown 代码块接入零依赖高亮器', () => {
     const md = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'markdown.tsx'), 'utf8');
     assert(md.includes("from './highlight'") && md.includes('highlightCode(buf.join'), '代码块应走高亮器');

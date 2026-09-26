@@ -75,4 +75,5 @@ export type LiveTurn = {
   usage: { inputTokens: number; outputTokens: number; cost: number } | null;
   compression: string | null;
   plan: PlanView | null;
+  round: number; startedAt: number;
 };

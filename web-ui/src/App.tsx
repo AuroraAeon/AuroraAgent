@@ -136,12 +136,14 @@ export default function App() {
     setBusy(true);
     setError('');
     setMessages((prev) => [...prev, { kind: 'user', key: `opt-${Date.now()}`, text }]);
-    setLive({ turnId: '', text: '', thinking: '', tools: [], usage: null, compression: null, plan: null });
+    setLive({ turnId: '', text: '', thinking: '', tools: [], usage: null, compression: null, plan: null, round: 0, startedAt: Date.now() });
     try {
       await runTurn(
         { sessionId: cur.id, input: text, thinking, model: cur.model, provider: cur.provider },
         (ev: AgentEvent) => {
-          if (ev.type === 'text_chunk') setLive((l) => (l ? { ...l, text: l.text + ev.text } : l));
+          if (ev.type === 'turn_started') setLive((l) => (l ? { ...l, startedAt: Date.now() } : l));
+          else if (ev.type === 'model_round_started') setLive((l) => (l ? { ...l, round: ev.round } : l));
+          else if (ev.type === 'text_chunk') setLive((l) => (l ? { ...l, text: l.text + ev.text } : l));
           else if (ev.type === 'thinking_chunk') setLive((l) => (l ? { ...l, thinking: l.thinking + ev.text } : l));
           else if (ev.type === 'tool_event') {
             setLive((l) => (l ? applyToolEvent(l, ev) : l));
