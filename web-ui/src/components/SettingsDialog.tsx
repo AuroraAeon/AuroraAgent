@@ -9,6 +9,7 @@ import {
 import type { ProviderRow, SettingsInfo } from '../types';
 import { ProviderEditor, draftToPayload, fmtCap, validateDraft, type Candidate, type Draft } from './ProviderEditor';
 import { McpPanel } from './McpPanel';
+import { SkillsPanel } from './SkillsPanel';
 
 const emptyDraft = (protocol = 'openai'): Draft => ({
   id: '', name: '', protocol, baseUrl: '', pathPrefix: '', apiKey: '',
@@ -237,6 +238,8 @@ export function SettingsDialog({ open, onClose, onProvidersChanged }: Props) {
             </section>
 
             <McpPanel />
+
+            <SkillsPanel />
 
             <section className="pv-sec">
               <h3 className="pv-sec-t">服务</h3>

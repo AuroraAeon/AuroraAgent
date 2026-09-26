@@ -1,5 +1,5 @@
 /** API 客户端：全部走 web.mjs 的同源 /api/*；turn 用 fetch 读 SSE（EventSource 不支持 POST） */
-import type { AgentEvent, Harness, McpServerRow, ModelInfo, ProviderRow, SessionMeta, SessionRecord, SettingsInfo } from './types';
+import type { AgentEvent, Harness, McpServerRow, ModelInfo, ProviderRow, SessionMeta, SessionRecord, SettingsInfo, SkillRow } from './types';
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(path, {
@@ -18,6 +18,7 @@ export const getSession = (id: string) => api<{ meta: SessionMeta; records: Sess
 export const deleteSession = (id: string) => api<{ deleted: boolean }>(`/api/agent/sessions/${id}`, { method: 'DELETE' });
 export const patchSession = (id: string, body: { harness?: string; name?: string; model?: string; provider?: string; permissionMode?: string; planMode?: boolean }) =>
   api<{ meta: SessionMeta }>(`/api/agent/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(body) }).then((r) => r.meta);
+export const listSkills = () => api<{ skills: SkillRow[] }>('/api/agent/skills').then((r) => r.skills);
 export const listHarnesses = () => api<{ harnesses: Harness[]; default: string }>('/api/agent/harnesses');
 export const listModels = () => api<{ models: ModelInfo[]; status: string }>('/api/models');
 export const getSettings = () => api<SettingsInfo>('/api/settings');

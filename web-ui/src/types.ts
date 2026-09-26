@@ -44,6 +44,8 @@ export type ProviderRow = {
   builtin: boolean; hasKey: boolean; model: string; models: ModelInfo[]; price?: { input?: number; output?: number };
 };
 
+export type SkillRow = { name: string; description: string; source: string };
+
 export type McpServerRow = {
   id: string; name: string; transport: 'stdio' | 'http';
   enabled: boolean; connected: boolean; error: string; tools: number;

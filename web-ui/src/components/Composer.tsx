@@ -3,7 +3,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Dots, IconBulb, IconCheck, IconChevronDown, IconList, IconSend, IconShield, IconSpark, IconStop,
 } from '../icons';
-import type { Harness, ModelInfo, ProviderRow } from '../types';
+import type { Harness, ModelInfo, ProviderRow, SkillRow } from '../types';
+import { SkillPalette } from './SkillPalette';
 
 /** 厂商标识：按模型 ID 前缀匹配（web.mjs 的 /vendor/ 白名单路由放行），接入新厂商时在此追加 */
 const VENDOR_MARKS: { match: string; icon: string }[] = [{ match: 'LongCat', icon: '/vendor/meituan.svg' }];
@@ -242,15 +243,20 @@ type Props = {
   onPermissionMode: (m: string) => void;
   planMode: boolean;
   onPlanMode: (v: boolean) => void;
+  skills: SkillRow[];
   disabled: boolean;
 };
 
 export function Composer({
   busy, onSend, onStop, models, modelStatus, model, onModel, providers, thinking, onThinking, harnesses, harness, onHarness, disabled,
-  permissionMode, onPermissionMode, planMode, onPlanMode,
+  permissionMode, onPermissionMode, planMode, onPlanMode, skills,
 }: Props) {
   const [text, setText] = useState('');
+  const [skillIdx, setSkillIdx] = useState(0);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  // 斜杠技能命令：仅当整段输入是 /开头且无空格时展开调色板（参数段不打磨）
+  const slash = /^\/([^\s]*)$/.exec(text);
+  const slashOpen = Boolean(slash) && skills.length > 0 && !busy && !disabled;
 
   useLayoutEffect(() => {
     const ta = taRef.current;
@@ -276,6 +282,15 @@ export function Composer({
 
   return (
     <div className="composer">
+      {slashOpen ? (
+        <SkillPalette
+          skills={skills}
+          query={slash?.[1] || ''}
+          active={skillIdx}
+          onClose={() => setText('')}
+          onPick={(sk) => { setText(`/${sk.name} `); setSkillIdx(0); taRef.current?.focus(); }}
+        />
+      ) : null}
       <div className="composer-card">
         <textarea
           ref={taRef}
@@ -287,7 +302,25 @@ export function Composer({
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             // IME 组合态不拦截（keyCode 229 为部分浏览器合成中的上报值）
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+            if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+            if (slashOpen) {
+              const n = skills.filter((sk) => {
+                const kw = (slash?.[1] || '').toLowerCase();
+                return !kw || sk.name.toLowerCase().includes(kw) || sk.description.toLowerCase().includes(kw);
+              }).length;
+              if (e.key === 'ArrowDown') { e.preventDefault(); setSkillIdx((i) => (n ? (i + 1) % n : 0)); return; }
+              if (e.key === 'ArrowUp') { e.preventDefault(); setSkillIdx((i) => (n ? (i - 1 + n) % n : 0)); return; }
+              if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+                e.preventDefault();
+                const kw = (slash?.[1] || '').toLowerCase();
+                const shown = skills.filter((sk) => !kw || sk.name.toLowerCase().includes(kw) || sk.description.toLowerCase().includes(kw));
+                const pick = shown[Math.min(skillIdx, shown.length - 1)];
+                if (pick) { setText(`/${pick.name} `); setSkillIdx(0); taRef.current?.focus(); }
+                return;
+              }
+              if (e.key === 'Escape') { e.preventDefault(); setText(''); return; }
+            }
+            if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
               submit();
             }

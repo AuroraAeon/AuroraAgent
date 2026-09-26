@@ -8,7 +8,7 @@ import { SessionStore } from './session.mjs';
 import { runAgentTurn } from './loop.mjs';
 import { getHarness, harnessSummaries } from './harness.mjs';
 import { sseFrame } from './events.mjs';
-import { loadSkills } from './skills.mjs';
+import { loadSkills, findSkill, skillInvocationText } from './skills.mjs';
 import { PERMISSION_MODES, experimentalEnabled } from '../config.mjs';
 import { McpRegistry } from '../mcp/registry.mjs';
 
@@ -190,8 +190,12 @@ export function createAgentApi(deps) {
       if (activeTurns.has(sessionId)) {
         return json(res, 409, { error: { message: '该会话已有正在进行的任务，请先停止或等待完成' } });
       }
-      const input = String(body.input || '').trim();
-      if (!input) return json(res, 400, { error: { message: '输入不能为空' } });
+      const raw = String(body.input || '').trim();
+      if (!raw) return json(res, 400, { error: { message: '输入不能为空' } });
+      // 斜杠技能命令：/<技能名> [参数] → 技能正文注入（与终端同一规则，两端同源单点解析）
+      const skillCmd = /^\/([A-Za-z0-9._-]+)[ \t]*([\s\S]*)$/.exec(raw);
+      const hit = skillCmd ? findSkill(skills, skillCmd[1]) : null;
+      const input = hit ? skillInvocationText(hit, skillCmd[2]) : raw;
       const cfg = loadConfig();
       const model = pickModel(body.model, got.meta.model || cfg.model);
       const provider = resolveChatProvider(body.provider || got.meta.provider, model);

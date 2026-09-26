@@ -1273,6 +1273,17 @@ try {
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'tokens.css'), 'utf8');
     assert(css.includes('--diff-add:') && css.includes('--diff-del:'), 'tokens.css 应有 diff 语义令牌');
   });
+  await test('技能界面源码契约：斜杠调色板与设置技能目录在场', () => {
+    const pal = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SkillPalette.tsx'), 'utf8');
+    assert(pal.includes('技能命令') && pal.includes('navigate'), '调色板应有标题与键位提示');
+    assert(pal.includes('❯'), '调色板应使用统一选中指针');
+    const sp = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SkillsPanel.tsx'), 'utf8');
+    assert(sp.includes('listSkills') && sp.includes('/<技能名>'), '技能目录应列出并说明调用方式');
+    const com = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Composer.tsx'), 'utf8');
+    assert(com.includes('SkillPalette') && com.includes('slashOpen'), '输入区应接入斜杠调色板');
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    assert(css.includes('.skillpal-item') && css.includes('.skillpal-hint'), 'app.css 应有调色板样式');
+  });
   await test('转录投影层源码契约：工具词表两端同源', () => {
     const tr = readFileSync(join(__dirname, '..', 'util', 'agent', 'transcript.mjs'), 'utf8');
     assert(tr.includes('export function toolLabel') && tr.includes('export function projectTurns'), 'transcript.mjs 应导出词表与投影');
@@ -1817,6 +1828,21 @@ await test('技能目录：GET /api/agent/skills 返回内置技能', async () =
   const codeReview = r.skills.find((s) => s.name === 'code-review');
   assert(codeReview && codeReview.description && codeReview.source === 'builtin', '内置技能字段完整');
   assert(!('body' in codeReview), '目录不泄底技能正文');
+});
+
+await test('Agent turn：/技能名 斜杠命令经服务端解析为技能注入（与终端同源）', async () => {
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: '/code-review 看看这段代码' }),
+  });
+  const all = await drainAgentStream(openAgentStream(resp));
+  const done = all.find((e) => e.type === 'turn_completed');
+  assert(done, '应以 turn_completed 收尾');
+  const detail = await (await fetch(`${AGENT}/sessions/${s.id}`)).json();
+  const userRec = detail.records.find((x) => x.t === 'user');
+  assert(userRec && String(userRec.text).includes('[技能：code-review]'), '斜杠命令应展开为技能注入文本');
+  assert(String(userRec.text).includes('看看这段代码'), '技能参数应拼在注入文本');
 });
 
 await test('Agent turn：模型调用 skill 工具加载技能指令并回填', async () => {

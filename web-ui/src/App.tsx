@@ -9,10 +9,10 @@ import { Composer } from './components/Composer';
 import { SettingsDialog } from './components/SettingsDialog';
 import { projectRecords } from './projection';
 import {
-  abortTurn, createSession, deleteSession, getSession, getSettings, listHarnesses, listModels,
+  abortTurn, createSession, deleteSession, getSession, getSettings, listHarnesses, listModels, listSkills,
   listProviders, listSessions, patchSession, respondPermission, respondPlan, runTurn,
 } from './api';
-import type { AgentEvent, Harness, LiveTurn, ModelInfo, MsgView, PlanView, ProviderRow, SessionMeta, SettingsInfo, TodoItem, ToolView } from './types';
+import type { AgentEvent, Harness, LiveTurn, ModelInfo, MsgView, PlanView, ProviderRow, SessionMeta, SettingsInfo, TodoItem, ToolView, SkillRow } from './types';
 
 const planView = (text: string, decided: PlanView['decided']): PlanView => ({ text, decided });
 import { IconAlert, IconClose } from './icons';
@@ -67,6 +67,7 @@ export default function App() {
   const [modelStatus, setModelStatus] = useState('idle');
   const [providers, setProviders] = useState<ProviderRow[]>([]);
   const [harnesses, setHarnesses] = useState<Harness[]>([]);
+  const [skills, setSkills] = useState<SkillRow[]>([]);
   const [thinking, setThinking] = useState(true);
   const [settings, setSettings] = useState<SettingsInfo | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -111,6 +112,7 @@ export default function App() {
         getSettings().catch(() => null),
       ]);
       setHarnesses(hs.harnesses);
+      listSkills().then(setSkills).catch(() => {});
       setProviders(pv.providers);
       setSettings(st);
       refreshModels();
@@ -328,6 +330,7 @@ export default function App() {
           onPermissionMode={changePermMode}
           planMode={planOn}
           onPlanMode={changePlan}
+          skills={skills}
           disabled={!current}
         />
       </main>
