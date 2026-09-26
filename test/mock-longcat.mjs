@@ -12,7 +12,12 @@ export function startMock(port = 18901) {
     req.on('data', (d) => { body += d; });
     req.on('end', () => {
       state.requests.push({ method: req.method, url: req.url, body });
-      state.lastChatMeta = { url: req.url, authorization: req.headers.authorization || '', apiKey: req.headers['x-api-key'] || '' };
+      state.lastChatMeta = {
+        url: req.url,
+        authorization: req.headers.authorization || '',
+        apiKey: req.headers['x-api-key'] || '',
+        anthropicVersion: req.headers['anthropic-version'] || '',
+      };
       if (req.method === 'GET' && req.url === '/openai/v1/models') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ data: [{ id: 'LongCat-2.5-Preview' }, { id: 'LongCat-2.0' }] }));
@@ -73,6 +78,26 @@ export function startMock(port = 18901) {
           }
           else { res.write('data: [DONE]\n\n'); clearInterval(timer); res.end(); }
         }, gap);
+        return;
+      }
+      // Anthropic Messages 线路：复刻真实的 message_start / content_block_delta / message_delta 帧
+      if (req.method === 'POST' && req.url === '/v1/messages') {
+        state.lastChatBody = JSON.parse(body || '{}');
+        const j = state.lastChatBody;
+        const frames = [
+          { type: 'message_start', message: { id: 'msg_1', usage: { input_tokens: 12, output_tokens: 0 } } },
+          { type: 'content_block_start', index: 0, content_block: { type: 'thinking' } },
+          { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: '用户在提问，' } },
+          { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: `你好！我是 ${j.model}。` } },
+          { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 7 } },
+          { type: 'message_stop' },
+        ];
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        let i = 0;
+        const timer = setInterval(() => {
+          if (i < frames.length) { res.write(`event: ${frames[i].type}\ndata: ${JSON.stringify(frames[i])}\n\n`); i++; }
+          else { clearInterval(timer); res.end(); }
+        }, 15);
         return;
       }
       res.writeHead(404, { 'Content-Type': 'application/json' });

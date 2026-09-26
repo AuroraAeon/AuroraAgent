@@ -13,8 +13,9 @@ import { exec, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { UsageLedger } from './util/usage.mjs';
 import { SERVICE_LOG, servicePid, isManaged, autostartInstalled } from './util/service.mjs';
-import { ProviderStore, ProviderError, chatUrl, handleProviderApi } from './util/providers.mjs';
-import { pumpSse } from './util/stream.mjs';
+import { ProviderStore, ProviderError, handleProviderApi } from './util/providers.mjs';
+import { pumpSse, pumpTranslated } from './util/stream.mjs';
+import { buildChatRequest, anthropicFrame } from './util/wire.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // 数据目录三级回退：MODELTESTER_DATA_DIR（启动器 / LaunchAgent 显式指定）→
@@ -55,19 +56,6 @@ function resolveChatProvider(wantId, model) {
     if (found) return found;
   }
   return providers.providerForModel(model);
-}
-
-/** 上游请求头：按线路协议区分鉴权方式 */
-function providerHeaders(provider) {
-  const headers = { 'Content-Type': 'application/json' };
-  if (!provider.apiKey) return headers;
-  if (provider.protocol === 'anthropic') {
-    headers['x-api-key'] = provider.apiKey;
-    headers['anthropic-version'] = '2023-06-01';
-  } else {
-    headers['Authorization'] = `Bearer ${provider.apiKey}`;
-  }
-  return headers;
 }
 
 /** 上游错误的中文提示：内置提供方保留美团专属指引，自定义提供方指向设置页 */
@@ -382,25 +370,22 @@ const server = createServer(async (req, res) => {
         });
 
         // 连接期退避重试：仅网络层失败且未产生任何字节时重试（借鉴 dsh retry-policy 的安全重试思想）
+        // 内置提供方沿用全局 maxTokens/temperature/thinking；自定义提供方只在显式声明后发送，
+        // 避免上游把未支持的字段当 400 拒绝
+        const wire = buildChatRequest(provider, {
+          model, messages,
+          sendThinking: provider.builtin || Boolean(provider.thinking),
+          thinkingOn: body.thinking !== false,
+          maxTokens: provider.builtin ? cfg.maxTokens : provider.maxTokens,
+          temperature: provider.builtin ? cfg.temperature : provider.temperature,
+        });
         let upstream;
         for (let attempt = 0; ; attempt++) {
           try {
-            const payload = { model, messages, stream: true };
-            // 内置提供方沿用全局 maxTokens/temperature/thinking；自定义提供方只在显式声明后发送，
-            // 避免上游把未支持的字段当 400 拒绝
-            if (provider.builtin) {
-              payload.max_tokens = cfg.maxTokens;
-              payload.temperature = cfg.temperature;
-              payload.thinking = { type: body.thinking === false ? 'disabled' : 'enabled' };
-            } else {
-              if (provider.thinking) payload.thinking = { type: body.thinking === false ? 'disabled' : 'enabled' };
-              if (provider.maxTokens) payload.max_tokens = provider.maxTokens;
-              if (provider.temperature !== undefined && provider.temperature !== null) payload.temperature = provider.temperature;
-            }
-            upstream = await fetch(chatUrl(provider), {
+            upstream = await fetch(wire.url, {
               method: 'POST',
-              headers: providerHeaders(provider),
-              body: JSON.stringify(payload),
+              headers: wire.headers,
+              body: JSON.stringify(wire.body),
               signal: entry.controller.signal,
             });
             break;
@@ -421,7 +406,9 @@ const server = createServer(async (req, res) => {
 
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' });
         reader = upstream.body.getReader();
-        await pumpSse(reader, res, entry);
+        // Anthropic Messages 的帧形状不同，逐帧翻译成 OpenAI 兼容帧，前端零改动
+        if (provider.protocol === 'anthropic') await pumpTranslated(reader, res, entry, anthropicFrame);
+        else await pumpSse(reader, res, entry);
         const rec = settleUsage(entry, Date.now() - started);
         log('info', '对话完成', { ms: rec.ms, inputTokens: rec.inputTokens, outputTokens: rec.outputTokens, cost: rec.cost, requestId });
       } catch (err) {

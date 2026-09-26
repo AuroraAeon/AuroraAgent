@@ -9,7 +9,8 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SseParser, estimateTokens } from '../util/sse.mjs';
 import { startMock } from './mock-longcat.mjs';
-import { ProviderStore, ProviderError, parseCapacity, formatCapacity, normalizeEndpoint, validateProviderDraft } from '../util/providers.mjs';
+import { ProviderStore, ProviderError, parseCapacity, formatCapacity, normalizeEndpoint, validateProviderDraft, chatUrl, modelsUrl, messagesUrl } from '../util/providers.mjs';
+import { buildChatRequest, anthropicFrame } from '../util/wire.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MOCK_PORT = 18901;
@@ -193,6 +194,50 @@ await test('ProviderStore 按模型 ID 反查提供方，找不到回退内置',
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+// ---------- 单元测试: 上游线路拼装与帧翻译 ----------
+console.log('\n上游线路单元测试');
+await test('chatUrl/messagesUrl 按 pathPrefix 拼装', () => {
+  eq(chatUrl({ baseUrl: 'https://a.com/v1' }), 'https://a.com/v1/chat/completions');
+  eq(chatUrl({ baseUrl: 'https://a.com', pathPrefix: '/openai/v1' }), 'https://a.com/openai/v1/chat/completions');
+  eq(modelsUrl({ baseUrl: 'https://a.com/v1' }), 'https://a.com/v1/models');
+  eq(messagesUrl({ baseUrl: 'https://a.com/v1' }), 'https://a.com/v1/messages');
+});
+await test('buildChatRequest 按协议拼装地址、鉴权与载荷', () => {
+  const oa = buildChatRequest({ protocol: 'openai', baseUrl: 'https://a.com/v1', apiKey: 'sk-1' },
+    { model: 'm', messages: [{ role: 'user', content: 'hi' }], sendThinking: true, thinkingOn: false, maxTokens: 100, temperature: 0.5 });
+  eq(oa.url, 'https://a.com/v1/chat/completions');
+  eq(oa.headers.Authorization, 'Bearer sk-1');
+  eq(oa.body.thinking.type, 'disabled');
+  eq(oa.body.max_tokens, 100);
+  eq(oa.body.temperature, 0.5);
+  const noThink = buildChatRequest({ protocol: 'openai', baseUrl: 'https://a.com/v1', apiKey: '' },
+    { model: 'm', messages: [], sendThinking: false });
+  assert(!('thinking' in noThink.body), '未声明思考开关时不应发送该字段');
+  assert(!('Authorization' in noThink.headers), '无 Key 时不应发送空 Authorization');
+  const ant = buildChatRequest({ protocol: 'anthropic', baseUrl: 'https://a.com/v1', apiKey: 'sk-ant' },
+    { model: 'm', messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: 'hi' }], maxTokens: 0 });
+  eq(ant.url, 'https://a.com/v1/messages');
+  eq(ant.headers['x-api-key'], 'sk-ant');
+  eq(ant.headers['anthropic-version'], '2023-06-01');
+  eq(ant.body.system, 'sys');
+  eq(ant.body.messages.length, 1);
+  eq(ant.body.max_tokens, 4096, '未声明容量时应给默认值');
+});
+await test('anthropicFrame 翻译文本、思考、用量与错误事件', () => {
+  const f = (data) => anthropicFrame({ data: JSON.stringify(data) });
+  eq(f({ type: 'content_block_delta', delta: { type: 'text_delta', text: '你好' } }).chunk.choices[0].delta.content, '你好');
+  eq(f({ type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: '想' } }).chunk.choices[0].delta.reasoning_content, '想');
+  eq(f({ type: 'message_start', message: { usage: { input_tokens: 3, output_tokens: 0 } } }).usage.prompt_tokens, 3);
+  eq(f({ type: 'message_delta', usage: { output_tokens: 9 } }).usage.completion_tokens, 9);
+  const stop = f({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 9 } });
+  eq(stop.chunk.choices[0].finish_reason, 'end_turn');
+  const err = f({ type: 'error', error: { message: '过载' } });
+  assert(err.chunk.choices[0].delta.content.includes('过载'), '错误事件应转成可见内容');
+  eq(f({ type: 'ping' }), null);
+  eq(f({ type: 'message_stop' }), null);
+  eq(anthropicFrame({ data: 'not-json' }), null);
+});
+
 // ---------- e2e ----------
 console.log('\n端到端测试（mock 上游 + 真实 socket）');
 const mock = await startMock(MOCK_PORT);
@@ -260,6 +305,16 @@ try {
     const resp = await chat({ messages: [{ role: 'user', content: 'hi' }], thinking: false });
     await readStream(resp);
     eq(mock.state.lastChatBody.thinking.type, 'disabled');
+  });
+  await test('内置提供方的请求载荷保持原样（max_tokens/temperature/thinking）', async () => {
+    await readStream(await chat({ messages: [{ role: 'user', content: '载荷检查' }] }));
+    const b = mock.state.lastChatBody;
+    eq(b.thinking.type, 'enabled');
+    eq(b.max_tokens, 32768);
+    eq(b.temperature, 0.7);
+    eq(b.stream, true);
+    eq(mock.state.lastChatMeta.url, '/openai/v1/chat/completions');
+    eq(mock.state.lastChatMeta.authorization, 'Bearer ak-test-key');
   });
   await test('图片路径转成视觉消息', async () => {
     const resp = await chat({ messages: [{ role: 'user', content: '占位' }], imagePath: tmpPng, imageText: '这是什么' });
@@ -434,6 +489,32 @@ try {
     await readStream(await chat({ messages: [{ role: 'user', content: '未知模型' }], model: 'LongCat-2.0' }));
     eq(mock.state.lastChatMeta.url, '/openai/v1/chat/completions');
   });
+  await test('Anthropic 线路：按 /messages 请求并翻译成 OpenAI 帧', async () => {
+    const created = await createProvider({
+      id: 'claude-gw', name: 'Claude 网关', protocol: 'anthropic',
+      baseUrl: `${MOCK_ORIGIN}/v1`, apiKey: 'sk-ant-key', models: [{ id: 'claude-9', name: 'Claude 9' }],
+    });
+    eq(created.ok, true, '创建失败: ' + created.error);
+    try {
+      const s = await readStream(await chat({ messages: [
+        { role: 'system', content: '你是助手' },
+        { role: 'user', content: '打招呼' },
+      ], provider: 'claude-gw', model: 'claude-9' }));
+      assert(s.raw.includes('claude-9'), '未走到 Anthropic 上游');
+      assert(s.think.length > 0, 'thinking_delta 未被翻译成 reasoning_content');
+      eq(mock.state.lastChatMeta.url, '/v1/messages');
+      eq(mock.state.lastChatMeta.apiKey, 'sk-ant-key');
+      eq(mock.state.lastChatMeta.anthropicVersion, '2023-06-01');
+      eq(mock.state.lastChatBody.system, '你是助手', 'system 应拆到顶层');
+      eq(mock.state.lastChatBody.messages.length, 1, 'system 不应留在 messages 里');
+      eq(mock.state.lastChatBody.max_tokens, 4096, '未声明容量时应给默认值');
+      assert(s.usage && s.usage.prompt_tokens === 12, 'message_start 的 usage 未汇总');
+      assert(s.usage && s.usage.completion_tokens === 7, 'message_delta 的 usage 未汇总');
+    } finally {
+      eq((await deleteProvider('claude-gw')).ok, true);
+    }
+  });
+
   await test('DELETE /api/providers/longcat 拒绝删除内置提供方', async () => {
     const j = await deleteProvider('longcat');
     eq(j.ok, false);
