@@ -10,3 +10,8 @@ mcp.json
 
 # 前端依赖（web-ui 构建用）
 web-ui/node_modules/
+
+# 文档站（docs-site，VitePress 开发期例外）
+docs-site/node_modules/
+docs-site/.vitepress/cache/
+docs-site/.vitepress/dist/

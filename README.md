@@ -78,7 +78,7 @@ npm run web       # 网页工作台 http://localhost:8787
 
 ## 终端客户端
 
-`npm run chat` 或 `node chat.mjs`，与网页共用同一套 Loop、会话、账本（数据同目录，两端可交替使用）：思考过程暗色流式渲染、工具调用单行状态、权限 `y/n/a` 确认、恢复会话时打印最近几行 recap。提示符上方有状态栏（模型 · 模式 · 思考 · 权限 · tokens/费用）；`/sessions` `/harness` `/theme` 无参数时弹出可搜索选择器（`↑↓` 移动、`←→` 翻页、输入即过滤、`Enter` 选中、`Esc` 取消），终端太窄或非 TTY 时自动退化为编号列表。配色走语义主题（`AURORAAGENT_THEME=dark|light|auto` 或 `/theme` 切换），规范见 `docs/tui-design.md`。
+`npm run chat` 或 `node chat.mjs`，与网页共用同一套 Loop、会话、账本（数据同目录，两端可交替使用）：思考过程暗色流式渲染、工具调用单行状态、权限 `y/n/a` 确认、恢复会话时打印最近几行 recap。提示符上方有状态栏（模型 · 模式 · 思考 · 权限 · tokens/费用）；`/sessions` `/harness` `/theme` 无参数时弹出可搜索选择器（`↑↓` 移动、`←→` 翻页、输入即过滤、`Enter` 选中、`Esc` 取消），终端太窄或非 TTY 时自动退化为编号列表。配色走语义主题（`AURORAAGENT_THEME=dark|light|auto` 或 `/theme` 切换），规范见文档站 `docs-site/zh/reference/tui-design.md`。
 
 | 命令 | 作用 |
 | --- | --- |
@@ -174,6 +174,18 @@ Bundle 结构：
 ## 自定义提供方（接任意上游）
 
 除内置美团 LongCat 外，设置页「提供方」区可接入任意上游——OpenAI 兼容网关、自建服务、或比内置目录更新更快的厂商，都不用改代码：填 Provider ID / 显示名称 / API 地址 / 协议 / 密钥；模型目录可手写或点「获取可用模型」从上游拉取勾选；单价填了账本按它计价，留空回退内置价。Agent 会话与 `/api/chat` 都按模型所属提供方路由。细节（密钥不回显、编辑留空保留原值、Anthropic 协议帧翻译等）见设置页内说明与 `AGENTS.md`。
+
+## 文档
+
+完整文档走中英双语文档站（VitePress，仅开发期依赖，后端与运行时零接触）：
+
+```bash
+npm run docs:dev    # 本地起文档站
+```
+
+- **指南**：快速开始 / Agent Loop / 网页工作台 / 终端客户端 / 技能 / MCP / 自定义提供方
+- **速查**：斜杠命令 / HTTP API / 配置项 / 终端设计规范（对话框与选择器的单一真值源）
+- **发布笔记**：`npm run docs:notes` 从 git 历史生成，里程碑段落可手写补充
 
 ## 接到其他工具
 

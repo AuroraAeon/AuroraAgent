@@ -35,6 +35,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 - 单用户本地工具，**仅支持 macOS**（依赖 LaunchAgent 与 `~/Library` 目录约定）
 - **后端零依赖**：只用 Node 18+ 内置模块；ESM `.mjs`；无构建步骤
 - **前端依赖例外**：`web-ui/` 用 React 19 + Vite 7 + TypeScript + KaTeX，依赖（react / react-dom / katex / vite / typescript / @vitejs/plugin-react / @types/*）**仅限 `web-ui/`**；构建产物随仓库提交在 `public/app/`，后端与 Bundle 运行时不接触 node_modules
+- **文档站依赖例外**：`docs-site/` 用 VitePress（唯一依赖）搭建中英双语文档站；`docs-site/node_modules` 与构建产物**不提交**，仅开发期使用，后端与运行时零接触
 - 双客户端：终端（`chat.mjs` → `util/agent/terminal.mjs`）+ 网页（`web.mjs` 服务 `public/app/` React 产物），共享同一套配置、会话、账本数据目录
 - 可打包为独立 macOS Application（`~/Applications/AuroraAgent.app`，显示名 AuroraAgent），由 LaunchAgent `com.auroraagent.app` 常驻
 - 当前接入厂商：美团 LongCat-2.5-Preview。Base URL / 模型目录 / Key 全部是配置项——**代码不绑定厂商**，接入新厂商不改架构
@@ -57,7 +58,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 | `util/agent/events.mjs` | AgentEvent 协议（OpenBitFun AgenticEvent 精简子集）+ SSE 帧封装 |
 | `util/agent/harness.mjs` | 三档模式契约 minimal / standard / ultimate：系统提示、工具集、轮次上限（1 / 24 / 64）、压缩阈值；Creative 留待后续 |
 | `util/agent/session.mjs` | 会话存储：`sessions/<id>.meta.json` 原子落盘 + `.jsonl` 追加式转录；投影重建容错误行；create / list / get / patch / delete |
-| `util/tui/` | 终端 TUI 工具包（零依赖）：`theme.mjs` 语义色板暗/亮双调 + 对比度守卫（全仓库唯一允许原始 SGR 的文件）；`render.mjs` CJK/ANSI 感知宽度截断；`printable-key.mjs` Kitty CSI-u 解码；`searchable-list.mjs` 光标/搜索/翻页状态机；`select.mjs`+`pick.mjs` 单选对话框（TTY 原始模式读键 + 非 TTY 退化）；`footer.mjs` 状态条；`commands.mjs` 声明式斜杠命令；`screen.mjs` 增量重绘；规范单一真值源 `docs/tui-design.md` |
+| `util/tui/` | 终端 TUI 工具包（零依赖）：`theme.mjs` 语义色板暗/亮双调 + 对比度守卫（全仓库唯一允许原始 SGR 的文件）；`render.mjs` CJK/ANSI 感知宽度截断；`printable-key.mjs` Kitty CSI-u 解码；`searchable-list.mjs` 光标/搜索/翻页状态机；`select.mjs`+`pick.mjs` 单选对话框（TTY 原始模式读键 + 非 TTY 退化）；`footer.mjs` 状态条；`commands.mjs` 声明式斜杠命令；`screen.mjs` 增量重绘；规范单一真值源 `docs-site/zh/reference/tui-design.md` |
 | `util/llm/` | LLM 抽象：`tool.mjs` kosong 风格 Tool 归一化与 OpenAI/Anthropic 双协议转换（`tools.mjs` 共用）；`errors.mjs` 状态码 → 中文错误分类（额度措辞先于 400） |
 | `util/agent/tools.mjs` | 六个内置工具（read_file / list_dir / write_file / edit_file / shell / web_fetch）：JSON Schema、`resolveInside` 路径禁锢（拒绝穿越）、输出截断、shell 超时（默认 30s 上限 120s） |
 | `util/agent/policy.mjs` | 权限策略：`{action, resource, effect}` 规则集，层内后匹配赢、多层取最严（deny > ask > allow）；默认只读放行、写与执行 ask；「总是允许」沉淀会话级规则 |
@@ -76,7 +77,8 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 | `tools/install-service.mjs` | LaunchAgent 安装 / 卸载 / 状态（plist 生成规则与 `web.mjs` 内置逻辑保持一致） |
 | `tools/build-app.mjs` | 打包 `.app`（含自保护，见第 6 节） |
 | `tools/color-test.mjs` | 纯色识别回归测试工具（结论沉淀在 `docs/`） |
-| `docs/` | 测试结论与学术图表（PNG / SVG / PDF + CSV；**TIFF 永不再进仓库**）；`docs/tui-design.md` 是终端所有对话框 / 选择器 / 输入框的设计规范单一真值源 |
+| `docs/` | 测试结论与学术图表（PNG / SVG / PDF + CSV；**TIFF 永不再进仓库**）；终端设计规范已迁入文档站 `docs-site/zh/reference/tui-design.md`（单一真值源） |
+| `docs-site/` | VitePress 文档站（中文为主 + 英文镜像）：`zh/` `en/` 的 guides / reference / release-notes；写作规约见 `docs-site/AGENTS.md`；发布笔记由 `tools/gen-release-notes.mjs` 从 git 历史生成 |
 
 数据流（Agent）：浏览器 `POST /api/agent/turn` → `loop.mjs` 按 harness 组装上下文（`context.mjs`）→ `wire.mjs` 按提供方协议请求上游（带 tools）→ `stream.mjs` 增量读取（文本 / 思考 / tool_calls）→ 工具经 `policy.mjs` 门控执行（ask 挂起等 `POST /api/agent/permission`）→ 结果回填进入下一轮 → 无 tool_calls 或触顶即 `turn_completed`；每轮经 `usage.mjs` 按提供方单价记账。客户端断开即 `AbortController` 中止 turn。
 
@@ -90,6 +92,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 | `npm run check` | 真实 API 连通自检 | 会花少量钱；改了上游相关逻辑时跑 |
 | `PORT=8788 npm run web` | 开发态网页服务 | 避开 8787 正式端口 |
 | `npm run dev:web` | 前端开发态（vite 5173，`/api` 代理 8787） | 只动 `web-ui/` 时用 |
+| `npm run docs:dev` / `docs:build` / `docs:notes` | 文档站开发 / 构建 / 生成发布笔记 | 依赖例外仅 `docs-site/`，产物不提交 |
 | `npm run build:web` | 构建前端产物到 `public/app/` | 改了 `web-ui/` 源码后必跑并提交产物 |
 | `npm run chat` | 终端 Agent 会话 | 与网页共用 Loop / 会话 / 账本 |
 | `npm run color` | 纯色识别测试 | 真实调用，按需 |

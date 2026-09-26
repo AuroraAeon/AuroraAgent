@@ -1,0 +1,24 @@
+# Commands & Slash Commands
+
+## npm scripts
+
+| Command | Purpose |
+| --- | --- |
+| `npm run chat` | terminal agent session (`-p "q"` for one-shot) |
+| `npm run web` | web workbench (port 8787) |
+| `npm test` | e2e tests against a mock upstream |
+| `npm run check` | real upstream smoke (costs a tiny amount) |
+| `npm run dev:web` | frontend dev server (vite 5173, `/api` proxied to 8787) |
+| `npm run build:web` | build frontend into `public/app/` |
+| `npm run service` / `service:status` / `service:remove` | LaunchAgent install / status / remove |
+| `npm run publish` | build frontend + `.app` + restart service (source dir outside the bundle only) |
+| `npm run color` | solid-color regression (real calls) |
+| `npm run docs:dev` / `docs:build` | docs site dev / build |
+
+## Terminal slash commands
+
+`/new` `/sessions` `/model` `/harness` `/think` `/temp` `/max` `/key` `/plan` `/mcp` `/help` `/quit`; every skill gets `/<skill-name>`.
+
+## Runtime tools (model side)
+
+`read_file` `list_dir` `grep` `glob` `web_fetch` `write_file` `edit_file` `shell` `todo` `skill` `task`; MCP tools join as `mcp__<server>__<tool>`.

@@ -3,7 +3,7 @@
  * 主题对比度、新模块行数预算。由 run-tests.mjs 注入 test/assert/eq 后调用，
  * 也可经 tools/guard.mjs 独立运行（npm run guard）。
  */
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PALETTES, auditPalette } from '../util/tui/theme.mjs';
@@ -82,11 +82,35 @@ export function guardLineBudget() {
   if (bad.length) throw new Error(`超过 ${LINE_BUDGET} 行预算: ${bad.join(', ')}`);
 }
 
+
+/** 文档站契约：中英页面一一对应、设计规范单一真值源在站点内、发布笔记标记在场、依赖例外已登记 */
+export function guardDocsSite() {
+  const site = join(ROOT, 'docs-site');
+  if (!existsSync(join(site, '.vitepress', 'config.mjs'))) throw new Error('文档站缺少 .vitepress/config.mjs');
+  if (!existsSync(join(site, 'AGENTS.md'))) throw new Error('文档站缺少写作规约 docs-site/AGENTS.md');
+  const pages = (lang) => walk(join(site, lang), ['.md']).map((f) => f.slice(join(site, lang).length + 1)).sort();
+  const zh = pages('zh');
+  const en = pages('en');
+  if (zh.join('|') !== en.join('|')) throw new Error('文档站中英页面未一一对应: zh=[' + zh.join(',') + '] en=[' + en.join(',') + ']');
+  if (!existsSync(join(site, 'zh', 'reference', 'tui-design.md'))) throw new Error('终端设计规范应位于 docs-site/zh/reference/tui-design.md');
+  if (existsSync(join(ROOT, 'docs', 'tui-design.md'))) throw new Error('docs/tui-design.md 是迁站前的旧位置，规范只应存在文档站内');
+  for (const [file, marker] of [['zh/release-notes/index.md', 'RELEASE-NOTES:ZH'], ['en/release-notes/index.md', 'RELEASE-NOTES:EN']]) {
+    const text = readFileSync(join(site, file), 'utf8');
+    if (!text.includes(`<!-- ${marker} -->`) || !text.includes(`<!-- /${marker} -->`)) throw new Error(`${file} 缺少 ${marker} 开闭标记`);
+  }
+  const gitignore = readFileSync(join(ROOT, '.gitignore'), 'utf8');
+  if (!gitignore.includes('docs-site/node_modules/')) throw new Error('.gitignore 应排除 docs-site/node_modules/');
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+  for (const s of ['docs:dev', 'docs:build', 'docs:notes']) {
+    if (!pkg.scripts[s]) throw new Error(`package.json 应提供 ${s} 脚本`);
+  }
+}
 export const GUARDS = [
   ['产品源码零 emoji', guardNoEmoji],
   ['TUI 颜色单一真值源（仅 theme.mjs 出 SGR）', guardNoRawColorOutsideTheme],
   ['主题色板对比度达标', guardContrast],
   ['新模块行数预算 ≤500', guardLineBudget],
+  ['文档站结构契约（中英对应 / 标记 / 依赖例外）', guardDocsSite],
 ];
 
 export async function runGuardTests(test, assert) {
