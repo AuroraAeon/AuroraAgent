@@ -1,186 +1,160 @@
-# ModelTester — 全球新模型速测工作台
+# AuroraAgent — 本地 Agent 运行时
 
-厂商每上线一个新模型，你最想知道的是：**它到底行不行**。ModelTester 把「拿到 Key → 连通 → 对话 → 多模态 → 用量计费 → 横向对比」这套流程压缩到本地一个 App 里：终端 + 网页双客户端，流式输出、思考过程开关、图片理解、停止中断、用量账本，零依赖（只需 Node 18+），可打包为独立 macOS Application。
+对标 OpenBitFun 的本地 Agent 运行时：终端 + 网页双客户端共用同一套 Agent Loop（会话 / 轮次 / 工具 / 权限 / 上下文压缩），后端零依赖（只需 Node 18+），可打包为独立 macOS Application。原来的「全球厂商最新大模型速测」能力完整保留为底座——`/api/chat` 流式对话、自定义提供方、用量账本一切照旧。
 
-**当前接入厂商：美团 LongCat-2.5-Preview**（2026-09-25 上线，万亿参数级 Agentic 模型，1M 上下文、128K 输出，OpenAI / Anthropic 双协议兼容）。Base URL、模型目录、Key 均为配置项，接入新厂商只需在 `public/vendors/` 放一张厂商标识、在模型目录映射里加一行。
+**当前接入厂商：美团 LongCat-2.5-Preview**（2026-09-25 上线，万亿参数级 Agentic 模型，1M 上下文、128K 输出，OpenAI / Anthropic 双协议兼容）。Base URL、模型目录、Key 均为配置项，接入新厂商不改架构。
 
 > AI 编码 agent：动手前必须先读并遵守仓库根目录的 `AGENTS.md`——第一铁律：每个通过测试的小改动都要主动 `git commit & push`。
 
-## 启动与常驻
+## 它是什么
 
-- **双击 `~/Applications/ModelTester.app`**：服务已在运行就直接打开浏览器；否则后台拉起服务再打开（日志追加到 `~/Library/Logs/com.modeltester.app.log`）。整个 Bundle 可随意搬移，启动器自定位目录
-- **开机自启**：LaunchAgent `com.modeltester.app` 已安装（开机自启 + 崩溃自恢复）；登录自启不弹浏览器（`NO_OPEN=1`），只有你手动开 App 时才开浏览器
-- **卸载服务**：设置页关闭「开机自启」，或终端执行 `npm run service:remove`（数据与配置保留）
-- 网页地址：<http://localhost:8787>
+- **Agent Loop**（`util/agent/loop.mjs`）：一轮用户输入驱动「模型请求 → 工具调用 → 结果回填 → 再请求」的循环，直到模型不再调用工具或触顶模式轮次上限；中断保留已生成内容，SSE 断开即中止上游，不浪费额度
+- **六个内置工具**（`util/agent/tools.mjs`）：`read_file` / `list_dir` / `write_file` / `edit_file` / `shell` / `web_fetch`，JSON Schema 参数；文件工具经路径解析 + 前缀校验禁锢在会话 workspace 内（拒绝穿越），`shell` 限定工作目录与超时（默认 30s、上限 120s），工具输出超限截断
+- **权限门控**（`util/agent/policy.mjs`）：只读工具默认放行，写文件 / 编辑 / 执行命令必须经你确认；「总是允许」沉淀为会话级规则，不是全局放行
+- **上下文压缩**（`util/agent/context.mjs`）：token 估算超过窗口阈值（默认 128k 的 70%）时，把早期对话经一轮模型调用总结为 summary 记录，保留近期尾部原文
+- **三档 Harness 模式**（`util/agent/harness.mjs`）：模式决定任务怎么被完成——系统提示、可用工具、轮次上限、压缩阈值都随模式变化
+- **按轮记账**：每一轮模型请求经 `util/usage.mjs` 按提供方单价结算，会话内可看到每轮 tokens 与费用
+- **事件协议**（`util/agent/events.mjs`）：`turn_started` / `model_round_started` / `text_chunk` / `thinking_chunk` / `tool_event` / `token_usage_updated` / `context_compression_*` / `turn_completed|cancelled|failed`，统一 SSE 帧封装，终端与网页共用
+
+## 快速开始
+
+```bash
+npm run chat      # 终端 Agent 会话
+npm run web       # 网页工作台 http://localhost:8787
+```
+
+没配 Key 时按提示操作：打开 <https://longcat.chat/platform/api_keys> 创建 Key，然后三选一——对话里 `/key sk-你的Key`（自动保存）、`export MODELTESTER_API_KEY="sk-你的Key"`、或写进配置文件的 `apiKey` 字段。
+
+## Harness 模式
+
+| 模式 | 定位 | 工具 | 轮次上限 | 压缩阈值 |
+| --- | --- | --- | --- | --- |
+| Minimal | 快速协作：目标明确时直接作答 | 无 | 1 | 90% |
+| Standard | 日常任务：按需调用工具，多步推进并核对结果 | 全部六个 | 24 | 70% |
+| Ultimate | 复杂任务：充分探索、逐步验证、汇总结果 | 全部六个 | 64 | 60% |
+
+模式在输入区一键切换（下一轮生效），也可 `PATCH /api/agent/sessions/:id` 热切换。Creative（Mini App 创作）留待后续迭代；Ultimate 暂不含 subagent 派发。
+
+## 工具与权限
+
+| 工具 | 作用 | 默认权限 |
+| --- | --- | --- |
+| `read_file` | 读工作目录内文本文件（带行号，offset/limit 分段） | 放行 |
+| `list_dir` | 列目录直接子项 | 放行 |
+| `web_fetch` | 抓取网页（带响应大小上限） | 放行 |
+| `write_file` | 覆盖写文件（自动建父目录） | 需确认 |
+| `edit_file` | 精确字符串替换（多处出现需上下文或 replace_all） | 需确认 |
+| `shell` | 工作目录内执行 shell 命令（退出码 + 输出，超限截断） | 需确认 |
+
+需要确认的工具会在界面里弹出权限卡：**允许**（仅这一次）/ **总是允许**（本会话后续同类操作放行，落会话规则）/ **拒绝**（结果回给模型，循环继续）。终端里是 `y` / `a` / `n` 确认。
+
+**安全边界（如实说明）**：v1 没有 OS 级沙箱。当前边界是「文件工具路径禁锢在会话 workspace + 写与执行必经权限门控」。workspace 默认 `<数据目录>/workspace`，创建会话时可指定。
+
+## 网页工作台
+
+`npm run web` 后访问 <http://localhost:8787>（React + Vite + TypeScript，源码在 `web-ui/`，构建产物随仓库提交在 `public/app/`，运行时零构建）：
+
+- **侧栏**：AuroraAgent 品牌、新建会话、会话列表（相对时间 + 模式 + 轮次）、当前模式
+- **对话区**：用户消息、流式回答、可折叠思考块、工具卡片（状态 / 参数 / 结果 / 差异）、内联权限卡、每轮用量脚注（tokens + 费用）
+- **输入区**：自适应文本框、模型选择器（按提供方分组）、思考开关、模式切换、发送 / 停止
+- **设置弹层**：提供方管理（自定义上游）、开机自启开关、数据目录与版本
+- 设计令牌自原版迁移（暗色、强调蓝 `#4d8df6`）；零 emoji，图标一律内联 SVG；Markdown 为手写子集渲染器，不引第三方库
+
+开发态前端：`npm run dev:web`（vite 监听 5173，`/api` 代理到 8787）；改完前端 `npm run build:web` 产出即被 `web.mjs` 以 `/app/` 服务（哈希资产长缓存 + SPA 回退 + 防目录穿越）。
+
+## 终端客户端
+
+`npm run chat` 或 `node chat.mjs`，与网页共用同一套 Loop、会话、账本（数据同目录，两端可交替使用）：思考过程暗色流式渲染、工具调用单行状态、权限 `y/n/a` 确认、恢复会话时打印最近几行 recap。
+
+| 命令 | 作用 |
+| --- | --- |
+| `/new` | 新建会话（沿用当前模型 / 提供方 / 模式） |
+| `/sessions` `/sessions <n>` | 列出 / 切换会话 |
+| `/model <名称>` | 切换模型（按 ID 反查提供方） |
+| `/harness <minimal\|standard\|ultimate>` | 切换模式 |
+| `/think on\|off` | 思考过程开关（默认开） |
+| `/temp 0~1` `/max <n>` | 温度 / 单次最大输出 tokens |
+| `/key <Key>` | 换 Key 并保存 |
+| `/help` `/quit` | 帮助 / 退出 |
+
+`node chat.mjs -p "用一句话介绍你自己"` 单次提问；`node chat.mjs --key sk-xxx` 免配置启动。
+
+## 服务端接口
+
+Agent 运行时（`/api/agent/*`，单活跃 turn：已有 turn 在跑时返回 409）：
+
+| 接口 | 说明 |
+| --- | --- |
+| `POST /api/agent/sessions` | 创建会话（model / provider / harness / workspace，默认 workspace 为 `<数据目录>/workspace`） |
+| `GET /api/agent/sessions` | 会话列表（meta） |
+| `GET /api/agent/sessions/:id` | 会话详情（meta + 记录投影） |
+| `PATCH /api/agent/sessions/:id` | 热切换 harness / 改名 / 换模型（下一轮生效；未知模式与非法模型 ID 返回 400 且不改动会话） |
+| `DELETE /api/agent/sessions/:id` | 删除会话 |
+| `POST /api/agent/turn` | 发起一轮对话，SSE 事件流（事件协议见上） |
+| `POST /api/agent/abort` | 中止当前 turn，保留已生成内容 |
+| `POST /api/agent/permission` | 权限决策回传：`{requestId, decision: 'allow'\|'deny'\|'always'}` |
+| `GET /api/agent/harnesses` | 三档模式契约 |
+
+模型速测底座（全部保持原样）：`POST /api/chat`（SSE 流式对话，`provider` 路由自定义上游）、`POST /api/abort`、`GET /api/models`（60s 缓存）、`GET/POST/PUT/DELETE /api/providers*`、`POST /api/providers/discover`、`GET /api/status` `/api/health`、`GET /api/usage`、`GET/POST /api/settings`、`GET /vendor/<name>.svg`。
 
 ## 数据与日志（与 App 解耦）
 
 | 内容 | 位置 |
 | --- | --- |
 | API Key / 模型 / 温度等配置 | `~/Library/Application Support/ModelTester/modeltester.config.json` |
+| 会话（meta + 追加式转录） | `~/Library/Application Support/ModelTester/sessions/<id>.meta.json` + `.jsonl` |
 | 用量账本（含被中止的请求） | `~/Library/Application Support/ModelTester/usage.jsonl` |
 | 自定义提供方（Key / 端点 / 模型目录 / 单价） | `~/Library/Application Support/ModelTester/providers.json` |
 | 服务日志 | `~/Library/Logs/com.modeltester.app.log` |
 
-数据目录按三级回退解析：`MODELTESTER_DATA_DIR` 环境变量 → 同目录已存在 `modeltester.config.json` 时用当前目录（源码开发态）→ `~/Library/Application Support/ModelTester`（App 态）。因此 Bundle 内直接执行 npm 命令无需设置任何环境变量。
+数据目录三级回退：`MODELTESTER_DATA_DIR` 环境变量 → 同目录已存在 `modeltester.config.json` 时用当前目录（源码开发态）→ `~/Library/Application Support/ModelTester`（App 态）。`modeltester.config.json`、`usage.jsonl`、`providers.json`、`sessions/` 永不进仓库。
 
-## 设置页
+## 启动与常驻
 
-页头右上角齿轮按钮打开设置弹层（原生 `<dialog closedby="any">`，Esc 或点击背板关闭，不支持的浏览器有 JS 兜底）：
+- **双击 `~/Applications/ModelTester.app`**（macOS 里显示名 AuroraAgent，Bundle ID 与 LaunchAgent label 不变）：服务已在运行就直接打开浏览器；否则后台拉起服务再打开。整个 Bundle 可随意搬移，启动器自定位目录
+- **开机自启**：LaunchAgent `com.modeltester.app`（开机自启 + 崩溃自恢复）；登录自启不弹浏览器（`NO_OPEN=1`）
+- **卸载服务**：设置页关闭「开机自启」，或 `npm run service:remove`（数据保留）
 
-- **开机自启**开关：切换即安装/卸载 LaunchAgent `com.modeltester.app`；前端轮询 `/api/settings` 直到 `managed` 与目标一致（开启时旧实例会让出端口等新 job 接管，不可用窗口约 1 秒）
-- **服务状态**：`managed`（LaunchAgent 是否托管当前进程）、服务 PID、数据目录、端口、版本
-- **提供方**：内置美团 LongCat（只读行）+ 自定义提供方管理，详见下文「自定义提供方」
-
-## 自定义提供方（接任意上游）
-
-除内置美团 LongCat 外，可在设置页「提供方」区接入任意上游——OpenAI 兼容网关、自建服务、或比内置目录更新更快的厂商，都不用改代码：
-
-1. 设置页点「添加自定义提供方」，填 **Provider ID**（小写字母开头的唯一标识）、**显示名称**、**API 地址**（端点根地址，会自动拼 `/chat/completions` 与 `/models`）、**API 协议**（OpenAI 兼容 / Anthropic Messages）、**API 密钥**
-2. **模型目录**三种填法：点「获取可用模型」从上游拉取后勾选（拉取是只读的；候选默认全选，去掉不要的即可，勾选后才写入）、手写模型 ID、或两者混用；每个模型可带显示名称，上下文窗口与最大输出 token 收在行内「容量」折叠里（支持 `256K` / `1M` 写法）
-3. 保存后模型立即出现在页头模型选择器里（按提供方分组），选中即用；底部会提示当前提供方与单价
-4. **计费单价**（可选，¥/百万 tokens）：填了账本按它计价，留空回退内置价，不会记出假账；只填一侧时另一侧同样回退
-
-细节规约：
-
-- API 密钥只写入数据目录的 `providers.json`，任何界面都不回显；编辑时密钥框留空表示保留原值
-- API 密钥只接受英文可见字符（不含空格）：整行 `NAME=value`、带引号的值会被判定为粘贴失误并定位到密钥框，避免存进去也过不了上游鉴权
-- 「自定义设置」折叠区里可改显示名称、协议、地址、最大输出 token、思考开关（`thinking` 仅在勾选后随请求发送，避免严格上游把陌生字段当错误拒绝）、单价与模型目录
-- 同一时刻只打开一个编辑器卡片；「获取可用模型」在 API 地址为空时禁用（没有端点就无从质问）；删除有确认弹层，会说明将同时移除配置与密钥
-- 必填字段（Provider ID / 显示名称 / API 地址）带 `*` 标记，交互失空后按 `:user-invalid` 标红并同步 `aria-invalid`；提交时一次性展示全部字段错误
-- 自定义提供方走 Anthropic 协议时，`reasoning_content` / `content` / 用量帧由服务端翻译成 OpenAI 帧，前端零改动
-- 内置 LongCat 行只读（由配置与上游目录决定）；`chat.mjs` 终端端与 `check.mjs` 自检目前仍只走内置提供方，自定义提供方在网页端使用
-
-## 第一步：获取 API Key（唯一需要你操作的）
-
-1. 打开 <https://longcat.chat/platform/api_keys>，手机号（或邮箱）注册登录
-2. 创建 API Key（形如 `sk-xxxxx`）
-3. 三选一配置：
-   - 聊天界面里输入 `/key sk-你的Key`（自动保存）
-   - 或终端执行 `export MODELTESTER_API_KEY="sk-你的Key"`
-   - 或把 Key 写进 `~/Library/Application Support/ModelTester/modeltester.config.json` 的 `apiKey` 字段
-
-> 平台按量付费，限时折扣价：输入 ¥2 / 缓存命中 ¥0.04 / 输出 ¥8（每百万 tokens）。也可在「Token资源包」页每天 10:00/16:00/21:00/23:00 抢购限时额度包。
-
-## 用法
-
-Bundle 内终端执行（数据目录自动回退，直接读到 Key）：
+## 打包与重建
 
 ```bash
-cd ~/Applications/ModelTester.app/Contents/Resources/app
-npm run check   # 自检：Key 是否有效 + 模型列表 + 测试请求
-npm run chat    # 终端聊天（流式输出，思考过程灰色显示）
-npm test        # 56 个单元/集成测试（mock 上游，不花 Key 额度；账本落临时目录，不污染真实数据）
-npm run color   # 纯色图片识别测试（打真实 API，约 ¥0.004）
+npm run publish     # 先构建前端（build:web）再打 .app 并重启常驻服务
+npm run app:build   # 只构建不重启
 ```
 
-`node chat.mjs -p "用一句话介绍你自己"` 可单次提问；`node chat.mjs --key sk-你的Key` 可免配置直接启动（Key 仍会写入配置供下次使用）。
+`app:build` 会**先删除目标 .app 再重建**，因此必须在 Bundle 之外的源码目录执行（脚本内置拒绝保护）。Bundle 内含 React 构建产物（`public/app/`），运行时**不依赖 node_modules**；`web-ui/` 源码与依赖只存在于开发副本。重建后按输出提示把服务重注册到 Bundle 内路径即可。
 
-网页端功能：实时状态行（思考中 Xs / 生成中 Xs · N 字）、停止按钮（输入区和顶栏各一个，生成时出现；中止后保留部分内容可继续对话）、统一大圆角输入卡片（上部输入框随内容增高，下部工具栏：附件 / 思考开关 / 模型选择 / 圆形发送；回车提交带 IME 组合态防护，中文选词按 Enter 不会误发）、智能自动滚动（距底 140px 内才跟随）、断流即中止上游（不再白烧 token）、生成期间键入 `/stop` 回车即停止（文本命令通道，真实键盘/终端均可）、**模型选择器**（输入区工具栏触发器 + `/model` 文本命令双入口，选择记入 `localStorage`，体验新模型无需改代码；触发器展示当前接入厂商的标识，菜单按提供方分组）、四种发图方式（附件按钮 / Ctrl+V 粘贴 / 拖拽到窗口 / `/img 路径`）。
-
-## 终端命令
-
-| 命令 | 作用 |
-| --- | --- |
-| `/think on\|off` | 思考过程开关（默认开） |
-| `/img <路径>` | 附带图片，体验多模态（如下一行输入"这张图讲了什么"） |
-| `/model <名称>` | 切换 `LongCat-2.5-Preview` / `LongCat-2.0` |
-| `/temp 0~1` `/max <n>` | 温度 / 单次最大输出 tokens |
-| `/clear` `/key` `/quit` | 清空上下文 / 换 Key / 退出 |
-
-每轮回复后会显示耗时、token 用量和估算费用。
-
-## App Bundle 结构
+Bundle 结构：
 
 ```
 ~/Applications/ModelTester.app/Contents/
-├── MacOS/ModelTester    # zsh 启动器（自定位目录，Bundle 可随意搬移）
-├── Resources/app/       # 全部代码（本文件所在处）
-│   ├── web.mjs          # 网页服务（零依赖 http 服务器 + SSE 透传）
-│   ├── chat.mjs         # 终端客户端（可 import：loadConfig / streamChat）
-│   ├── check.mjs        # 连通性自检
+├── MacOS/ModelTester        # zsh 启动器（自定位目录，Bundle 可随意搬移）
+├── Resources/app/           # 全部后端代码（零依赖，Node 18+）
+│   ├── web.mjs              # 网页服务：/api/* 路由 + SSE 代理 + /app/ 静态服务
+│   ├── chat.mjs             # 终端客户端入口（可 import：loadConfig / streamChat）
+│   ├── check.mjs            # 连通性自检
+│   ├── util/
+│   │   ├── agent/           # Agent 运行时：loop / session / tools / policy / context / harness / events / http / terminal
+│   │   ├── providers.mjs    # 自定义提供方存储/校验/发现
+│   │   ├── wire.mjs         # 协议适配（tools / tool_choice 拼装 + Anthropic 帧翻译）
+│   │   ├── stream.mjs       # SSE 透传 / 翻译泵 + Agent 增量读取
+│   │   ├── usage.mjs        # 用量账本
+│   │   ├── service.mjs      # LaunchAgent 生命周期
+│   │   └── config.mjs       # 数据目录回退 + 配置读写（chat/check/web 共用）
 │   ├── public/
-│   │   ├── index.html   # 网页前端（独立文件）
-│   │   ├── providers.mjs # 自定义提供方界面逻辑（行/编辑器/挑选弹层）
-│   │   ├── providers.css # 提供方界面样式（复用全局设计令牌）
-│   │   ├── icon.svg     # ModelTester 品牌标识（App 图标同款）
-│   │   └── vendors/     # 各接入厂商的标识（meituan.svg …）
-│   ├── util/sse.mjs     # 增量 SSE 解析器 + token 估算（前后端共用）
-│   ├── util/providers.mjs # 自定义提供方存储/校验/发现 + /api/providers 路由
-│   ├── util/wire.mjs    # 协议适配：OpenAI 与 Anthropic Messages 请求拼装 + 帧翻译
-│   ├── util/stream.mjs  # SSE 透传 / 翻译泵（逐帧转发 + 用量累计）
-│   ├── util/usage.mjs   # 用量账本（逐行追加 + 汇总）
-│   ├── util/service.mjs # LaunchAgent 生命周期（plist 生成 / 安装 / 状态）
-│   ├── test/            # mock 上游 + 56 个测试
-│   └── tools/           # color-test / install-service / build-app
-├── Resources/docs/      # figures/（学术图与原始数据）+ figure-work/（图表脚本）
-├── AppIcon.icns         # ModelTester 品牌图标（public/icon.svg 栅格化生成）
-└── Info.plist           # com.modeltester.app · LSUIElement · 4.0.0
+│   │   ├── app/             # React 工作台构建产物（/app/ 服务，哈希资产长缓存）
+│   │   ├── icon.svg         # AuroraAgent 品牌标识（App 图标同款）
+│   │   └── vendors/         # 各接入厂商的标识（meituan.svg …）
+│   ├── test/                # mock 上游 + 92 个测试
+│   └── tools/               # color-test / install-service / build-app
+├── Resources/docs/          # figures/（学术图与原始数据）+ figure-work/（图表脚本）
+├── AppIcon.icns
+└── Info.plist               # com.modeltester.app · LSUIElement · 5.0.0
 ```
 
-## 重建 App
+## 自定义提供方（接任意上游）
 
-`npm run app:build` 会**先删除目标 .app 再重建**，因此必须在 Bundle 之外的源码目录执行（脚本内置拒绝保护，在 Bundle 内执行会直接报错退出）：
-
-```bash
-cp -R ~/Applications/ModelTester.app/Contents/Resources/app /tmp/modeltester-src
-cd /tmp/modeltester-src
-npm run app:build        # 默认输出 ~/Applications/ModelTester.app
-# 按输出提示把服务重注册到 Bundle 内路径：
-MODELTESTER_DATA_DIR="$HOME/Library/Application Support/ModelTester" \
-  node "$HOME/Applications/ModelTester.app/Contents/Resources/app/tools/install-service.mjs"
-```
-
-在开发副本里可以一条命令搞定「构建 + 重启服务」：`npm run publish`。
-
-搬移整个 .app 到任何机器、任何路径都能直接跑；换路径后重注册服务执行 `npm run service`（在 Bundle 内执行即可，数据目录会自动写对）。
-
-服务端接口：
-
-| 接口 | 说明 |
-| --- | --- |
-| `POST /api/chat` | SSE 流式对话；请求体带 `requestId`（前端自动生成）用于注册活跃流；带 `provider` 时路由到对应自定义提供方（OpenAI 兼容或 Anthropic 协议），省略时按模型 ID 反查，再回退内置 |
-| `POST /api/abort` | 按 `requestId` 停止正在进行的生成：`{aborted:true}` 已中止 / `{aborted:false}` 无对应活跃请求 |
-| `GET /api/models` | 模型目录（可读名 + 标签 + 是否配置默认 + 所属提供方）；60s 缓存，`?force=1` 强制刷新；自定义提供方的模型一并汇总返回 |
-| `GET /api/providers` | 提供方目录：协议列表 + 全部提供方（内置在前，永不含 apiKey） |
-| `POST /api/providers` | 创建自定义提供方；字段校验失败返回 400 + `field` 指向具体字段 |
-| `PUT /api/providers/:id` | 更新；`apiKey` 留空表示保留已存储密钥，单价传空对象表示清空 |
-| `DELETE /api/providers/:id` | 删除自定义提供方；内置提供方拒绝删除 |
-| `POST /api/providers/discover` | 只读质问上游模型目录（`{baseUrl, protocol, apiKey}`），解析 `{data:[]}` / `{models:[]}` / `{models:{}}` 三种形态 |
-| `GET /api/status` `/api/health` | Key 状态 / 存活检查 |
-| `GET /api/usage` | 用量汇总；明细落盘 `usage.jsonl`，被中止的请求记 `stopped:true` |
-| `GET/POST /api/settings` | 开机自启开关 + 服务状态（`managed` / PID / 数据目录 / 端口 / 版本） |
-| `GET /vendor/<name>.svg` | 接入厂商的标识图（文件名正则白名单，防目录穿越） |
-
-模型选择：前端把所选 `model` 随 `/api/chat` 上报，服务端按 `/^[A-Za-z0-9._:-]{1,80}$/` 校验后透传给上游，非法值回退到 `modeltester.config.json` 的 `model`；目录来自 `GET /openai/v1/models`，厂商上线新模型后刷新页面即可在列表里看到，账本 `usage.jsonl` 记录每次实际使用的模型。
-
-停止按钮工作原理（双保险）：点击后前端先 `POST /api/abort` 让服务端 `AbortController` 中止上游请求，再中止本地 fetch；客户端断连同样会触发服务端中止。中止后已产生的部分回答保留可继续对话，用量账本记录 `stopped:true`。
-
-以下设计借鉴自本机 `deepseek-harness`（`dsh`，源码位于 `/Users/pub/.local/lib/node_modules/@deepseek-ai/dsh`）：
-
-- **自定义提供方设置页**：对齐 `dsh-client-ui-settings-models` 的 Models 区——提供方行（凭据状态点：绿=已配置/红=缺失；行内「编辑 / 删除」文字按钮）、同一时刻单个编辑器卡片（标题为 Provider ID，密钥框在前，「自定义设置」折叠区字段顺序：显示名称 → API 地址 → API 协议 → 模型目录）、只读质问 + 可搜索的候选挑选弹层（默认全选，勾选后才写入）、删除确认弹层（标题「删除 X？」）、保存提示 `role=status`；API 密钥格式校验与 dsh 同规约
-- **模型选择器交互**：借鉴 `dsh-client-ui-model-selection` 的 `ModelSelect` —— 触发器 + 弹层（贴触发器右对齐向上弹出、12px 视口边距钳制）、`↑`/`↓` 循环移动焦点、`Escape` 关闭并把焦点归还触发器、点击外部与失焦均关闭、`aria-haspopup/expanded/controls` + `role=menu/menuitem`、`aria-busy` 忙碌态、加载失败显示原因并提供重试
-- **按流 id 取消 + 命名原因**：借鉴 `dsh-api-gateway` 的 stream cancel 协议与 `cancellableStream`，中止时携带原因（`用户点击了停止按钮` / `客户端断开连接`），日志可区分
-- **race 式中断读取循环**：`Promise.race([reader.read(), abortRace])`，即使 `read()` 未立即拒绝也能立刻跳出循环；服务端与浏览器端读取循环均已采用，退出前 `reader.cancel()` 释放上游连接
-- **中止也落账**：借鉴 dsh"取消时保留已产生的部分结果"的语义，停止请求同样写入用量账本（`stopped:true`）
-- **连接期退避重试**：借鉴 `dsh-llm` retry-policy"未产生任何 durable 输出才重试"的思想，仅网络层失败（`fetch` 抛 `TypeError`）且未收到任何字节时重试，最多 2 次（500ms/1000ms 退避）
-- **按措辞识别额度耗尽**：借鉴 `dsh-llm` 的 `isQuotaExceededError`，非 402 状态码但错误文本含 quota/balance 耗尽措辞时也给出充值指引
-
-## 继续开发
-
-源码副本位于 `~/Documents/ModelTester`（本 README 所在目录即开发副本；`~/Applications/ModelTester.app` 是构建产物，日常改动都在开发副本进行）：
-
-```bash
-cd ~/Documents/ModelTester
-npm test                      # 56 个测试（mock 上游，账本落临时目录，不污染真实数据）
-npm run check                 # 真实 API 连通性自检（Key 经数据目录回退自动读取）
-PORT=8788 npm run web         # 开发模式前台运行（避开常驻服务占用的 8787）
-npm run publish               # 构建 Bundle + 重启常驻服务，一条命令发布
-```
-
-- 数据目录回退对开发副本同样生效：副本内没有 `modeltester.config.json`，自动使用 `~/Library/Application Support/ModelTester`，开发产生的用量照常记入真实账本
-- 也可在开发副本执行 `npm run service` 让 LaunchAgent 直接跑源码（改完 `launchctl kickstart -k gui/$(id -u)/com.modeltester.app` 即生效，免去重新打包）；要改回跑 Bundle，重新 `npm run app:build` 并按提示重注册服务
-- Bundle 内执行 `npm run app:build` 会被自保护拒绝，发布务必在开发副本操作
+除内置美团 LongCat 外，设置页「提供方」区可接入任意上游——OpenAI 兼容网关、自建服务、或比内置目录更新更快的厂商，都不用改代码：填 Provider ID / 显示名称 / API 地址 / 协议 / 密钥；模型目录可手写或点「获取可用模型」从上游拉取勾选；单价填了账本按它计价，留空回退内置价。Agent 会话与 `/api/chat` 都按模型所属提供方路由。细节（密钥不回显、编辑留空保留原值、Anthropic 协议帧翻译等）见设置页内说明与 `AGENTS.md`。
 
 ## 接到其他工具
 
@@ -208,28 +182,29 @@ npm run publish               # 构建 Bundle + 重启常驻服务，一条命�
 
 ## Computer Use（CUA）结论
 
-按"抛弃 IAB、直接驱动真实 Chrome"的思路，用 Computer Use 对 `http://localhost:8787` 做过完整链路验证：
+按"抛弃 IAB、直接驱动真实 Chrome"的思路，对本机网页端做过完整链路验证（以下坐标与细节为旧版前端时期测得，方法仍适用）：
 
 - **可用（完整闭环）**：`cua.getApp("com.google.Chrome")` → 点击输入框 → `paste()` 中文提示词 → `pressKey("Return")` 发送 → 流式返回。中文与 URL 均可靠（`typeText` 会丢字符，必须用 `paste`）
-- **坐标系**：`app.click([x, y])` 用 2x 视网膜像素、窗口相对坐标；本机发送/停止按钮 2x 像素中心约 `(2097, 1388)`（窗口逻辑尺寸约 1346×761，截图 2692×1522）
-- **停止链路曾全面失效（已定位并修复）**：根因是 `public/index.html` 以 `type="module"` 加载（严格模式），而 `stopped` 用 `var` 声明在 `send()` 函数体内，`stopGeneration()` 首句抛 `ReferenceError`，整条中止逻辑在第一步就中断——服务端从未收到 `/api/abort`。这解释了此前所有"点击无反应"现象：页脚按钮、顶栏按钮、`Escape`、`/stop` 四条通道全部失效，且与点击方式无关，并非输入投递问题。修复：`stopped` 提升为模块级作用域 + 读取循环补 `Promise.race([reader.read(), abortRace])`
-- **对策（已落地）**：顶栏新增同功能停止按钮（生成时出现）；服务端 `POST /api/abort` 按 `requestId` 中止，前端双保险调用；自动化场景也可直接 `curl -XPOST localhost:8787/api/abort -H 'Content-Type: application/json' -d '{"requestId":"..."}'`
-- **已知坑**：Chrome 页面会缓存旧 `index.html`，改动前端后必须真正重导航才生效；Mac 锁屏后 CUA 全部动作失效，需人工解锁
+- **坐标系**：`app.click([x, y])` 用 2x 视网膜像素、窗口相对坐标
+- **停止链路曾全面失效（已定位并修复）**：根因是旧版前端以 `type="module"` 加载（严格模式），而 `stopped` 用 `var` 声明在 `send()` 函数体内，`stopGeneration()` 首句抛 `ReferenceError`，整条中止逻辑在第一步就中断——服务端从未收到 `/api/abort`。修复：`stopped` 提升为模块级作用域 + 读取循环补 `Promise.race([reader.read(), abortRace])`
+- **对策（已落地）**：`POST /api/abort` 按 `requestId` 中止，前端双保险调用；自动化场景也可直接 `curl -XPOST localhost:8787/api/abort -H 'Content-Type: application/json' -d '{"requestId":"..."}'`
+- **已知坑**：Chrome 页面会缓存旧页面，改动前端后必须真正重导航才生效；Mac 锁屏后 CUA 全部动作失效，需人工解锁
 - **当前状态**：Computer Use 浏览器面被 admin 安全策略阻断（"admin-enforced policy could not be verified"），未绕行；视觉验证暂以 curl + 静态检查替代
 
 ## 当前状态（实测打通）
 
-- `npm test` 56/56 通过（mock 上游，不花额度）；`npm run check` 真实 API 连通（Key 有效 + 模型目录 + 测试请求）
-- 自定义提供方：设置页可接任意 OpenAI 兼容网关或 Anthropic Messages 上游；模型目录可手动编写或从上游拉取勾选；账本按提供方单价计价（只填一侧时另一侧回退内置价）；内置 LongCat 请求载荷与接入前逐字节一致（有专门测试守着）
+- `npm test` 92/92 通过（mock 上游，不花额度）；`npm run check` 真实 API 连通（Key 有效 + 模型目录 + 测试请求）
+- Agent e2e 覆盖：会话 CRUD；完整 turn（工具调用 → 权限允许 → workspace 落盘 → 二轮出终稿）；权限拒绝后循环继续；路径穿越拒绝；shell 执行与超时；turn 中途 abort；harness 列表；上下文压缩触发；每轮用量记账
+- 网页工作台经浏览器实测完整 turn：权限卡允许 → 写文件 → 二轮终稿 → 按轮分组的思考 / 工具 / 用量脚注
+- 终端实测：权限 y/n 两条路径、`/help` `/sessions` `/new` `/model` `/harness`、拒绝后续跑均正常
+- 自定义提供方：设置页可接任意 OpenAI 兼容网关或 Anthropic Messages 上游；账本按提供方单价计价（只填一侧时另一侧回退内置价）；内置 LongCat 请求载荷与接入前逐字节一致（有专门测试守着）
 - LaunchAgent `com.modeltester.app`：running / managed，数据目录指向 `~/Library/Application Support/ModelTester`
-- 开机自启开关往返验证通过：关闭→job 与 plist 移除、App 经保活子进程继续服务；开启→旧实例等 job 拉起，App 全程可达，实际不可用约 1s
-- 启动器实测：同进程接管、无重复启动
-- UI：零 emoji（全 Bundle 代码 `Extended_Pictographic` 零匹配），左上角为 ModelTester 品牌标识，模型选择器展示当前接入厂商标识；动画体系（aurora 光斑漂移、页头/页脚入场、消息入场、CSS 三点打字指示器、开关 knob、模型菜单 `@starting-style` 入场、停止按钮 pulse、对话框 scale+fade+背板模糊）遵循 `modern-web-guidance`；全局 `prefers-reduced-motion` 降级
-- 多模态：实测图片理解正常，四种发图方式（附件按钮 / 粘贴 / 拖拽 / `/img 路径`）
+- UI：零 emoji（全 Bundle 代码 `Extended_Pictographic` 零匹配）；动画遵循 `modern-web-guidance`，全局 `prefers-reduced-motion` 降级
 
 ## 常见问题
 
 - `401 invalid_api_key`：Key 错或没填，去 `/key` 重新设置
 - `402 insufficient_quota`：余额不足，平台充值或抢资源包
 - `429`：请求太频繁，稍等重试
+- 工具调用被拒绝：权限卡选「总是允许」沉淀为会话规则；或切换 Minimal 模式（无工具）
 - 终端乱码：换用 iTerm2 / Terminal.app 均可，已用标准 ANSI 颜色

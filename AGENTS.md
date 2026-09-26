@@ -1,4 +1,4 @@
-# AGENTS.md — ModelTester 项目宪法
+# AGENTS.md — AuroraAgent 项目宪法
 
 > 本文件是写给 AI 编码 agent 的项目规约。人类用户文档见 `README.md`；两者冲突时，以真实代码行为为准，并顺手修正文档。
 > 优先级：用户当前对话指令 > 本文件 > agent 的默认习惯。本文件是活文档——每次踩坑后，把教训补进来。
@@ -12,7 +12,7 @@
 执行顺序永远是：
 
 1. 改代码（一个可独立验证的小改动，例如「修复一个错误映射」「新增一个厂商标识」）
-2. `npm test` 全绿（基线 59 个测试；不绿不准提交）
+2. `npm test` 全绿（基线 92 个测试；不绿不准提交）
 3. `git add <具体文件>` → `git commit -m "中文描述"` → `git push`
 
 规约：
@@ -20,47 +20,61 @@
 - 粒度：一次提交只做一件事；大任务拆成多次提交，每次提交后仓库都必须处于可运行、测试全绿的状态
 - 提交信息：中文，一句话说清「改了什么、为什么」，如 `fix(chat): 401 错误映射补充额度不足分支`
 - 身份与远端：`user.name=AuroraAeon` / `user.email=auroraaeon@users.noreply.github.com`；`origin` = https://github.com/AuroraAeon/ModelTester（private，master 分支）
-- 凡触及真实上游行为的改动（请求格式、错误映射、模型目录解析），提交前额外跑一次 `npm run check`
+- 凡触及真实上游行为的改动（请求格式、错误映射、模型目录解析、tools 拼装），提交前额外跑一次 `npm run check`
 - 推送失败先诊断（网络 / 权限），不得 `--force` 绕过，不得改写已推送的历史
+- 改了 `web-ui/` 源码必须同步 `npm run build:web` 并提交 `public/app/` 产物（运行时零构建的保证）
 
 ---
 
 ## 1. 项目是什么
 
-ModelTester 是「全球厂商最新大模型速测工作台」：厂商每上线一个新模型，用它在本地以最短路径完成「拿到 Key → 连通 → 对话 → 多模态 → 用量计费 → 横向对比」。
+AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用同一套 Agent Loop（会话 / 轮次 / 工具 / 权限 / 上下文压缩），对标 OpenBitFun 的本地化实现；「全球厂商最新大模型速测」能力完整保留为底座（`/api/chat`、自定义提供方、用量账本）。
 
 产品形态与技术底线：
 
 - 单用户本地工具，**仅支持 macOS**（依赖 LaunchAgent 与 `~/Library` 目录约定）
-- **零依赖**：只用 Node 18+ 内置模块；ESM `.mjs`；**没有任何构建步骤**（无 bundler、无转译、无 `node_modules`）
-- 双客户端：终端（`chat.mjs`）+ 网页（`web.mjs` + `public/index.html`），共享同一套配置与数据目录
-- 可打包为独立 macOS Application（`~/Applications/ModelTester.app`），由 LaunchAgent `com.modeltester.app` 常驻
+- **后端零依赖**：只用 Node 18+ 内置模块；ESM `.mjs`；无构建步骤
+- **前端依赖例外（唯一）**：`web-ui/` 用 React 19 + Vite 7 + TypeScript，依赖（react / react-dom / vite / typescript / @vitejs/plugin-react / @types/*）经用户明确同意引入，**仅限 `web-ui/`**；构建产物随仓库提交在 `public/app/`，后端与 Bundle 运行时不接触 node_modules
+- 双客户端：终端（`chat.mjs` → `util/agent/terminal.mjs`）+ 网页（`web.mjs` 服务 `public/app/` React 产物），共享同一套配置、会话、账本数据目录
+- 可打包为独立 macOS Application（`~/Applications/ModelTester.app`，显示名 AuroraAgent），由 LaunchAgent `com.modeltester.app` 常驻
 - 当前接入厂商：美团 LongCat-2.5-Preview。Base URL / 模型目录 / Key 全部是配置项——**代码不绑定厂商**，接入新厂商不改架构
-- 自定义 Provider：设置页可加任意 OpenAI 兼容 / Anthropic Messages 上游（存储、校验、发现、路由在 `util/providers.mjs` + `util/wire.mjs`，前端在 `public/providers.mjs`）；内置提供方只读，请求载荷保持历史形态
+- 自定义 Provider：设置页可加任意 OpenAI 兼容 / Anthropic Messages 上游（存储、校验、发现、路由在 `util/providers.mjs` + `util/wire.mjs`，前端在 `web-ui/src/components/ProviderEditor.tsx`）；内置提供方只读，请求载荷保持历史形态
 
 ## 2. 架构地图
 
 | 文件 | 职责 |
 | --- | --- |
-| `web.mjs` | 网页服务核心：静态页、`/api/*` 路由、SSE 代理、停止中断、模型目录（单飞加载 + 60s 缓存）；Provider 路由 / LaunchAgent / SSE 泵 / 账本已拆到 `util/`，静态资源走 `STATIC_ASSETS` 白名单 |
-| `chat.mjs` | 终端客户端：ANSI 彩色输出、思考过程流式渲染、中断保留已生成内容、`/key` 等命令 |
+| `web.mjs` | 网页服务核心：`/api/*` 路由平铺、SSE 代理、停止中断、模型目录（单飞加载 + 60s 缓存）、`/app/` 静态服务（React 产物 + SPA 回退 + 防目录穿越）；Provider / LaunchAgent / SSE 泵 / 账本 / Agent HTTP 面已拆到 `util/`，静态资源走 `STATIC_ASSETS` 白名单 |
+| `chat.mjs` | 终端客户端入口：main 委派 `runTerminal`；保留旧对话通道 `streamChat` 与配置导出（`tools/color-test.mjs` 依赖） |
 | `check.mjs` | 连接自检：Key 校验 → 模型列表 → 一条最小真实请求（会花少量钱） |
-| `public/index.html` | 单页前端：原生 JS + 内联 SVG 图标，无框架；模型选择器、设置弹层（原生 `<dialog closedby="any">`） |
-| `util/sse.mjs` | SSE 解析器 `SseParser` + token 估算（测试与前端共享） |
+| `util/config.mjs` | 数据目录三级回退 + 配置读写 + `PRICE`（chat / check / web / color-test 共用） |
+| `util/sse.mjs` | SSE 解析器 `SseParser` + token 估算（测试与后端共享） |
 | `util/providers.mjs` | 自定义 Provider：存储（`providers.json` 原子落盘）、ID/端点/协议/模型目录/单价/API 密钥格式校验（与 dsh 同规约）、上游模型发现、`/api/providers` 路由处理 |
-| `util/wire.mjs` | 协议适配：OpenAI 兼容与 Anthropic Messages 的 URL 拼接、请求拼装、Anthropic SSE 帧翻译成 OpenAI 帧 |
-| `util/stream.mjs` | SSE 透传 / 翻译泵（逐帧转发 + 用量累计，供 `/api/chat` 使用） |
+| `util/wire.mjs` | 协议适配：OpenAI 兼容与 Anthropic Messages 的 URL 拼接、请求拼装（含 `tools` / `tool_choice`）、Anthropic SSE 帧翻译成 OpenAI 帧（含 `tool_use` / `input_json_delta`） |
+| `util/stream.mjs` | SSE 透传 / 翻译泵（逐帧转发 + 用量累计，供 `/api/chat`）；`consumeAgentStream` 增量累积 `tool_calls` delta 供 Loop 使用 |
 | `util/usage.mjs` | 用量账本：逐行追加 + 汇总出口 |
 | `util/service.mjs` | LaunchAgent 生命周期：plist 生成 / 安装 / 卸载 / 状态 |
-| `public/providers.mjs` | 自定义 Provider 前端（对齐 dsh Models 设置页）：提供方行、编辑器/添加卡片、可用模型挑选弹层（默认全选）、删除确认（`mountProviders`） |
-| `public/providers.css` | Provider 界面样式，复用全局设计令牌 |
+| `util/agent/events.mjs` | AgentEvent 协议（OpenBitFun AgenticEvent 精简子集）+ SSE 帧封装 |
+| `util/agent/harness.mjs` | 三档模式契约 minimal / standard / ultimate：系统提示、工具集、轮次上限（1 / 24 / 64）、压缩阈值；Creative 留待后续 |
+| `util/agent/session.mjs` | 会话存储：`sessions/<id>.meta.json` 原子落盘 + `.jsonl` 追加式转录；投影重建容错误行；create / list / get / patch / delete |
+| `util/agent/tools.mjs` | 六个内置工具（read_file / list_dir / write_file / edit_file / shell / web_fetch）：JSON Schema、`resolveInside` 路径禁锢（拒绝穿越）、输出截断、shell 超时（默认 30s 上限 120s） |
+| `util/agent/policy.mjs` | 权限策略：`{action, resource, effect}` 规则集，层内后匹配赢、多层取最严（deny > ask > allow）；默认只读放行、写与执行 ask；「总是允许」沉淀会话级规则 |
+| `util/agent/context.mjs` | 上下文组装（系统提示 + 历史 + 工具定义；thinking/usage 不回填、summary 转系统消息）与压缩规划（超窗口 70% 触发，保留最近 4 个用户轮原文） |
+| `util/agent/loop.mjs` | turn 运行器：轮次循环至无 tool_calls 或触顶；权限经 pending map 挂起等前端决策；`AbortController` 中断保留已生成内容；SSE 断开即中止；每轮经 `usage.mjs` 记账 |
+| `util/agent/http.mjs` | `/api/agent/*` HTTP 面（web.mjs 前缀委派）：会话 CRUD + PATCH、turn SSE、abort、permission、harnesses；单活跃 turn（409） |
+| `util/agent/terminal.mjs` | 终端 REPL：同一 loop 驱动；思考暗色流式、工具单行状态、权限 readline（y/n/a）、`/new /sessions /model /harness /think /temp /max /key /help /quit`、`-p` 单次提问 |
+| `web-ui/` | React + Vite + TS 工作台（唯一前端依赖例外）：`src/App.tsx` + `components/{Sidebar,ChatView,Message,ToolCard,Composer,ProviderEditor,SettingsDialog}.tsx` + 手写 Markdown 子集渲染器 + 内联 SVG 图标 + `tokens.css` 设计令牌（`app.css` 引用） |
+| `public/app/` | web-ui 构建产物（随仓库提交）：`/` 与 `/app/` 同一份 index.html，哈希资产长缓存 |
+| `public/icon.svg` `public/vendors/` | 品牌标识 / 各接入厂商标识（`/vendor/` 白名单路由） |
 | `test/` | e2e 测试：mock 上游 + 真实 socket（见第 8 节） |
 | `tools/install-service.mjs` | LaunchAgent 安装 / 卸载 / 状态（plist 生成规则与 `web.mjs` 内置逻辑保持一致） |
 | `tools/build-app.mjs` | 打包 `.app`（含自保护，见第 6 节） |
 | `tools/color-test.mjs` | 纯色识别回归测试工具（结论沉淀在 `docs/`） |
 | `docs/` | 测试结论与学术图表（PNG / SVG / PDF + CSV；**TIFF 永不再进仓库**） |
 
-数据流：浏览器 `POST /api/chat` → `web.mjs` 按模型所属提供方选协议请求上游（省略 `provider` 时按模型 ID 反查，再回退内置）→ SSE 逐帧透传或翻译（`reasoning_content` 渲染为思考、`content` 渲染为回答）→ 结束按提供方单价结算用量账本。客户端断开即 `AbortController` 中止上游，不浪费额度。
+数据流（Agent）：浏览器 `POST /api/agent/turn` → `loop.mjs` 按 harness 组装上下文（`context.mjs`）→ `wire.mjs` 按提供方协议请求上游（带 tools）→ `stream.mjs` 增量读取（文本 / 思考 / tool_calls）→ 工具经 `policy.mjs` 门控执行（ask 挂起等 `POST /api/agent/permission`）→ 结果回填进入下一轮 → 无 tool_calls 或触顶即 `turn_completed`；每轮经 `usage.mjs` 按提供方单价记账。客户端断开即 `AbortController` 中止 turn。
+
+数据流（速测底座）：浏览器 `POST /api/chat` → `web.mjs` 按模型所属提供方选协议请求上游 → SSE 逐帧透传或翻译 → 结束按提供方单价结算用量账本。
 
 ## 3. 常用命令
 
@@ -69,34 +83,36 @@ ModelTester 是「全球厂商最新大模型速测工作台」：厂商每上�
 | `npm test` | e2e 测试（mock 上游） | **每次提交前必跑**；不花真钱、不碰真实数据 |
 | `npm run check` | 真实 API 连通自检 | 会花少量钱；改了上游相关逻辑时跑 |
 | `PORT=8788 npm run web` | 开发态网页服务 | 避开 8787 正式端口 |
-| `npm run chat` | 终端聊天 | — |
+| `npm run dev:web` | 前端开发态（vite 5173，`/api` 代理 8787） | 只动 `web-ui/` 时用 |
+| `npm run build:web` | 构建前端产物到 `public/app/` | 改了 `web-ui/` 源码后必跑并提交产物 |
+| `npm run chat` | 终端 Agent 会话 | 与网页共用 Loop / 会话 / 账本 |
 | `npm run color` | 纯色识别测试 | 真实调用，按需 |
 | `npm run service` / `service:status` / `service:remove` | 安装 / 查看 / 卸载 LaunchAgent | — |
-| `npm run publish` | 构建 `.app` 并重启服务 | **只能在 Bundle 外的源码目录执行** |
-| `npm run app:build` | 只构建不重启 | 同上 |
+| `npm run publish` | 构建前端 + 打 `.app` + 重启服务 | **只能在 Bundle 外的源码目录执行** |
+| `npm run app:build` | 构建前端 + 只构建不重启 | 同上 |
 
 调试：`LOG_LEVEL=debug npm run web`；常驻服务日志在 `~/Library/Logs/com.modeltester.app.log`。
 
 ## 4. 数据目录与配置
 
-三级回退（`web.mjs` / `chat.mjs` / `check.mjs` / `tools/install-service.mjs` 四处实现必须保持一致）：
+三级回退（`util/config.mjs` 单一实现，`web.mjs` / `chat.mjs` / `check.mjs` / `tools/install-service.mjs` 共用）：
 
 1. `MODELTESTER_DATA_DIR` 环境变量（LaunchAgent 显式指定）
 2. 同目录已存在 `modeltester.config.json` → 用当前目录（源码开发态）
 3. 否则 `~/Library/Application Support/ModelTester`（App 态，数据与 Bundle 解耦）
 
-配置字段：`apiKey` / `model` / `thinking` / `temperature` / `maxTokens`；用量账本 `usage.jsonl` 逐行追加。环境变量 `MODELTESTER_API_KEY`、`MODELTESTER_BASE_URL` 优先级高于配置文件。
+配置字段：`apiKey` / `model` / `thinking` / `temperature` / `maxTokens`；用量账本 `usage.jsonl` 逐行追加；会话在 `sessions/<id>.meta.json` + `.jsonl`。环境变量 `MODELTESTER_API_KEY`、`MODELTESTER_BASE_URL` 优先级高于配置文件。
 
-**`modeltester.config.json`、`usage.jsonl`、`providers.json` 已在 `.gitignore`，永远不许提交**——Key 泄露即安全事故。自定义提供方（含 API 密钥、单价）存 `providers.json`，内置 LongCat 提供方在内存里合成（`builtin: true`，只读）。
+**`modeltester.config.json`、`usage.jsonl`、`providers.json`、`sessions/` 已在 `.gitignore`，永远不许提交**——Key 泄露即安全事故。自定义提供方（含 API 密钥、单价）存 `providers.json`，内置 LongCat 提供方在内存里合成（`builtin: true`，只读）。
 
 ## 5. 代码风格铁律
 
-- 只用 Node 内置模块；**新增任何 npm 依赖必须先获得用户同意**
+- 后端只用 Node 内置模块；**新增任何 npm 依赖必须先获得用户同意**（唯一既有例外：`web-ui/` 前端依赖，见第 1 节）
 - 2 空格缩进、单引号、行尾分号，与现有文件保持一致
 - 注释与面向用户的文案一律中文；错误消息必须「说清原因 + 给出下一步动作」（参考 401 / 402 的友好映射）
 - **产品内零 emoji**：网页 UI、错误消息、终端 banner 都不允许 emoji；图标一律内联 SVG 或 `public/vendors/*.svg`。终端 CLI 的 `✓` / `✗` 属命令行惯例，允许保留
-- 前端不引框架、不引 CDN；动画用原生 CSS（`@starting-style`、top-layer 过渡，参考 `public/index.html` 设置弹层）
-- 服务路由集中在 `web.mjs` 单个 `createServer` 处理器内按「方法 + 路径」平铺，不引路由库
+- 前端不引 CDN、不引 Markdown / 状态管理等第三方库（React + Vite + TS 之外的依赖新增需再次征求同意）；动画用原生 CSS（`@starting-style`、top-layer 过渡）
+- 服务路由集中在 `web.mjs` 单个 `createServer` 处理器内按「方法 + 路径」平铺，不引路由库；Agent HTTP 面已拆 `util/agent/http.mjs`
 - 单文件控制在约 500 行内；`web.mjs` 已接近上限，新功能优先拆到 `util/` 等模块
 
 ## 6. 服务生命周期（macOS LaunchAgent）
@@ -107,28 +123,32 @@ ModelTester 是「全球厂商最新大模型速测工作台」：厂商每上�
 - 端口冲突时 `web.mjs` 按 1 秒间隔重试最多 60 次——这是设置页切换自启时新旧实例平滑交接（约 1 秒不可用窗口）的基石，**不要改**
 - 设置页开关语义：`autostart` = plist 是否存在；`managed` = 当前进程是否正被 LaunchAgent 托管
 - **禁止在 Bundle 内执行 `npm run app:build`**：构建会先删掉整个 `.app`，`tools/build-app.mjs` 的自保护会直接报错；正确做法是把 `Resources/app` 拷到 Bundle 之外的目录再构建
+- `publish` / `app:build` 已前置 `build:web`：Bundle 内置 `public/app/` 产物，运行时不依赖 node_modules
 
 ## 7. 接入新厂商 checklist
 
 1. `public/vendors/<name>.svg` 放厂商标识；`web.mjs` 的 `/vendor/` 白名单路由自动放行（正则防目录穿越，勿放宽）
-2. `public/index.html` 的 `VENDOR_MARKS` 数组加一行前缀匹配（模型 id → 图标）
+2. `web-ui/src/components/Composer.tsx` 的厂商标识前缀匹配加一行（模型 id → 图标）；终端不需要（无图标渲染）
 3. 配置 `MODELTESTER_BASE_URL`；模型目录来自上游 `GET /openai/v1/models`，代码不硬编码厂商模型清单
-4. `README.md`「当前接入厂商」段同步更新；协议差异（如思考开关字段、Messages 线路）在 `util/wire.mjs` 处理并补测试；更常见的路径是让用户直接在设置页加自定义提供方，无需改代码
+4. `README.md`「当前接入厂商」段同步更新；协议差异（如思考开关字段、Messages 线路、tools 字段形态）在 `util/wire.mjs` 处理并补测试；更常见的路径是让用户直接在设置页加自定义提供方，无需改代码
 5. 全程遵守第 0 节：每完成一步且 `npm test` 通过，就提交推送一次
 
 ## 8. 测试规约
 
-- e2e 模式：mock 上游（`127.0.0.1:18901`，复刻真实 SSE 帧与 401 / 402 错误）+ 真实 socket 拉起 `web.mjs`（`127.0.0.1:18787`）
+- e2e 模式：mock 上游（`127.0.0.1:18901`，复刻真实 SSE 帧与 401 / 402 错误、`tool_calls` 帧与 tool 结果回执）+ 真实 socket 拉起 `web.mjs`（`127.0.0.1:18787`）
 - **数据隔离**：测试以临时目录作 `MODELTESTER_DATA_DIR`，绝不许写真实数据目录
 - 新路由 / 新行为 / 新错误映射必须带中文测试名进入 `test/run-tests.mjs`；mock 需要新行为时改 `test/mock-longcat.mjs`
-- 基线 59/59 通过。提交前 `npm test` 必须全绿；不许 `skip`，不许放宽断言迁就失败
+- mock 触发词：消息含 `USE_TOOL` → 模型发起 `read_file mock.txt`；含 `USE_TOOL_WRITE` → 发起 `write_file written_by_agent.txt`；`FLAKY` 断网重试；`SLOW` 慢速
+- 前端契约测试（`/app` 服务、哈希资产、令牌 CSS 在场、零 emoji、旧路由 404、ProviderEditor 源码校验规则）守着构建产物与 `web-ui/` 的同步；改了 `web-ui/` 忘了 `build:web` 会红
+- 基线 92/92 通过。提交前 `npm test` 必须全绿；不许 `skip`，不许放宽断言迁就失败
 - `npm run check` 走真实上游，只在改上游集成时跑（花少量钱）
+- 跑 `npm test` 前确认 18901 无常驻 mock 占用（`pkill -f mock-longcat`）；exec 沙箱会杀后台进程，常驻服务 / mock 用 exec_command 前台会话跑
 
 ## 9. 反模式（NEVER）
 
 - **NEVER** 攒一批改动才提交；**NEVER** 在测试红着时提交
-- **NEVER** 提交 `modeltester.config.json` / `usage.jsonl` / 任何日志
-- **NEVER** 引入 npm 依赖或构建步骤
+- **NEVER** 提交 `modeltester.config.json` / `usage.jsonl` / `providers.json` / `sessions/` / 任何日志
+- **NEVER** 未经用户同意引入 npm 依赖或构建步骤（`web-ui/` 既有前端依赖是唯一获批例外）
 - **NEVER** 在产品 UI 里加 emoji
 - **NEVER** 在 Bundle 内执行 `npm run app:build`
 - **NEVER** 改动厂商事实层：模型 ID、显示名映射规则、价格常量 `PRICE`、纯色测试结论——除非上游本身变了
@@ -138,13 +158,15 @@ ModelTester 是「全球厂商最新大模型速测工作台」：厂商每上�
 
 ## 10. 验证基线（改动后自查）
 
-- `npm test` → 59/59
+- `npm test` → 92/92
 - `curl -s localhost:8787/api/health` → `{"ok":true,...}`；`/api/settings` → `version` / `managed` / `dataDir` 符合预期
-- 浏览器打开 http://localhost:8787 ：无 emoji、厂商图标正常、动画流畅、设置弹层可开关开机自启
+- 浏览器打开 http://localhost:8787 ：无 emoji、模型选择器按提供方分组、完整 turn（工具卡 / 权限卡 / 用量脚注）正常、设置弹层可开关开机自启
+- 终端 `npm run chat`：`/help`、权限 y/n/a、`/sessions` 切换正常
 - 改了启动 / 打包逻辑：`npm run publish` 后 `launchctl print gui/$(id -u)/com.modeltester.app` 确认 `state = running`
 
 ## 11. 文档同步
 
 - 行为发生变化时，同一次提交里更新 `README.md`（人类文档）与本文件（agent 规约）
+- 版本号只改 `package.json` 一处（Info.plist 与 `/api/settings` 都读它）；品牌名 AuroraAgent 仅作品牌与文档名，包名 / Bundle ID / LaunchAgent label / 数据目录约定不变
 - `docs/figures/` 只放 PNG / SVG / PDF + CSV；**TIFF 永不再进仓库**（历史上有过 112MB 教训）
 - 图表脚本 `docs/figure-work/make_figures.py` 本机只能 `py_compile` 验证（环境无 numpy / matplotlib）；图标管线用 `npx sharp-cli`
