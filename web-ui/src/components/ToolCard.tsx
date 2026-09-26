@@ -2,31 +2,23 @@
 import { useState, type ReactNode } from 'react';
 import {
   Dots, IconCheck, IconClose, IconFile, IconFilePlus, IconFolder, IconGlobe,
-  IconList, IconPencil, IconSearch, IconShield, IconTerminal, IconWrench,
+  IconList, IconPencil, IconPerson, IconSearch, IconShield, IconTerminal, IconWrench,
 } from '../icons';
+import { toolIconKey, toolLabel, toolResourceOf } from '../../../util/agent/transcript.mjs';
 import { TodoList } from './Todo';
 import type { DiffLine, ToolView } from '../types';
 
-const TOOL_META: Record<string, { label: string; Icon: typeof IconFile }> = {
-  read_file: { label: '读取文件', Icon: IconFile },
-  list_dir: { label: '浏览目录', Icon: IconFolder },
-  write_file: { label: '写入文件', Icon: IconFilePlus },
-  edit_file: { label: '编辑文件', Icon: IconPencil },
-  shell: { label: '执行命令', Icon: IconTerminal },
-  web_fetch: { label: '抓取网页', Icon: IconGlobe },
-  grep: { label: '检索内容', Icon: IconSearch },
-  glob: { label: '查找文件', Icon: IconSearch },
-  todo: { label: '待办清单', Icon: IconList },
-  skill: { label: '加载技能', Icon: IconWrench },
+// 工具标签与图标键的单一真值源在 util/agent/transcript.mjs（终端同源，含 task / MCP 推导）
+const ICON_BY_KEY: Record<string, typeof IconFile> = {
+  file: IconFile, folder: IconFolder, write: IconFilePlus, edit: IconPencil,
+  shell: IconTerminal, globe: IconGlobe, search: IconSearch, list: IconList,
+  wrench: IconWrench, task: IconPerson, plug: IconGlobe,
 };
 
 const OUTPUT_LIMIT = 1200;
 
 function resourceOf(tool: ToolView): string {
-  const p = (tool.params || {}) as Record<string, unknown>;
-  if (tool.name === 'shell') return String(p.command || '');
-  if (tool.name === 'grep') return String(p.pattern || '');
-  return String(p.path || p.url || p.dir || '');
+  return toolResourceOf(tool.name, tool.params);
 }
 
 function statusOf(tool: ToolView): { cls: string; node: ReactNode } {
@@ -64,7 +56,7 @@ type Props = {
 
 export function ToolCard({ tool, onDecide }: Props) {
   const [expanded, setExpanded] = useState(false);
-  const meta = TOOL_META[tool.name] || { label: tool.name, Icon: IconWrench };
+  const meta = { label: toolLabel(tool.name), Icon: ICON_BY_KEY[toolIconKey(tool.name)] || IconWrench };
   const status = statusOf(tool);
   const resource = resourceOf(tool);
   const output = tool.output || '';

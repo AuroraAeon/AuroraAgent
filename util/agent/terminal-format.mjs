@@ -3,13 +3,8 @@
  * 只放无状态小函数，不 import 任何运行时（零依赖铁律）。
  */
 
-/** 工具名 → 中文标签（终端单行状态与权限询问共用） */
-export const TOOL_LABELS = {
-  read_file: '读取文件', list_dir: '浏览目录', write_file: '写入文件',
-  edit_file: '编辑文件', shell: '执行命令', web_fetch: '抓取网页',
-  grep: '搜索内容', glob: '查找文件', todo: '待办清单', skill: '加载技能', task: '派发子代理',
-};
-export const toolLabel = (name) => TOOL_LABELS[name] || name;
+// 工具词表（标签 / 图标键 / 资源摘要）单一真值源在 transcript.mjs，终端与 Web 共用
+export { toolLabel, fmtCost } from './transcript.mjs';
 
 /** 行内截断（按 JS 字符数；显示宽度裁剪由 util/tui/render 负责） */
 export const truncate = (s, n) => {
@@ -17,8 +12,6 @@ export const truncate = (s, n) => {
   return t.length > n ? `${t.slice(0, n)}…` : t;
 };
 
-/** 费用格式化：小额用 6 位、常规 4 位 */
-export const fmtCost = (cost) => (cost < 0.01 ? cost.toFixed(6) : cost.toFixed(4));
 
 /** 工具输出缩进预览：截断 + 每行前缀（超过 8 行折叠） */
 export function indent(text, limit) {

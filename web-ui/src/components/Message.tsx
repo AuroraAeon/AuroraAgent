@@ -3,12 +3,12 @@ import { useState } from 'react';
 import { Markdown } from '../markdown';
 import { IconAlert, IconBulb, IconChevronDown, IconChevronRight, IconPerson, IconSpark } from '../icons';
 import type { MsgView } from '../types';
+import { fmtCost as fmtCostNum } from '../../../util/agent/transcript.mjs';
+
+const fmtCost = (cost: number): string => (!cost ? '¥0' : `¥${fmtCostNum(cost)}`);
 import { ToolCard } from './ToolCard';
 
-function fmtCost(cost: number): string {
-  if (!cost) return '¥0';
-  return `¥${cost < 0.01 ? cost.toFixed(6) : cost.toFixed(4)}`;
-}
+
 
 function ThinkingBlock({ text, defaultOpen = false, streaming = false }: { text: string; defaultOpen?: boolean; streaming?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);

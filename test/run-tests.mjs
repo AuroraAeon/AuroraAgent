@@ -17,6 +17,7 @@ import { agentEvent, sseFrame } from '../util/agent/events.mjs';
 import { HARNESSES, getHarness, harnessSummaries, DEFAULT_HARNESS } from '../util/agent/harness.mjs';
 import { SessionStore } from '../util/agent/session.mjs';
 import { getTool, toolSchemas, anthropicToolSchemas, toolResource, resolveInside, lineDiff, diffToText, renderTodoList } from '../util/agent/tools.mjs';
+import { toolLabel, toolIconKey, toolResourceOf, fmtCost, projectTurns } from '../util/agent/transcript.mjs';
 import { PermissionPolicy, defaultRules, mostRestrictive } from '../util/agent/policy.mjs';
 import { assembleMessages, needsCompaction, planCompaction, compactionMessages, contextWindowOf, estimateMessagesTokens } from '../util/agent/context.mjs';
 import { runAgentTurn } from '../util/agent/loop.mjs';
@@ -898,6 +899,70 @@ async function runLoopOnce({ framesByCall, harness = getHarness('standard'), per
   return { dir, ws, store, usage, session, events, requests, result, permCalls };
 }
 
+console.log('\n转录投影层单元测试');
+await test('transcript: 工具标签覆盖内置 / 技能 / 子代理 / MCP 推导', () => {
+  eq(toolLabel('read_file'), '读取文件');
+  eq(toolLabel('task'), '派发子代理');
+  eq(toolLabel('mcp__mock__echo'), 'mock.echo（MCP）');
+  eq(toolLabel('unknown_tool'), 'unknown_tool');
+  eq(toolIconKey('edit_file'), 'edit');
+  eq(toolIconKey('mcp__mock__echo'), 'plug');
+  eq(toolIconKey('task'), 'task');
+  eq(toolIconKey('whatever'), 'wrench');
+});
+await test('transcript: 资源摘要按工具类型取值', () => {
+  eq(toolResourceOf('read_file', { path: 'a.txt' }), 'a.txt');
+  eq(toolResourceOf('shell', { command: 'ls -la' }), 'ls -la');
+  eq(toolResourceOf('grep', { pattern: 'foo' }), 'foo');
+  eq(toolResourceOf('web_fetch', { url: 'http://x' }), 'http://x');
+  eq(toolResourceOf('task', { tasks: ['甲', '乙'] }), '2 个子任务');
+  eq(toolResourceOf('read_file', null), '');
+});
+await test('transcript: fmtCost 小额六位常规四位', () => {
+  eq(fmtCost(0.001234), '0.001234');
+  eq(fmtCost(1.5), '1.5000');
+});
+await test('transcript: projectTurns 按模型轮分组并回填工具结果', () => {
+  const { turns } = projectTurns([
+    { t: 'user', text: '问题一' },
+    { t: 'thinking', text: '想想' },
+    { t: 'assistant', text: '好的' },
+    { t: 'tool_call', id: 'c1', name: 'read_file', args: { path: 'a' } },
+    { t: 'tool_result', id: 'c1', name: 'read_file', ok: true, output: '内容' },
+    { t: 'usage', inputTokens: 10, outputTokens: 5, cost: 0.001 },
+    { t: 'assistant', text: '第二轮答复' },
+    { t: 'user', text: '问题二' },
+    { t: 'summary', text: '压缩摘要' },
+  ]);
+  eq(turns.length, 5);
+  eq(turns[0].kind, 'user');
+  eq(turns[1].kind, 'round');
+  eq(turns[1].text, '好的');
+  eq(turns[1].thinking, '想想');
+  eq(turns[1].tools.length, 1);
+  eq(turns[1].tools[0].ok, true);
+  eq(turns[1].tools[0].output, '内容');
+  eq(turns[1].usage.cost, 0.001);
+  eq(turns[2].text, '第二轮答复');
+  eq(turns[2].tools.length, 0);
+  eq(turns[3].kind, 'user');
+  eq(turns[3].text, '问题二');
+  eq(turns[4].kind, 'system');
+});
+await test('transcript: projectTurns 工具后新文本开新轮（与 Web 契约一致）', () => {
+  const { turns } = projectTurns([
+    { t: 'assistant', text: '第一轮' },
+    { t: 'tool_call', id: 'c1', name: 'shell', args: { command: 'ls' } },
+    { t: 'tool_result', id: 'c1', name: 'shell', ok: false, output: '失败' },
+    { t: 'assistant', text: '工具之后' },
+  ]);
+  eq(turns.length, 2);
+  eq(turns[0].text, '第一轮');
+  eq(turns[0].tools[0].ok, false);
+  eq(turns[1].text, '工具之后');
+  eq(turns[1].tools.length, 0);
+});
+
 await test('Loop：无工具轮直接出终稿并记账', async () => {
   const { events, store, usage, result, requests } = await runLoopOnce({
     framesByCall: [textFrames('你好，世界')],
@@ -1207,6 +1272,18 @@ try {
     assert(app.includes('respondPlan') && app.includes('plan_proposed') && app.includes('plan_approved'), 'App 应接线计划决策回传与计划事件');
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'tokens.css'), 'utf8');
     assert(css.includes('--diff-add:') && css.includes('--diff-del:'), 'tokens.css 应有 diff 语义令牌');
+  });
+  await test('转录投影层源码契约：工具词表两端同源', () => {
+    const tr = readFileSync(join(__dirname, '..', 'util', 'agent', 'transcript.mjs'), 'utf8');
+    assert(tr.includes('export function toolLabel') && tr.includes('export function projectTurns'), 'transcript.mjs 应导出词表与投影');
+    assert(existsSync(join(__dirname, '..', 'util', 'agent', 'transcript.d.mts')), '应有配套类型声明供 Web 取类型');
+    const proj = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'projection.ts'), 'utf8');
+    assert(proj.includes("from '../../util/agent/transcript.mjs'") && proj.includes('projectTurns(records'), 'Web 投影应委托 transcript 的分组规则');
+    const card = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ToolCard.tsx'), 'utf8');
+    assert(card.includes("from '../../../util/agent/transcript.mjs'") && card.includes('toolLabel(tool.name)') && card.includes('toolIconKey(tool.name)'), '工具卡标签与图标应取自共享词表');
+    assert(!card.includes('TOOL_META'), '工具卡不应再私持标签表（曾漂移缺 task / MCP）');
+    const term = readFileSync(join(__dirname, '..', 'util', 'agent', 'terminal-format.mjs'), 'utf8');
+    assert(term.includes("export { toolLabel, fmtCost } from './transcript.mjs'"), '终端词表应转置到 transcript');
   });
   await test('MCP 管理面板源码契约：设置弹层可管理服务器与实验门控提示', () => {
     const panel = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'McpPanel.tsx'), 'utf8');
