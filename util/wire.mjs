@@ -5,6 +5,44 @@
 import { chatUrl, messagesUrl } from './providers.mjs';
 import { toolSchemas, anthropicToolSchemas } from './agent/tools.mjs';
 
+/** 上游错误里的额度类措辞（用于 402 之外的启发式判断） */
+export const QUOTA_WORDING = /\binsufficient[\s_-]+(?:quota|balance|credits?)\b|\b(?:quota|usage[\s_-]+limit)[\s_-]+(?:exceeded|exhausted|reached)\b|\b(?:balance|credits?)[\s_-]+(?:exhausted|depleted)\b|\bout[\s_-]+of[\s_-]+(?:credits?|budget)\b/i;
+
+/**
+ * 上游错误的中文提示：内置提供方保留美团专属指引，自定义提供方指向设置页。
+ * /api/chat 与 Agent Loop 共用，保证两条路径的错误话术一致。
+ */
+export function upstreamHint(provider, status, errText) {
+  const builtin = Boolean(provider.builtin);
+  const keyHint = builtin
+    ? '请检查 modeltester.config.json 里的 apiKey，或访问 https://longcat.chat/platform/api_keys 重新获取'
+    : `请到「设置 → 提供方」检查「${provider.name}」的 API 密钥，或到该厂商控制台重新获取`;
+  const quotaHint = builtin
+    ? '请到 https://longcat.chat/platform/ 充值，或抢购 Token 资源包（每日 10:00/16:00/21:00/23:00），或完成邀请任务领取奖励'
+    : `请到「${provider.name}」对应的厂商控制台充值后重试`;
+  if (status === 401) return `API Key 无效：${keyHint}`;
+  if (status === 402) return `账号额度已用尽：${quotaHint}`;
+  if (status === 429) return '请求过于频繁，请稍等几秒再发';
+  if (QUOTA_WORDING.test(errText)) return `账号额度可能已用尽：${quotaHint}`;
+  try { return JSON.parse(errText).error?.message || JSON.parse(errText).message || errText; } catch { return errText; }
+}
+
+/**
+ * 连接期退避重试：仅网络层失败（fetch 抛 TypeError）且信号未中止时重试。
+ * 与 /api/chat 历史语义一致：最多 attempts 次，间隔 500ms 递增。
+ */
+export async function fetchUpstream(wire, { signal, attempts = 3, onRetry } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetch(wire.url, { method: 'POST', headers: wire.headers, body: JSON.stringify(wire.body), signal });
+    } catch (e) {
+      if (attempt >= attempts - 1 || signal?.aborted || e.name !== 'TypeError') throw e;
+      onRetry?.(attempt + 1, e);
+      await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+    }
+  }
+}
+
 /** OpenAI 的 content 既可能是字符串，也可能是多模态片段数组 */
 function textOf(content) {
   if (typeof content === 'string') return content;

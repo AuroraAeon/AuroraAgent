@@ -15,7 +15,7 @@ import { UsageLedger } from './util/usage.mjs';
 import { SERVICE_LOG, servicePid, isManaged, autostartInstalled } from './util/service.mjs';
 import { ProviderStore, ProviderError, handleProviderApi } from './util/providers.mjs';
 import { pumpSse, pumpTranslated } from './util/stream.mjs';
-import { buildChatRequest, anthropicFrame } from './util/wire.mjs';
+import { buildChatRequest, anthropicFrame, upstreamHint, fetchUpstream } from './util/wire.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // 数据目录三级回退：MODELTESTER_DATA_DIR（启动器 / LaunchAgent 显式指定）→
@@ -56,22 +56,6 @@ function resolveChatProvider(wantId, model) {
     if (found) return found;
   }
   return providers.providerForModel(model);
-}
-
-/** 上游错误的中文提示：内置提供方保留美团专属指引，自定义提供方指向设置页 */
-function upstreamHint(provider, status, errText) {
-  const builtin = Boolean(provider.builtin);
-  const keyHint = builtin
-    ? '请检查 modeltester.config.json 里的 apiKey，或访问 https://longcat.chat/platform/api_keys 重新获取'
-    : `请到「设置 → 提供方」检查「${provider.name}」的 API 密钥，或到该厂商控制台重新获取`;
-  const quotaHint = builtin
-    ? '请到 https://longcat.chat/platform/ 充值，或抢购 Token 资源包（每日 10:00/16:00/21:00/23:00），或完成邀请任务领取奖励'
-    : `请到「${provider.name}」对应的厂商控制台充值后重试`;
-  if (status === 401) return `API Key 无效：${keyHint}`;
-  if (status === 402) return `账号额度已用尽：${quotaHint}`;
-  if (status === 429) return '请求过于频繁，请稍等几秒再发';
-  if (QUOTA_WORDING.test(errText)) return `账号额度可能已用尽：${quotaHint}`;
-  try { return JSON.parse(errText).error?.message || JSON.parse(errText).message || errText; } catch { return errText; }
 }
 
 // ---------- 日志（LOG_LEVEL 模式） ----------
@@ -392,22 +376,10 @@ const server = createServer(async (req, res) => {
           maxTokens: provider.builtin ? cfg.maxTokens : provider.maxTokens,
           temperature: provider.builtin ? cfg.temperature : provider.temperature,
         });
-        let upstream;
-        for (let attempt = 0; ; attempt++) {
-          try {
-            upstream = await fetch(wire.url, {
-              method: 'POST',
-              headers: wire.headers,
-              body: JSON.stringify(wire.body),
-              signal: entry.controller.signal,
-            });
-            break;
-          } catch (e) {
-            if (attempt >= 2 || entry.controller.signal.aborted || res.destroyed || e.name !== 'TypeError') throw e;
-            log('warn', '上游连接失败，准备重试', { attempt: attempt + 1, error: String(e) });
-            await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
-          }
-        }
+        const upstream = await fetchUpstream(wire, {
+          signal: entry.controller.signal,
+          onRetry: (n, e) => log('warn', '上游连接失败，准备重试', { attempt: n, error: String(e) }),
+        });
 
         if (!upstream.ok) {
           const errText = await upstream.text();

@@ -33,6 +33,7 @@ export class SessionStore {
       createdAt: now,
       updatedAt: now,
       turns: 0,
+      rules: [],
       inputTokens: 0,
       outputTokens: 0,
       cost: 0,
@@ -74,7 +75,19 @@ export class SessionStore {
     } catch (e) { this.warn('会话转录写入失败', { id, error: String(e) }); }
   }
 
-  /** 合并更新元信息（用量累计 / 改名 / 切模型），原子落盘 */
+  /** 整体重写转录（上下文压缩后：早期记录折叠为一条 summary），临时文件 + rename 原子落盘 */
+  replaceRecords(id, records) {
+    const sid = String(id || '');
+    try {
+      const p = join(this.dir, `${sid}.jsonl`);
+      const tmp = `${p}.tmp`;
+      writeFileSync(tmp, records.map((r) => JSON.stringify(r)).join('\n') + (records.length ? '\n' : ''));
+      renameSync(tmp, p);
+      return true;
+    } catch (e) { this.warn('会话转录重写失败', { id: sid, error: String(e) }); return false; }
+  }
+
+  /** 合并更新元信息（用量累计 / 改名 / 切模型 / 权限规则），原子落盘 */
   patch(id, changes) {
     const meta = this.#readMeta(String(id || ''));
     if (!meta) return null;
