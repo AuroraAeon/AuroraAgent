@@ -1,0 +1,157 @@
+/**
+ * 终端 turn 渲染器：把 loop.mjs 的 AgentEvent 流映射为终端输出——思考暗色流式、工具单行
+ * 状态（✓ ✗）、权限 readline 确认（y / n / a）、用量脚注、中断保留已生成内容。
+ * 与 coordinator（terminal.mjs）分担行数预算；颜色一律由调用方注入的 painter 提供
+ * （每帧从当前色板新建，主题切换当帧生效）。契约：docs/tui-design.md + util/agent/events.mjs。
+ */
+import { runAgentTurn } from './loop.mjs';
+import { PRICE } from '../config.mjs';
+import { toolLabel, fmtCost, indent, CLEAR } from './terminal-format.mjs';
+
+/**
+ * 跑一个 turn 并渲染。session 引用会被 loop 更新，故结束后经 onSession 回传最新 meta。
+ * footer 状态（tokens / cost）经 onUsage 回传，供 coordinator 的 footer 状态条展示。
+ * hooks 由 coordinator 持有：readline 终端模式下 Ctrl+C 不产生真 SIGINT（raw mode 吞掉），
+ * 改由 rl 的 'SIGINT' 事件经 hooks.abort 中转进来，保证「生成中 Ctrl+C 可中断」的承诺成立。
+ */
+export async function runTerminalTurn({ store, usage, session, input, provider, model, harness, cfg, painter, ask, onUsage, onSession, hooks }) {
+  const started = Date.now();
+  let phase = 'idle'; // idle -> think -> text
+  let atLineStart = true;
+  let toolLineOpen = false;
+  const rejectedTools = new Set(); // loop 对拒绝会补发 failed，这里去重并按拒绝呈现
+  let controller = null;
+  let aborted = false;
+  let pendingPerm = null;
+
+  const write = (s) => { process.stdout.write(s); atLineStart = s.endsWith('\n'); };
+  const breakLine = () => { if (!atLineStart) write('\n'); };
+  const endToolLine = () => { if (toolLineOpen) { write(CLEAR); toolLineOpen = false; } };
+
+  const onSigint = () => {
+    aborted = true;
+    controller?.abort();
+    // 权限询问期间中断：按拒绝放行，让循环收尾成 turn_cancelled
+    if (pendingPerm) pendingPerm('n');
+  };
+  process.on('SIGINT', onSigint);
+  if (hooks) hooks.abort = onSigint;
+
+  const emit = (type, p) => {
+    switch (type) {
+      case 'model_round_started':
+        endToolLine();
+        breakLine();
+        phase = 'idle'; // 新一轮：思考与正文各自带标题，不与上一轮连篇
+        break;
+      case 'thinking_chunk':
+        endToolLine();
+        if (phase !== 'think') { breakLine(); write(`\n${painter.dim('思考 ')}`); phase = 'think'; }
+        write(painter.think(p.text));
+        break;
+      case 'text_chunk':
+        endToolLine();
+        if (phase !== 'text') {
+          breakLine();
+          if (phase === 'think') write(`\n${painter.dim('─'.repeat(46))}\n`);
+          phase = 'text';
+        }
+        write(p.text);
+        break;
+      case 'tool_event': {
+        endToolLine();
+        const label = toolLabel(p.toolName);
+        const res = p.resource || (p.params && (p.params.path || p.params.url || p.params.command || p.params.dir)) || '';
+        if (p.phase === 'started') {
+          breakLine();
+          write(`  ${painter.dim('…')} ${label}${res ? ` ${painter.dim(String(res))}` : ''}`);
+          toolLineOpen = true;
+        } else if (p.phase === 'confirmation_needed') {
+          toolLineOpen = false; // 行已由 endToolLine 清掉，转为权限询问
+        } else if (p.phase === 'confirmed') {
+          write(`  ${painter.dim('…')} ${label}${res ? ` ${painter.dim(String(res))}` : ''}`);
+          toolLineOpen = true;
+        } else if (p.phase === 'completed') {
+          write(`  ${painter.success('✓')} ${label}${res ? ` ${res}` : ''}${p.durationMs != null ? painter.dim(` ${p.durationMs}ms`) : ''}\n`);
+          if (p.output) { breakLine(); write(painter.dim(indent(p.output, 220)) + '\n'); }
+        } else if (p.phase === 'failed') {
+          const denied = rejectedTools.has(p.toolId);
+          write(`  ${painter.error('✗')} ${label}${res ? ` ${res}` : ''}${denied ? painter.dim(' 已拒绝') : ''}\n`);
+          if (p.output && !denied) { breakLine(); write(painter.dim(indent(p.output, 220)) + '\n'); }
+        } else if (p.phase === 'rejected') {
+          rejectedTools.add(p.toolId); // 行不在此处打印：随后到的 failed 负责收尾
+        }
+        break;
+      }
+      case 'token_usage_updated':
+        endToolLine();
+        breakLine();
+        write(painter.dim(`  ↳ tokens 输入 ${p.inputTokens} · 输出 ${p.outputTokens} · 约 ¥${fmtCost(p.cost)}\n`));
+        onUsage?.({ inputTokens: p.inputTokens, outputTokens: p.outputTokens, cost: p.cost });
+        break;
+      case 'context_compression_started':
+        endToolLine();
+        breakLine();
+        write(painter.dim('  ↳ 上下文超限，正在折叠早期对话…\n'));
+        break;
+      case 'context_compression_completed':
+        endToolLine();
+        breakLine();
+        write(painter.dim(`  ↳ 已折叠，保留近期 ${p.keptRecords} 条记录\n`));
+        break;
+      case 'context_compression_failed':
+        endToolLine();
+        breakLine();
+        write(painter.dim(`  ↳ 折叠失败，沿用原上下文：${p.error}\n`));
+        break;
+      case 'turn_cancelled':
+        endToolLine();
+        breakLine();
+        write(painter.dim('  (已中断，以上为部分输出，仍保留在会话中)\n'));
+        break;
+      case 'turn_failed':
+        endToolLine();
+        breakLine();
+        write(`${painter.error('✗')} ${p.error}\n`);
+        break;
+      case 'turn_completed':
+        endToolLine();
+        breakLine();
+        write(painter.dim(`  ↳ ${p.totalRounds} 轮 · ${p.totalTools} 个工具 · ${((Date.now() - started) / 1000).toFixed(1)}s\n`));
+        break;
+    }
+  };
+
+  const turnController = new AbortController();
+  controller = turnController;
+  write(`\n${painter.success('AuroraAgent')} ${painter.dim('›')} `);
+  phase = 'idle';
+  try {
+    await runAgentTurn({
+      store, usage, session, input, provider, model, harness, builtinPrice: PRICE,
+      gen: { maxTokens: cfg.maxTokens, temperature: cfg.temperature, thinkingOn: cfg.thinking },
+      emit, controller: turnController,
+      // 权限询问与主输入共用同一条 line 通道（ask()），避免 readline 双消费；
+      // 中断（Ctrl+C）时按拒绝放行，让循环收尾成 turn_cancelled
+      requestPermission: ({ toolName, params, resource }) => new Promise((resolve) => {
+        const res = resource || (params && (params.path || params.url || params.command || params.dir)) || '';
+        write(`${painter.warning('  需要授权')} ${toolLabel(toolName)}${res ? ` ${res}` : ''}\n  [y]允许 [a]总是允许 [n]拒绝 › `);
+        pendingPerm = (line) => {
+          pendingPerm = null;
+          atLineStart = true; // readline 已回显换行
+          const a = String(line).trim().toLowerCase();
+          resolve(a === 'a' || a === 'always' ? 'always' : a === 'n' || a === 'no' || a === '' ? 'deny' : 'allow');
+        };
+        ask().then((line) => { if (pendingPerm) pendingPerm(line); });
+      }),
+      log: () => {},
+    });
+  } finally {
+    process.removeListener('SIGINT', onSigint);
+    if (hooks) hooks.abort = null;
+    endToolLine();
+    breakLine();
+    onSession?.(store.get(session.id)?.meta || session);
+  }
+  return aborted;
+}

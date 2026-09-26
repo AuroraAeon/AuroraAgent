@@ -78,14 +78,15 @@ npm run web       # 网页工作台 http://localhost:8787
 
 ## 终端客户端
 
-`npm run chat` 或 `node chat.mjs`，与网页共用同一套 Loop、会话、账本（数据同目录，两端可交替使用）：思考过程暗色流式渲染、工具调用单行状态、权限 `y/n/a` 确认、恢复会话时打印最近几行 recap。
+`npm run chat` 或 `node chat.mjs`，与网页共用同一套 Loop、会话、账本（数据同目录，两端可交替使用）：思考过程暗色流式渲染、工具调用单行状态、权限 `y/n/a` 确认、恢复会话时打印最近几行 recap。提示符上方有状态栏（模型 · 模式 · 思考 · 权限 · tokens/费用）；`/sessions` `/harness` `/theme` 无参数时弹出可搜索选择器（`↑↓` 移动、`←→` 翻页、输入即过滤、`Enter` 选中、`Esc` 取消），终端太窄或非 TTY 时自动退化为编号列表。配色走语义主题（`AURORAAGENT_THEME=dark|light|auto` 或 `/theme` 切换），规范见 `docs/tui-design.md`。
 
 | 命令 | 作用 |
 | --- | --- |
 | `/new` | 新建会话（沿用当前模型 / 提供方 / 模式） |
 | `/sessions` `/sessions <n>` | 列出 / 切换会话 |
 | `/model <名称>` | 切换模型（按 ID 反查提供方） |
-| `/harness <minimal\|standard\|ultimate>` | 切换模式 |
+| `/harness <minimal\|standard\|ultimate>` | 切换模式（无参数弹出选择器） |
+| `/theme <dark\|light\|auto>` | 切换终端主题（无参数弹出选择器） |
 | `/think on\|off` | 思考过程开关（默认开） |
 | `/temp 0~1` `/max <n>` | 温度 / 单次最大输出 tokens |
 | `/key <Key>` | 换 Key 并保存 |
@@ -150,7 +151,9 @@ Bundle 结构：
 │   ├── chat.mjs             # 终端客户端入口（可 import：loadConfig / streamChat）
 │   ├── check.mjs            # 连通性自检
 │   ├── util/
-│   │   ├── agent/           # Agent 运行时：loop / session / tools / policy / context / harness / events / http / terminal
+│   │   ├── agent/           # Agent 运行时：loop / session / tools / policy / context / harness / events / http / terminal(+turn/format)
+│   │   ├── tui/             # 终端 TUI 工具包：theme / render / printable-key / searchable-list / select / pick / footer / commands
+│   │   └── llm/             # LLM 抽象：tool 归一化 + 错误分类
 │   │   ├── providers.mjs    # 自定义提供方存储/校验/发现
 │   │   ├── wire.mjs         # 协议适配（tools / tool_choice 拼装 + Anthropic 帧翻译）
 │   │   ├── stream.mjs       # SSE 透传 / 翻译泵 + Agent 增量读取
@@ -161,7 +164,7 @@ Bundle 结构：
 │   │   ├── app/             # React 工作台构建产物（/app/ 服务，哈希资产长缓存）
 │   │   ├── icon.svg         # AuroraAgent 品牌标识（App 图标同款）
 │   │   └── vendors/         # 各接入厂商的标识（meituan.svg …）
-│   ├── test/                # mock 上游 + 92 个测试
+│   ├── test/                # mock 上游 + 138 个测试
 │   └── tools/               # color-test / install-service / build-app
 ├── Resources/docs/          # figures/（学术图与原始数据）+ figure-work/（图表脚本）
 ├── AppIcon.icns

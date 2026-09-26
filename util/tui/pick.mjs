@@ -49,8 +49,8 @@ export function pickInteractive({ list, render, io = process }) {
       const key = String(data);
       if (matchesKey(key, KEY.up)) list.up();
       else if (matchesKey(key, KEY.down)) list.down();
-      else if (matchesKey(key, KEY.pageUp)) list.pageUp();
-      else if (matchesKey(key, KEY.pageDown)) list.pageDown();
+      else if (matchesKey(key, KEY.pageUp) || matchesKey(key, KEY.left)) list.pageUp();
+      else if (matchesKey(key, KEY.pageDown) || matchesKey(key, KEY.right)) list.pageDown();
       else if (matchesKey(key, KEY.enter)) { settle(list.selected); return; }
       else if (matchesKey(key, KEY.escape)) {
         if (list.query) list.clearQuery();
