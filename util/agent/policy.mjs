@@ -29,6 +29,7 @@ export function defaultRules() {
     { action: 'grep', resource: '*', effect: 'allow' },
     { action: 'glob', resource: '*', effect: 'allow' },
     { action: 'todo', resource: '*', effect: 'allow' },
+    { action: 'task', resource: '*', effect: 'allow' },
     { action: 'write_file', resource: '*', effect: 'ask' },
     { action: 'edit_file', resource: '*', effect: 'ask' },
     { action: 'shell', resource: '*', effect: 'ask' },

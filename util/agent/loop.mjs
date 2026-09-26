@@ -12,6 +12,7 @@ import { buildChatRequest, anthropicFrame, fetchUpstream, upstreamHint } from '.
 import { consumeAgentStream } from '../stream.mjs';
 import { getTool, toolResource } from './tools.mjs';
 import { PermissionPolicy, defaultRules } from './policy.mjs';
+import { createSpawner } from './swarm.mjs';
 import { PLAN_MAX_ROUNDS, PLAN_MODE_PROMPT, planExecutionNote, planToolNames } from './plan.mjs';
 import { assembleMessages, needsCompaction, planCompaction, compactionMessages, contextWindowOf } from './context.mjs';
 
@@ -42,7 +43,7 @@ export async function runAgentTurn(ctx) {
   const {
     store, usage, session, input, provider, model, harness, builtinPrice,
     gen = {}, skills = [], emit, controller, requestPermission, requestPlanDecision,
-    permissionMode = 'ask_when_needed', planMode = false, log = () => {},
+    permissionMode = 'ask_when_needed', planMode = false, depth = 0, log = () => {},
   } = ctx;
   const sessionId = session.id;
   const turnId = randomUUID();
@@ -63,6 +64,12 @@ export async function runAgentTurn(ctx) {
     set: (next) => { todos = next; store.patch(sessionId, { todos: next }); },
   };
   const policy = new PermissionPolicy([...defaultRules(), ...sessionRules], { permissionMode });
+  // 子代理派发器：task 工具经 ctx.spawn 派生子 turn；深度随嵌套递增（swarm.mjs 封顶）
+  const spawn = createSpawner({
+    runTurn: runAgentTurn, store, usage, provider, model, harness, skills, builtinPrice,
+    emit, controller, requestPermission, permissionMode, rules: sessionRules, gen,
+    workspace: session.workspace, depth, log,
+  });
 
   let totIn = 0, totOut = 0, totCost = 0;
   const recordRoundUsage = (u, stopped = false) => {
@@ -203,7 +210,7 @@ export async function runAgentTurn(ctx) {
         }
         if (ok) {
           try {
-            const res = await tool.run(safeArgs(call.arguments), { workspace: session.workspace, skills, todoStore });
+            const res = await tool.run(safeArgs(call.arguments), { workspace: session.workspace, skills, todoStore, spawn });
             // 工具可返回字符串或 { output, extra }：extra 是结构化负载（diff / todos），
             // 进转录与 tool_event 供两端渲染，但不进模型消息（模型只看 output 文本）
             if (res && typeof res === 'object') { output = String(res.output ?? ''); extra = res.extra; }

@@ -7,7 +7,7 @@
 export const TOOL_LABELS = {
   read_file: '读取文件', list_dir: '浏览目录', write_file: '写入文件',
   edit_file: '编辑文件', shell: '执行命令', web_fetch: '抓取网页',
-  grep: '搜索内容', glob: '查找文件', todo: '待办清单', skill: '加载技能',
+  grep: '搜索内容', glob: '查找文件', todo: '待办清单', skill: '加载技能', task: '派发子代理',
 };
 export const toolLabel = (name) => TOOL_LABELS[name] || name;
 

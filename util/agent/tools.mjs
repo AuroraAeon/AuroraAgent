@@ -425,6 +425,23 @@ export const TOOLS = [
       return `[技能：${skill.name}]\n${skill.body}\n[技能结束]\n请按照上述技能规范处理用户请求。`;
     },
   },
+  {
+    name: 'task',
+    description: '派发子代理并行执行独立子任务并汇总结果。每个子代理有完整工具集与独立上下文，但看不到父会话内容——子任务描述必须自含（目标、范围、产出要求）。适用于可并行拆解或需要独立上下文的子任务',
+    action: 'task',
+    parameters: {
+      type: 'object',
+      properties: {
+        task: { type: 'string', description: '单个子任务描述（自含：目标、范围、产出要求）' },
+        tasks: { type: 'array', items: { type: 'string' }, description: '多个子任务（并行派发，上限 4 个）' },
+      },
+    },
+    run(args, ctx) {
+      const spawn = ctx?.spawn;
+      if (typeof spawn !== 'function') throw new ToolError('task 工具需要会话运行时上下文', 'no_ctx');
+      return spawn(args.task, args.tasks);
+    },
+  },
 ];
 export function getTool(name) {
   return TOOLS.find((t) => t.name === String(name || '')) || null;
