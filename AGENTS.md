@@ -34,7 +34,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 
 - 单用户本地工具，**仅支持 macOS**（依赖 LaunchAgent 与 `~/Library` 目录约定）
 - **后端零依赖**：只用 Node 18+ 内置模块；ESM `.mjs`；无构建步骤
-- **前端依赖例外（唯二）**：`web-ui/` 用 React 19 + Vite 7 + TypeScript，依赖（react / react-dom / vite / typescript / @vitejs/plugin-react / @types/*、以及公式渲染用的 katex）经用户明确同意引入，**仅限 `web-ui/`**；构建产物随仓库提交在 `public/app/`，后端与 Bundle 运行时不接触 node_modules
+- **前端依赖例外**：`web-ui/` 用 React 19 + Vite 7 + TypeScript + KaTeX，依赖（react / react-dom / katex / vite / typescript / @vitejs/plugin-react / @types/*）**仅限 `web-ui/`**；构建产物随仓库提交在 `public/app/`，后端与 Bundle 运行时不接触 node_modules
 - 双客户端：终端（`chat.mjs` → `util/agent/terminal.mjs`）+ 网页（`web.mjs` 服务 `public/app/` React 产物），共享同一套配置、会话、账本数据目录
 - 可打包为独立 macOS Application（`~/Applications/AuroraAgent.app`，显示名 AuroraAgent），由 LaunchAgent `com.auroraagent.app` 常驻
 - 当前接入厂商：美团 LongCat-2.5-Preview。Base URL / 模型目录 / Key 全部是配置项——**代码不绑定厂商**，接入新厂商不改架构
@@ -63,7 +63,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 | `util/agent/loop.mjs` | turn 运行器：轮次循环至无 tool_calls 或触顶；权限经 pending map 挂起等前端决策；`AbortController` 中断保留已生成内容；SSE 断开即中止；每轮经 `usage.mjs` 记账 |
 | `util/agent/http.mjs` | `/api/agent/*` HTTP 面（web.mjs 前缀委派）：会话 CRUD + PATCH、turn SSE、abort、permission、harnesses；单活跃 turn（409） |
 | `util/agent/terminal.mjs` | 终端 REPL：同一 loop 驱动；思考暗色流式、工具单行状态、权限 readline（y/n/a）、`/new /sessions /model /harness /think /temp /max /key /help /quit`、`-p` 单次提问 |
-| `web-ui/` | React + Vite + TS 工作台（唯二前端依赖例外之一）：`src/App.tsx` + `components/{Sidebar,ChatView,Message,ToolCard,Composer,ProviderEditor,SettingsDialog}.tsx` + 手写 Markdown 子集渲染器 + 内联 SVG 图标 + `tokens.css` 设计令牌（`app.css` 引用） |
+| `web-ui/` | React + Vite + TS 工作台：`src/App.tsx` + `components/{Sidebar,ChatView,Message,ToolCard,Composer,ProviderEditor,SettingsDialog}.tsx` + 手写 Markdown 子集渲染器 + 内联 SVG 图标 + `tokens.css` 设计令牌（`app.css` 引用） |
 | `web-ui/src/latex.tsx` | LaTeX 渲染：KaTeX 自托管（`trust: false`，`\href` / `\includegraphics` / HTML 扩展一律拒绝），`htmlAndMathml` 输出；解析失败回退展示原始源码而非红色错误墙 |
 | `web-ui/src/math-split.mjs` | 公式分段纯函数（零依赖，Node 测试直接 import 同一份）：识别 `$...$` / `\(...\)` / `$$...$$` / `\[...\]` / 裸 `\begin{env}`，代码段与货币区间假阳性防护；`.d.mts` 供 TS 取类型 |
 | `public/app/` | web-ui 构建产物（随仓库提交）：`/` 与 `/app/` 同一份 index.html，哈希资产长缓存 |
@@ -109,11 +109,11 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 
 ## 5. 代码风格铁律
 
-- 后端只用 Node 内置模块；**新增任何 npm 依赖必须先获得用户同意**（唯一既有例外：`web-ui/` 前端依赖，见第 1 节）
+- 后端只用 Node 内置模块
 - 2 空格缩进、单引号、行尾分号，与现有文件保持一致
 - 注释与面向用户的文案一律中文；错误消息必须「说清原因 + 给出下一步动作」（参考 401 / 402 的友好映射）
 - **产品内零 emoji**：网页 UI、错误消息、终端 banner 都不允许 emoji；图标一律内联 SVG 或 `public/vendors/*.svg`。终端 CLI 的 `✓` / `✗` 属命令行惯例，允许保留
-- 前端不引 CDN、不引 Markdown / 状态管理等第三方库（React + Vite + TS 之外的依赖新增需再次征求同意；既有例外：公式渲染 katex）；动画用原生 CSS（`@starting-style`、top-layer 过渡）
+- 前端不引 CDN、不引 Markdown / 状态管理等第三方库；动画用原生 CSS（`@starting-style`、top-layer 过渡）
 - 服务路由集中在 `web.mjs` 单个 `createServer` 处理器内按「方法 + 路径」平铺，不引路由库；Agent HTTP 面已拆 `util/agent/http.mjs`
 - 单文件控制在约 500 行内；`web.mjs` 已接近上限，新功能优先拆到 `util/` 等模块
 
@@ -150,7 +150,6 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 
 - **NEVER** 攒一批改动才提交；**NEVER** 在测试红着时提交
 - **NEVER** 提交 `auroraagent.config.json` / `usage.jsonl` / `providers.json` / `sessions/` / 任何日志
-- **NEVER** 未经用户同意引入 npm 依赖或构建步骤（`web-ui/` 既有前端依赖是唯一获批例外）
 - **NEVER** 在产品 UI 里加 emoji
 - **NEVER** 在 Bundle 内执行 `npm run app:build`
 - **NEVER** 改动厂商事实层：模型 ID、显示名映射规则、价格常量 `PRICE`、纯色测试结论——除非上游本身变了

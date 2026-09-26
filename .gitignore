@@ -7,5 +7,5 @@ __pycache__/
 .DS_Store
 providers.json
 
-# 前端依赖（web-ui 构建用；经用户同意引入的前端依赖例外）
+# 前端依赖（web-ui 构建用）
 web-ui/node_modules/
