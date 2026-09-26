@@ -20,6 +20,7 @@ export function defaultRules() {
     { action: 'read_file', resource: '*', effect: 'allow' },
     { action: 'list_dir', resource: '*', effect: 'allow' },
     { action: 'web_fetch', resource: '*', effect: 'allow' },
+    { action: 'skill', resource: '*', effect: 'allow' },
     { action: 'write_file', resource: '*', effect: 'ask' },
     { action: 'edit_file', resource: '*', effect: 'ask' },
     { action: 'shell', resource: '*', effect: 'ask' },

@@ -5,6 +5,7 @@
  *   压缩本身需要一次模型调用，由 loop.mjs 执行；本模块只提供规划与提示词。
  */
 import { estimateTokens } from '../sse.mjs';
+import { skillCatalogBlock } from './skills.mjs';
 
 const DEFAULT_WINDOW = 128000;
 
@@ -33,14 +34,15 @@ export function needsCompaction(messages, { windowTokens = DEFAULT_WINDOW, ratio
  * tool_call / tool_result 成对投影为 assistant.tool_calls + role:tool；
  * summary 记录投影为系统消息（早期摘要）；thinking / usage 不回填（省 token 且不污染上下文）。
  */
-export function assembleMessages({ harness, workspace, records = [] }) {
+export function assembleMessages({ harness, workspace, records = [], skills = [] }) {
+  const catalog = skillCatalogBlock(skills);
   const system = [
     harness.systemPrompt,
     '',
     `工作目录：${workspace}`,
     `当前时间：${new Date().toISOString()}`,
     '文件工具只能访问工作目录内的路径；修改用户文件前先说清将要改什么。',
-  ].join('\n');
+  ].join('\n') + (catalog ? `\n\n${catalog}` : '');
   const messages = [{ role: 'system', content: system }];
   const pending = [];
   const flushPending = () => {

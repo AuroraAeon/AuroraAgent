@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'n
 import { spawn } from 'node:child_process';
 import { resolve, sep, dirname } from 'node:path';
 import { toOpenAIFunction, toAnthropicTool } from '../llm/tool.mjs';
+import { findSkill } from './skills.mjs';
 
 const MAX_OUTPUT = 32 * 1024;   // 单次工具回给模型的文本上限
 const MAX_FETCH = 64 * 1024;    // web_fetch 正文上限
@@ -200,8 +201,27 @@ export const TOOLS = [
       return truncate(`HTTP ${resp.status} ${url}\n${text}`, MAX_FETCH);
     },
   },
-];
 
+  {
+    name: 'skill',
+    description: '加载一个技能的完整指令。当用户请求与系统提示技能目录里某个技能的描述匹配时调用；返回的文本是本次任务必须遵循的规范',
+    action: 'skill',
+    parameters: {
+      type: 'object',
+      properties: { name: { type: 'string', description: '技能名称（取自系统提示里的技能目录）' } },
+      required: ['name'],
+    },
+    run(args, ctx) {
+      const skills = Array.isArray(ctx?.skills) ? ctx.skills : [];
+      const skill = findSkill(skills, args.name);
+      if (!skill) {
+        const names = skills.map((s) => s.name).join('、') || '（无）';
+        throw new ToolError(`技能不存在：${args.name}。可用技能：${names}`, 'not_found');
+      }
+      return `[技能：${skill.name}]\n${skill.body}\n[技能结束]\n请按照上述技能规范处理用户请求。`;
+    },
+  },
+];
 export function getTool(name) {
   return TOOLS.find((t) => t.name === String(name || '')) || null;
 }

@@ -16,6 +16,8 @@ import { paletteFor, createPainter } from '../tui/theme.mjs';
 import { SearchableList } from '../tui/searchable-list.mjs';
 import { pick } from '../tui/pick.mjs';
 import { runTerminalTurn } from './terminal-turn.mjs';
+import { loadSkills, skillInvocationText } from './skills.mjs';
+import { join } from 'node:path';
 import { truncate, toolLabel } from './terminal-format.mjs';
 
 const BASE = process.env.AURORAAGENT_BASE_URL || 'https://api.longcat.chat';
@@ -50,6 +52,8 @@ export async function runTerminal({ argv = [] } = {}) {
   }
 
   const dataDir = resolveDataDir();
+  // 技能目录：内置 skills/ + 用户 <数据目录>/skills/（进程启动时加载一次，新增技能重启后生效）
+  const skills = loadSkills({ userDir: join(dataDir, 'skills') });
   const store = new SessionStore(dataDir);
   const usage = new UsageLedger(dataDir);
   const providers = new ProviderStore(dataDir, {
@@ -186,8 +190,8 @@ export async function runTerminal({ argv = [] } = {}) {
     console.log(painter().dim(`✓ 主题 = ${chosen.label}`));
   };
 
-  /** 声明式斜杠命令表：/help 与分发同源；技能派生命令（P2）追加进同一张表 */
-  const commands = defineCommands([
+  /** 声明式斜杠命令表：/help 与分发同源；技能派生命令追加进同一张表（/<技能名> 直接调用） */
+  const baseCommands = [
     { name: 'help', summary: '显示全部命令', run: printHelp },
     { name: 'new', summary: '新建会话（携带当前模型与模式）', run: () => {
       const created = store.create({ model: meta.model, provider: meta.provider, harness: meta.harness });
@@ -227,7 +231,13 @@ export async function runTerminal({ argv = [] } = {}) {
       console.log(painter().dim('✓ Key 已更新并保存'));
     } },
     { name: 'quit', aliases: ['exit'], summary: '退出', run: () => { quitting = true; rl.close(); } },
-  ]);
+  ];
+  const skillCommands = skills.map((s) => ({
+    name: s.name,
+    summary: `[技能] ${s.description}`,
+    run: async (arg) => { await runTurn(skillInvocationText(s, arg)); },
+  }));
+  const commands = defineCommands([...baseCommands, ...skillCommands]);
 
   const footerState = () => ({
     model: meta.model || cfg.model,
@@ -239,7 +249,7 @@ export async function runTerminal({ argv = [] } = {}) {
   });
 
   const runTurn = (input) => runTerminalTurn({
-    store, usage, session: meta, input,
+    store, usage, session: meta, input, skills,
     provider: providers.get(meta.provider) || providers.providerForModel(meta.model || cfg.model),
     model: meta.model || cfg.model,
     harness: getHarness(meta.harness),

@@ -25,7 +25,7 @@ function settlePrice(provider, builtinPrice) {
  * 跑一个 turn。
  * @param ctx {
  *   store, usage, session, input, provider, model, harness, builtinPrice,
- *   gen: { maxTokens, temperature, thinkingOn },
+ *   gen: { maxTokens, temperature, thinkingOn }, skills = [],
  *   emit(type, payload), controller: AbortController,
  *   requestPermission({ toolId, toolName, params, resource }) => 'allow'|'deny'|'always',
  *   log(level, msg, extra)
@@ -35,7 +35,7 @@ function settlePrice(provider, builtinPrice) {
 export async function runAgentTurn(ctx) {
   const {
     store, usage, session, input, provider, model, harness, builtinPrice,
-    gen = {}, emit, controller, requestPermission, log = () => {},
+    gen = {}, skills = [], emit, controller, requestPermission, log = () => {},
   } = ctx;
   const sessionId = session.id;
   const turnId = randomUUID();
@@ -65,7 +65,7 @@ export async function runAgentTurn(ctx) {
 
   /** 超长时把早期记录折叠成一条 summary（压缩本身花一轮模型调用，失败不阻塞主流程） */
   const maybeCompact = async () => {
-    const messages = assembleMessages({ harness, workspace: session.workspace, records });
+    const messages = assembleMessages({ harness, workspace: session.workspace, records, skills });
     if (!needsCompaction(messages, { windowTokens: contextWindowOf(provider), ratio: harness.compactRatio })) return;
     const plan = planCompaction(records);
     if (!plan) return;
@@ -96,7 +96,7 @@ export async function runAgentTurn(ctx) {
       .catch(() => { controller.signal.removeEventListener('abort', onAbort); resolve('deny'); });
   });
 
-  let messages = assembleMessages({ harness, workspace: session.workspace, records });
+  let messages = assembleMessages({ harness, workspace: session.workspace, records, skills });
   let round = 0;
   let finalText = '';
   let totalTools = 0;
@@ -105,10 +105,11 @@ export async function runAgentTurn(ctx) {
   try {
     for (round = 1; round <= harness.maxRounds; round++) {
       await maybeCompact();
-      messages = assembleMessages({ harness, workspace: session.workspace, records });
+      messages = assembleMessages({ harness, workspace: session.workspace, records, skills });
       emit('model_round_started', { sessionId, turnId, round });
+      const toolNames = skills.length ? [...new Set([...harness.tools, 'skill'])] : harness.tools;
       const wire = buildChatRequest(provider, {
-        model, messages, toolNames: harness.tools,
+        model, messages, toolNames,
         sendThinking: provider.builtin || Boolean(provider.thinking),
         thinkingOn: gen.thinkingOn !== false,
         maxTokens: provider.builtin ? gen.maxTokens : provider.maxTokens,
@@ -179,7 +180,7 @@ export async function runAgentTurn(ctx) {
             }
           }
           if (ok) {
-            try { output = await tool.run(safeArgs(call.arguments), { workspace: session.workspace }); }
+            try { output = await tool.run(safeArgs(call.arguments), { workspace: session.workspace, skills }); }
             catch (e) { ok = false; output = `工具执行失败：${e.message}`; }
           }
         }

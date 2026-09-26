@@ -509,6 +509,24 @@ await test('工具 schema：OpenAI 与 Anthropic 两种形状', () => {
   eq(toolResource('read_file', { path: 'a.txt' }), 'a.txt', '文件类资源取路径');
 });
 
+await test('skill 工具：schema 形状与默认免确认', () => {
+  const oa = toolSchemas(['skill']);
+  eq(oa.length, 1);
+  eq(oa[0].function.name, 'skill');
+  eq(oa[0].function.parameters.required[0], 'name');
+  const an = anthropicToolSchemas(['skill']);
+  eq(an[0].name, 'skill');
+  assert(an[0].input_schema, 'Anthropic 形状用 input_schema');
+  const p = new PermissionPolicy();
+  eq(p.evaluate('skill', 'code-review'), 'allow', 'skill 只读默认放行');
+  const tool = getTool('skill');
+  const out = tool.run({ name: 'demo' }, { skills: [{ name: 'demo', body: 'B' }] });
+  assert(out.includes('[技能：demo]') && out.includes('B'), 'run 返回技能正文');
+  let threw = false;
+  try { tool.run({ name: 'x' }, { skills: [] }); } catch { threw = true; }
+  assert(threw, '未知技能应抛 ToolError');
+});
+
 await test('权限策略：默认姿态、后匹配赢与总是允许', () => {
   const p = new PermissionPolicy();
   eq(p.evaluate('read_file', 'a.txt'), 'allow', '只读默认放行');
@@ -603,6 +621,15 @@ await test('上下文组装：记录投影为上游消息', () => {
   eq(msgs.length, 6, 'thinking 与 usage 不应进上下文');
   const withSummary = assembleMessages({ harness: getHarness('minimal'), workspace: '/tmp/ws', records: [{ t: 'summary', text: '摘要内容' }, { t: 'user', text: '继续' }] });
   assert(withSummary[1].content.includes('摘要内容'), 'summary 应投影为系统消息');
+});
+
+await test('上下文组装：技能清单进系统提示、正文不进', () => {
+  const skills = [{ name: 'demo', description: '演示技能', body: 'SECRET-BODY-不应出现' }];
+  const msgs = assembleMessages({ harness: getHarness('standard'), workspace: '/tmp/ws', records: [], skills });
+  assert(msgs[0].content.includes('- demo: 演示技能'), '系统提示应带技能清单');
+  assert(!msgs[0].content.includes('SECRET-BODY'), '技能正文不进系统提示');
+  const none = assembleMessages({ harness: getHarness('standard'), workspace: '/tmp/ws', records: [] });
+  assert(!none[0].content.includes('可用技能'), '无技能时不出现清单块');
 });
 
 await test('上下文压缩：阈值判定与头尾切分', () => {
@@ -1426,6 +1453,32 @@ await test('Agent turn：权限拒绝后循环继续且不落盘', async () => {
   assert(!phases.includes('completed'), '拒绝后不应执行');
   assert(!existsSync(join(tmpDataDir, 'workspace', 'written_by_agent.txt')), '拒绝后不应落盘');
   assert(tail.some((e) => e.type === 'turn_completed'), '拒绝后仍应正常收尾');
+});
+
+await test('技能目录：GET /api/agent/skills 返回内置技能', async () => {
+  const r = await (await fetch(`${AGENT}/skills`)).json();
+  assert(Array.isArray(r.skills) && r.skills.length >= 3, '至少 3 个内置技能');
+  const codeReview = r.skills.find((s) => s.name === 'code-review');
+  assert(codeReview && codeReview.description && codeReview.source === 'builtin', '内置技能字段完整');
+  assert(!('body' in codeReview), '目录不泄底技能正文');
+});
+
+await test('Agent turn：模型调用 skill 工具加载技能指令并回填', async () => {
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_SKILL 按技能规范审查' }),
+  });
+  const stream = openAgentStream(resp);
+  const all = await drainAgentStream(stream);
+  const toolEvents = all.filter((e) => e.type === 'tool_event');
+  assert(toolEvents.some((e) => e.phase === 'completed' && e.toolName === 'skill'), 'skill 工具应执行完成');
+  assert(!toolEvents.some((e) => e.phase === 'confirmation_needed'), 'skill 只读默认免确认');
+  assert(all.at(-1).type === 'turn_completed', '应以 turn_completed 收尾');
+  const detail = await (await fetch(`${AGENT}/sessions/${s.id}`)).json();
+  const result = detail.records.find((x) => x.t === 'tool_result' && x.name === 'skill');
+  assert(result && result.ok, '工具结果应落转录');
+  assert(result.output.includes('[技能：code-review]') && result.output.includes('代码审查技能') && result.output.includes('按严重级分级'), '结果应含技能正文');
 });
 
 await test('Agent turn：空输入 400、未知会话 404', async () => {

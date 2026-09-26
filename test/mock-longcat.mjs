@@ -49,9 +49,10 @@ export function startMock(port = 18901) {
         // Agent 工具轮：USE_TOOL 且尚无工具结果时先要一次 read_file；带回结果后原文复述（供测试断言回填）
         const hasToolResult = Array.isArray(j.messages) && j.messages.some((m) => m.role === 'tool');
         const toolEcho = hasToolResult ? j.messages.filter((m) => m.role === 'tool').map((m) => (typeof m.content === 'string' ? m.content : '')).join(' | ') : '';
-        const isToolRound = lastText.includes('USE_TOOL') && !hasToolResult;
-        const toolName = lastText.includes('USE_TOOL_WRITE') ? 'write_file' : 'read_file';
-        const toolArgs = toolName === 'write_file' ? { path: 'written_by_agent.txt', content: 'AGENT_WROTE' } : { path: 'mock.txt' };
+        const isSkillRound = lastText.includes('USE_SKILL') && !hasToolResult;
+        const isToolRound = (lastText.includes('USE_TOOL') || isSkillRound) && !hasToolResult;
+        const toolName = isSkillRound ? 'skill' : lastText.includes('USE_TOOL_WRITE') ? 'write_file' : 'read_file';
+        const toolArgs = isSkillRound ? { name: 'code-review' } : toolName === 'write_file' ? { path: 'written_by_agent.txt', content: 'AGENT_WROTE' } : { path: 'mock.txt' };
         const answer = isToolRound ? '' : hasToolResult ? `工具结果已收到：${toolEcho}` : isImg ? '图中有一个蓝色的圆形。' : `你好！我是 ${j.model}。`;
         // FLAKY：首次请求直接掐断 socket，模拟网络层失败（用于测试连接期重试）
         if (lastText.includes('FLAKY') && !state.flakyDone) {
