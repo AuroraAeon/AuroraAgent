@@ -21,6 +21,8 @@ import { PermissionPolicy, defaultRules, mostRestrictive } from '../util/agent/p
 import { assembleMessages, needsCompaction, planCompaction, compactionMessages, contextWindowOf, estimateMessagesTokens } from '../util/agent/context.mjs';
 import { runAgentTurn } from '../util/agent/loop.mjs';
 import { UsageLedger } from '../util/usage.mjs';
+import { runTuiToolkitTests } from './tui-toolkit.mjs';
+import { runGuardTests } from './guards.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MOCK_PORT = 18901;
@@ -65,6 +67,9 @@ async function readStream(resp) {
   }
   return { raw: text, think, usage };
 }
+
+await runTuiToolkitTests(test, assert, eq);
+await runGuardTests(test, assert);
 
 // ---------- 单元测试: SseParser ----------
 console.log('\nSseParser 单元测试');
