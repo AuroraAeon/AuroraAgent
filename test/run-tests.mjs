@@ -3,12 +3,13 @@
  * 运行: npm test
  */
 import { spawn } from 'node:child_process';
-import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { writeFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SseParser, estimateTokens } from '../util/sse.mjs';
 import { startMock } from './mock-longcat.mjs';
+import { ProviderStore, ProviderError, parseCapacity, formatCapacity, normalizeEndpoint, validateProviderDraft } from '../util/providers.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MOCK_PORT = 18901;
@@ -92,6 +93,104 @@ await test('流尾无空行时 end() 能拿到最后事件', () => {
 await test('estimateTokens 基本行为', () => {
   eq(estimateTokens(''), 0);
   assert(estimateTokens('12345678') >= 1 && estimateTokens('12345678') <= 3);
+});
+
+// ---------- 单元测试: 自定义 Provider ----------
+console.log('\n自定义 Provider 单元测试');
+await test('parseCapacity 支持 K/M 后缀并拒绝非法值', () => {
+  eq(parseCapacity(''), undefined);
+  eq(parseCapacity('  131072 '), 131072);
+  eq(parseCapacity('256K'), 256000);
+  eq(parseCapacity('1M'), 1000000);
+  assert(Number.isNaN(parseCapacity('12x')), '非法后缀应返回 NaN');
+  assert(Number.isNaN(parseCapacity('abc')), '非数字应返回 NaN');
+});
+await test('formatCapacity 写回最短形态', () => {
+  eq(formatCapacity(256000), '256K');
+  eq(formatCapacity(1000000), '1M');
+  eq(formatCapacity(131072), '131072');
+});
+await test('normalizeEndpoint 只放行 HTTP/HTTPS 并去掉末尾斜杠', () => {
+  eq(normalizeEndpoint(' https://api.example.com/v1/ ').url, 'https://api.example.com/v1');
+  assert(!normalizeEndpoint('api.example.com/v1').ok, '缺少协议头应被拒绝');
+  assert(!normalizeEndpoint('ftp://api.example.com').ok, '非 HTTP 协议应被拒绝');
+  assert(!normalizeEndpoint('').ok, '空地址应被拒绝');
+  assert(normalizeEndpoint('http://localhost:11434/v1').ok, 'localhost 应合法');
+});
+await test('validateProviderDraft 拒绝重名 ID、坏端点与空模型目录', () => {
+  const r = validateProviderDraft({ id: 'longcat', name: 'x', protocol: 'openai', baseUrl: 'https://a.com', models: [{ id: 'm' }] }, ['longcat']);
+  assert(!r.ok && r.errors.id, '内置 ID 应被拒绝');
+  const dup = validateProviderDraft({ id: 'mine', name: 'x', protocol: 'openai', baseUrl: 'https://a.com', models: [{ id: 'm' }] }, ['mine']);
+  assert(!dup.ok && dup.errors.id.includes('已有提供方'), '重名应被拒绝');
+  const noModel = validateProviderDraft({ id: 'mine', name: 'x', protocol: 'openai', baseUrl: 'https://a.com', models: [] });
+  assert(!noModel.ok && noModel.errors.models.includes('至少需要一个模型'), '空目录应被拒绝');
+  const dupModel = validateProviderDraft({ id: 'mine', name: 'x', protocol: 'openai', baseUrl: 'https://a.com', models: [{ id: 'm' }, { id: 'm' }] });
+  assert(!dupModel.ok && dupModel.errors.models.includes('重复'), '重复模型 ID 应被拒绝');
+  const badCap = validateProviderDraft({ id: 'mine', name: 'x', protocol: 'openai', baseUrl: 'https://a.com', models: [{ id: 'm', contextWindow: 'abc' }] });
+  assert(!badCap.ok && badCap.errors.models.includes('上下文窗口'), '非法容量应被拒绝');
+  const badProto = validateProviderDraft({ id: 'mine', name: 'x', protocol: 'grpc', baseUrl: 'https://a.com', models: [{ id: 'm' }] });
+  assert(!badProto.ok && badProto.errors.protocol, '未知协议应被拒绝');
+});
+await test('validateProviderDraft 接受合法草稿并剥离空行', () => {
+  const r = validateProviderDraft({
+    id: 'my-gw', name: '我的网关', protocol: 'anthropic', baseUrl: 'https://gw.example.com/v1/',
+    models: [{ id: 'm-1', name: '模型一', contextWindow: '128K', maxTokens: '8K' }, { id: '' }, { id: 'm-2' }],
+  });
+  assert(r.ok, '合法草稿应通过: ' + JSON.stringify(r.errors));
+  eq(r.value.models.length, 2, '空行应被剥离');
+  eq(r.value.models[0].contextWindow, 128000);
+  eq(r.value.models[0].maxTokens, 8000);
+  eq(r.value.baseUrl, 'https://gw.example.com/v1', '末尾斜杠应被去掉');
+  assert(!('apiKey' in r.value), '空 Key 不应进草稿');
+});
+await test('ProviderStore 增删改查并落盘 providers.json', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-test-prov-'));
+  try {
+    const store = new ProviderStore(dir, { baseUrl: 'https://api.longcat.chat/openai/v1', apiKey: 'ak-builtin', model: 'LongCat-2.5-Preview' });
+    store.create({ id: 'my-gw', name: '我的网关', protocol: 'openai', baseUrl: 'https://gw.example.com/v1', apiKey: 'sk-secret', models: [{ id: 'm-1' }] });
+    const again = new ProviderStore(dir, { baseUrl: 'https://api.longcat.chat/openai/v1' });
+    eq(again.all().length, 2, '重新加载后应保留自定义提供方');
+    eq(again.get('my-gw').apiKey, 'sk-secret', 'Key 应持久化');
+    again.update('my-gw', { name: '改名后的网关' });
+    eq(new ProviderStore(dir, {}).get('my-gw').name, '改名后的网关');
+    again.remove('my-gw');
+    eq(new ProviderStore(dir, {}).all().length, 1, '删除后只剩内置');
+    assert(existsSync(join(dir, 'providers.json')), '应落盘 providers.json');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+await test('ProviderStore 对外列表脱敏，且内置提供方只读', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-test-prov-'));
+  try {
+    const store = new ProviderStore(dir, { baseUrl: 'https://api.longcat.chat/openai/v1', apiKey: 'ak-builtin', model: 'LongCat-2.5-Preview' });
+    store.create({ id: 'my-gw', name: '我的网关', protocol: 'openai', baseUrl: 'https://gw.example.com/v1', apiKey: 'sk-secret', models: [{ id: 'm-1' }] });
+    const pub = store.list();
+    assert(!JSON.stringify(pub).includes('sk-secret'), '列表泄漏了 API Key');
+    assert(!JSON.stringify(pub).includes('ak-builtin'), '列表泄漏了内置 Key');
+    eq(pub[0].id, 'longcat');
+    eq(pub[0].builtin, true);
+    eq(pub[0].hasKey, true);
+    eq(pub[1].hasKey, true);
+    let msg = '';
+    try { store.remove('longcat'); } catch (e) { msg = e.message; }
+    assert(msg.includes('不能删除'), '内置提供方应不可删除');
+    msg = '';
+    try { store.update('longcat', { name: 'x' }); } catch (e) { msg = e.message; }
+    assert(msg.includes('不能在此修改'), '内置提供方应不可修改');
+    let err = null;
+    try { store.create({ id: 'longcat', name: 'x', protocol: 'openai', baseUrl: 'https://a.com', models: [{ id: 'm' }] }); } catch (e) { err = e; }
+    assert(err instanceof ProviderError && err.field === 'id', '创建同名内置 ID 应报字段级错误');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+await test('ProviderStore 按模型 ID 反查提供方，找不到回退内置', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-test-prov-'));
+  try {
+    const store = new ProviderStore(dir, { baseUrl: 'https://api.longcat.chat/openai/v1', apiKey: 'ak', model: 'LongCat-2.5-Preview' }, () => [{ id: 'LongCat-2.5-Preview' }]);
+    store.create({ id: 'my-gw', name: '我的网关', protocol: 'openai', baseUrl: 'https://gw.example.com/v1', models: [{ id: 'gpt-9' }] });
+    eq(store.providerForModel('gpt-9').id, 'my-gw');
+    eq(store.providerForModel('LongCat-2.5-Preview').id, 'longcat');
+    eq(store.providerForModel('不存在的模型').id, 'longcat', '未知模型应回退内置');
+    eq(store.providerForModel('').id, 'longcat');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 // ---------- e2e ----------
