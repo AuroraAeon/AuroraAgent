@@ -3,8 +3,9 @@ import { useEffect, useRef } from 'react';
 import { Message, ThinkingBlock } from './Message';
 import { Markdown } from '../markdown';
 import { ToolCard } from './ToolCard';
+import { TodoPanel } from './Todo';
 import { IconSpark } from '../icons';
-import type { LiveTurn, MsgView } from '../types';
+import type { LiveTurn, MsgView, TodoItem } from '../types';
 
 const SUGGESTIONS = [
   '看看工作目录里有什么文件',
@@ -40,9 +41,10 @@ type Props = {
   hasSession: boolean;
   onDecide?: (requestId: string, decision: 'allow' | 'deny' | 'always') => void;
   onPick: (text: string) => void;
+  todos: TodoItem[];
 };
 
-export function ChatView({ messages, live, hasSession, onDecide, onPick }: Props) {
+export function ChatView({ messages, live, hasSession, onDecide, onPick, todos }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' });
@@ -78,6 +80,7 @@ export function ChatView({ messages, live, hasSession, onDecide, onPick }: Props
   return (
     <div className="chat-scroll" id="chatScroll">
       <div className="chat-inner">
+        <TodoPanel todos={todos} />
         {messages.map((m) => <Message key={m.key} msg={m} onDecide={onDecide} />)}
         {live ? <LiveRow live={live} onDecide={onDecide} /> : null}
         <div ref={endRef} />

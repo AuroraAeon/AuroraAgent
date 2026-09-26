@@ -12,7 +12,7 @@ import {
   abortTurn, createSession, deleteSession, getSession, getSettings, listHarnesses, listModels,
   listProviders, listSessions, patchSession, respondPermission, runTurn,
 } from './api';
-import type { AgentEvent, Harness, LiveTurn, ModelInfo, MsgView, ProviderRow, SessionMeta, SettingsInfo } from './types';
+import type { AgentEvent, Harness, LiveTurn, ModelInfo, MsgView, ProviderRow, SessionMeta, SettingsInfo, TodoItem, ToolView } from './types';
 import { IconAlert, IconClose } from './icons';
 
 /** 工具事件 → live turn 的工具卡片状态机 */
@@ -43,10 +43,10 @@ function applyToolEvent(live: LiveTurn, ev: Extract<AgentEvent, { type: 'tool_ev
       if (idx >= 0) tools[idx] = { ...tools[idx], phase: 'rejected' };
       break;
     case 'completed':
-      if (idx >= 0) tools[idx] = { ...tools[idx], phase: 'done', output: ev.output || '' };
+      if (idx >= 0) tools[idx] = { ...tools[idx], phase: 'done', output: ev.output || '', ...(ev.extra ? { extra: ev.extra as ToolView['extra'] } : {}) };
       break;
     case 'failed':
-      if (idx >= 0) tools[idx] = { ...tools[idx], phase: 'failed', output: ev.output || '' };
+      if (idx >= 0) tools[idx] = { ...tools[idx], phase: 'failed', output: ev.output || '', ...(ev.extra ? { extra: ev.extra as ToolView['extra'] } : {}) };
       break;
   }
   return { ...live, tools };
@@ -57,6 +57,7 @@ export default function App() {
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [messages, setMessages] = useState<MsgView[]>([]);
   const [live, setLive] = useState<LiveTurn | null>(null);
+  const [todos, setTodos] = useState<TodoItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelStatus, setModelStatus] = useState('idle');
@@ -88,6 +89,7 @@ export default function App() {
     try {
       const got = await getSession(id);
       setMessages(projectRecords(got.records));
+      setTodos(Array.isArray(got.meta.todos) ? got.meta.todos : []);
     } catch {
       setMessages([]);
     }
@@ -133,7 +135,11 @@ export default function App() {
         (ev: AgentEvent) => {
           if (ev.type === 'text_chunk') setLive((l) => (l ? { ...l, text: l.text + ev.text } : l));
           else if (ev.type === 'thinking_chunk') setLive((l) => (l ? { ...l, thinking: l.thinking + ev.text } : l));
-          else if (ev.type === 'tool_event') setLive((l) => (l ? applyToolEvent(l, ev) : l));
+          else if (ev.type === 'tool_event') {
+            setLive((l) => (l ? applyToolEvent(l, ev) : l));
+            const list = (ev.extra as { todos?: TodoItem[] } | undefined)?.todos;
+            if (Array.isArray(list)) setTodos(list);
+          }
           else if (ev.type === 'token_usage_updated') {
             setLive((l) => (l ? {
               ...l,
@@ -258,6 +264,7 @@ export default function App() {
           hasSession={Boolean(current)}
           onDecide={decide}
           onPick={send}
+          todos={todos}
         />
         <Composer
           busy={busy}

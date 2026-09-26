@@ -12,6 +12,10 @@
   --ok:#4ec97f; --ok-ink:#8fe3b4; --ok-bg:rgb(78 201 127 / 12%); --ok-line:rgb(78 201 127 / 32%);
   --danger:#ff6b6b; --danger-ink:#ff9a9a; --danger-bg:rgb(255 107 107 / 12%); --danger-bg-hi:rgb(255 107 107 / 20%); --danger-line:rgb(255 107 107 / 35%); --danger-line-hi:rgb(255 107 107 / 55%);
   --think:#5ec8d8; --think-soft:rgb(94 200 216 / 6%);
+  /* diff 视图：增 / 删 / 元信息语义令牌，组件内禁止硬编码 diff 颜色 */
+  --diff-add:#4ec97f; --diff-add-bg:rgb(78 201 127 / 10%); --diff-add-ink:#8fe3b4;
+  --diff-del:#ff6b6b; --diff-del-bg:rgb(255 107 107 / 10%); --diff-del-ink:#ff9a9a;
+  --diff-meta:#8b93a7;
   --radius:14px;
   --ease:cubic-bezier(.22,.9,.28,1);
   color-scheme:dark;

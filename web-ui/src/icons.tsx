@@ -126,6 +126,15 @@ export const IconRefresh = (p: IconProps) => (
 export const IconSearch = (p: IconProps) => (
   <Svg {...p}><circle cx="11" cy="11" r="6.5" /><line x1="16" y1="16" x2="20.5" y2="20.5" /></Svg>
 );
+export const IconList = (p: IconProps) => (
+  <Svg {...p}>
+    <polyline points="8.5 7.5 10.5 9.5 14.5 5" />
+    <polyline points="8.5 14.5 10.5 16.5 14.5 12" />
+    <line x1="17" y1="7" x2="21" y2="7" />
+    <line x1="17" y1="14" x2="21" y2="14" />
+  </Svg>
+);
+
 export const IconKey = (p: IconProps) => (
   <Svg {...p}>
     <circle cx="8" cy="15" r="4" />

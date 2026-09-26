@@ -1,10 +1,11 @@
-/** 工具卡片：状态 / 参数 / 结果 / 内联权限卡。历史与流式 turn 共用。 */
+/** 工具卡片：状态 / 参数 / 结果 / diff 视图 / 待办渲染 / 内联权限卡。历史与流式 turn 共用。 */
 import { useState, type ReactNode } from 'react';
 import {
   Dots, IconCheck, IconClose, IconFile, IconFilePlus, IconFolder, IconGlobe,
-  IconPencil, IconShield, IconTerminal, IconWrench,
+  IconList, IconPencil, IconSearch, IconShield, IconTerminal, IconWrench,
 } from '../icons';
-import type { ToolView } from '../types';
+import { TodoList } from './Todo';
+import type { DiffLine, ToolView } from '../types';
 
 const TOOL_META: Record<string, { label: string; Icon: typeof IconFile }> = {
   read_file: { label: '读取文件', Icon: IconFile },
@@ -13,6 +14,10 @@ const TOOL_META: Record<string, { label: string; Icon: typeof IconFile }> = {
   edit_file: { label: '编辑文件', Icon: IconPencil },
   shell: { label: '执行命令', Icon: IconTerminal },
   web_fetch: { label: '抓取网页', Icon: IconGlobe },
+  grep: { label: '检索内容', Icon: IconSearch },
+  glob: { label: '查找文件', Icon: IconSearch },
+  todo: { label: '待办清单', Icon: IconList },
+  skill: { label: '加载技能', Icon: IconWrench },
 };
 
 const OUTPUT_LIMIT = 1200;
@@ -20,6 +25,7 @@ const OUTPUT_LIMIT = 1200;
 function resourceOf(tool: ToolView): string {
   const p = (tool.params || {}) as Record<string, unknown>;
   if (tool.name === 'shell') return String(p.command || '');
+  if (tool.name === 'grep') return String(p.pattern || '');
   return String(p.path || p.url || p.dir || '');
 }
 
@@ -33,6 +39,24 @@ function statusOf(tool: ToolView): { cls: string; node: ReactNode } {
   }
 }
 
+/** edit_file 的行级 diff：语义令牌上色，meta 行（折叠提示）斜体 */
+function DiffView({ diff }: { diff: DiffLine[] }) {
+  return (
+    <div className="tc-sec">
+      <div className="tc-sec-t">变更</div>
+      <div className="diff">
+        {diff.map((d, i) => (
+          <div key={`${d.type}-${d.lineNo}-${i}`} className={`dl dl-${d.type}`}>
+            <span className="dl-no">{d.type === 'meta' ? '' : d.lineNo}</span>
+            <span className="dl-mark">{d.type === 'add' ? '+' : d.type === 'del' ? '-' : ' '}</span>
+            <span className="dl-text">{d.text || ' '}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 type Props = {
   tool: ToolView;
   onDecide?: (requestId: string, decision: 'allow' | 'deny' | 'always') => void;
@@ -44,8 +68,13 @@ export function ToolCard({ tool, onDecide }: Props) {
   const status = statusOf(tool);
   const resource = resourceOf(tool);
   const output = tool.output || '';
-  const clipped = output.length > OUTPUT_LIMIT && !expanded;
-  const shown = clipped ? `${output.slice(0, OUTPUT_LIMIT)}\n…（输出过长已折叠，共 ${output.length} 字符）` : output;
+  const diff = Array.isArray(tool.extra?.diff) ? tool.extra.diff : null;
+  const todos = Array.isArray(tool.extra?.todos) ? tool.extra.todos : null;
+  // todo 工具的结构化清单已取代纯文本输出，避免同一信息展示两遍
+  const hideOutput = tool.name === 'todo' && todos !== null;
+  const shown = hideOutput ? '' : output.length > OUTPUT_LIMIT && !expanded
+    ? `${output.slice(0, OUTPUT_LIMIT)}\n…（输出过长已折叠，共 ${output.length} 字符）`
+    : output;
   const paramsJson = (() => { try { return JSON.stringify(tool.params, null, 2); } catch { return String(tool.params ?? ''); } })();
 
   return (
@@ -71,6 +100,13 @@ export function ToolCard({ tool, onDecide }: Props) {
               </div>
             </div>
           ) : null}
+          {todos ? (
+            <div className="tc-sec">
+              <div className="tc-sec-t">待办</div>
+              <TodoList todos={todos} />
+            </div>
+          ) : null}
+          {diff && diff.length ? <DiffView diff={diff} /> : null}
           <div className="tc-sec">
             <div className="tc-sec-t">参数</div>
             <pre className="tc-pre">{paramsJson || '（无）'}</pre>

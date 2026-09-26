@@ -47,8 +47,9 @@ export function projectRecords(records: SessionRecord[]): MsgView[] {
         if (hit) {
           hit.output = String(r.output || '');
           hit.phase = r.ok ? 'done' : 'failed';
+          if (r.extra) hit.extra = r.extra as ToolView['extra'];
         } else {
-          cur.tools.push({ id: String(r.id || `t${idx}`), name: String(r.name || ''), params: null, phase: r.ok ? 'done' : 'failed', output: String(r.output || '') });
+          cur.tools.push({ id: String(r.id || `t${idx}`), name: String(r.name || ''), params: null, phase: r.ok ? 'done' : 'failed', output: String(r.output || ''), ...(r.extra ? { extra: r.extra as ToolView['extra'] } : {}) });
         }
         break;
       }

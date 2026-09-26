@@ -6,7 +6,7 @@ export type AgentEvent =
   | { type: 'model_round_started'; sessionId: string; turnId: string; round: number }
   | { type: 'text_chunk'; sessionId: string; turnId: string; text: string }
   | { type: 'thinking_chunk'; sessionId: string; turnId: string; text: string }
-  | { type: 'tool_event'; sessionId: string; turnId: string; phase: ToolPhase; toolId: string; toolName: string; params?: unknown; resource?: string; requestId?: string; output?: string; durationMs?: number }
+  | { type: 'tool_event'; sessionId: string; turnId: string; phase: ToolPhase; toolId: string; toolName: string; params?: unknown; resource?: string; requestId?: string; output?: string; durationMs?: number; extra?: unknown }
   | { type: 'token_usage_updated'; sessionId: string; turnId: string; model: string; inputTokens: number; outputTokens: number; cost: number }
   | { type: 'context_compression_started'; sessionId: string; turnId: string; headRecords: number }
   | { type: 'context_compression_completed'; sessionId: string; turnId: string; keptRecords: number }
@@ -21,13 +21,14 @@ export type SessionMeta = {
   id: string; name: string; model: string; provider: string; harness: string; workspace: string;
   createdAt: string; updatedAt: string; turns: number;
   rules: { action: string; resource: string; effect: string }[];
+  todos?: TodoItem[];
   inputTokens: number; outputTokens: number; cost: number; preview?: string;
 };
 
 export type SessionRecord = {
   at?: string;
   t: 'user' | 'assistant' | 'thinking' | 'tool_call' | 'tool_result' | 'summary' | 'usage';
-  text?: string; id?: string; name?: string; args?: unknown; ok?: boolean; output?: string;
+  text?: string; id?: string; name?: string; args?: unknown; ok?: boolean; output?: string; extra?: unknown;
   inputTokens?: number; outputTokens?: number; cost?: number;
 };
 
@@ -44,7 +45,10 @@ export type SettingsInfo = {
 };
 
 /** 历史投影：一条 assistant 视图可带思考、工具列表与用量脚注 */
-export type ToolView = { id: string; name: string; params: unknown; phase: 'running' | 'ask' | 'rejected' | 'done' | 'failed'; output: string; requestId?: string };
+export type TodoItem = { text: string; done: boolean };
+export type DiffLine = { type: 'context' | 'add' | 'del' | 'meta'; lineNo: number; text: string };
+export type ToolExtra = { diff?: DiffLine[]; todos?: TodoItem[]; path?: string };
+export type ToolView = { id: string; name: string; params: unknown; phase: 'running' | 'ask' | 'rejected' | 'done' | 'failed'; output: string; requestId?: string; extra?: ToolExtra };
 export type MsgView =
   | { kind: 'user'; key: string; text: string; at?: string }
   | { kind: 'assistant'; key: string; text: string; thinking: string; tools: ToolView[]; usage: { inputTokens: number; outputTokens: number; cost: number } | null; at?: string }
