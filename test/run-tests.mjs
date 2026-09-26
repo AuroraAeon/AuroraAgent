@@ -276,6 +276,8 @@ try {
     const html = await r.text();
     assert(html.includes('ModelTester') && html.includes('id="send"'), '页面缺少关键元素');
     assert(html.includes('id="stopBtn"') && html.includes('id="stopBtnTop"'), '页面缺少停止按钮');
+    assert(html.includes('class="cbar"') && html.includes('id="input"'), '页面缺少新版输入区（工具栏 + 输入框）');
+    assert(html.includes('id="thinkToggle"') && html.includes('id="modelTrigger"'), '页面缺少思考开关或模型选择器');
     assert(html.includes('id="providersSec"') && html.includes('id="pvRows"'), '页面缺少提供方设置区');
     assert(html.includes('id="pvPickDlg"') && html.includes('id="pvDelDlg"'), '页面缺少提供方弹层');
     assert(html.includes('href="/providers.css"'), '页面未引用提供方样式');

@@ -206,7 +206,7 @@
     animation:fade-in .2s var(--ease) both;
   }
 
-  /* ---------- 输入区 ---------- */
+  /* ---------- 输入区（统一大圆角卡片：上部输入框 + 下部工具栏） ---------- */
   footer {
     border-top:1px solid var(--line); padding:14px 22px 16px; flex:none;
     background:rgb(21 24 32 / 82%); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
@@ -214,30 +214,59 @@
   }
   @keyframes rise-in { from { opacity:0; transform:translateY(12px); } }
   .composer {
-    max-width:820px; margin:0 auto; display:flex; gap:10px; align-items:flex-end;
-    background:var(--surface); border:1px solid var(--line); border-radius:16px; padding:9px 10px;
+    max-width:820px; margin:0 auto;
+    background:var(--surface); border:1px solid var(--line); border-radius:22px;
+    padding:10px 10px 8px; box-shadow:0 12px 36px rgb(0 0 0 / 30%);
     transition:border-color .2s, box-shadow .2s;
   }
-  .composer:focus-within { border-color:var(--accent-line); box-shadow:0 0 0 3px var(--accent-soft); }
-  .composer .iconbtn { background:transparent; border-color:transparent; }
-  .composer .iconbtn:hover { background:var(--surface-hover); border-color:var(--line); }
+  .composer:focus-within { border-color:var(--accent-line); box-shadow:0 0 0 3px var(--accent-soft), 0 12px 36px rgb(0 0 0 / 30%); }
+  .composer textarea {
+    display:block; width:100%; box-sizing:border-box; resize:none;
+    background:transparent; color:var(--text); border:none; outline:none;
+    padding:8px 8px 10px; font:inherit; font-size:15px; line-height:1.55;
+    max-height:160px; overflow-y:auto;
+  }
+  /* 原生随内容增高（不支持的浏览器由 JS 兜底，见 fitInput） */
+  @supports (field-sizing: content) {
+    .composer textarea { field-sizing: content; min-height:1.55em; }
+  }
+  .composer textarea::placeholder { color:var(--dim); }
+  /* 工具栏：+ / 思考 / 弹性间隔 / 模型选择 / 停止 / 发送 */
+  .cbar { display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+  .cflex { flex:1 1 auto; min-width:4px; }
+  .cbtn {
+    display:inline-flex; align-items:center; justify-content:center; flex:none;
+    width:34px; height:34px; border-radius:10px; cursor:pointer; color:var(--dim);
+    background:transparent; border:1px solid transparent;
+    transition:background-color .15s, color .15s, border-color .15s, transform .12s var(--ease);
+  }
+  .cbtn:hover { background:var(--surface-hover); color:var(--text); border-color:var(--line); }
+  .cbtn:active { transform:scale(.94); }
+  .cbtn svg { width:18px; height:18px; }
+  .cbtn.danger { color:#ff8f8f; }
+  .cbtn.danger:hover { background:rgb(255 107 107 / 12%); border-color:rgb(255 107 107 / 35%); color:#ffb3b3; }
   #imgBtn { position:relative; overflow:hidden; }
   #imgBtn input[type=file] { position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer; }
-  textarea {
-    flex:1; resize:none; background:transparent; color:var(--text);
-    border:none; padding:9px 4px; font:inherit; max-height:160px; outline:none;
-  }
-  textarea::placeholder { color:var(--dim); }
+  /* 思考开关：紧凑 chip 形态 */
+  .cchip { gap:7px; padding:4px 11px 4px 9px; border-radius:999px; border:1px solid var(--line); background:var(--bg); font-size:12.5px; }
+  .cchip:hover { border-color:#39415a; }
+  .cchip .track { width:30px; height:18px; }
+  .cchip .knob { width:12px; height:12px; }
+  .cchip input:checked + .track .knob { transform:translateX(12px); }
+  /* 模型选择触发器：融入工具栏 */
+  .msel-trigger { height:32px; font-size:12.5px; border-radius:999px; padding:0 10px; gap:7px; max-width:210px; }
+  /* 发送 / 停止：等大圆形按钮 */
+  #send, #stopBtn { width:38px; height:38px; border-radius:50%; padding:0; justify-content:center; }
   #send {
-    background:var(--accent); color:var(--accent-ink); border:none; border-radius:11px;
-    height:42px; padding:0 17px; font-size:14px; font-weight:600; cursor:pointer;
-    display:inline-flex; align-items:center; gap:7px; flex:none;
+    background:var(--accent); color:var(--accent-ink); border:none; cursor:pointer;
+    display:inline-flex; align-items:center; flex:none;
     transition:background-color .15s, box-shadow .2s, transform .12s var(--ease);
   }
-  #send svg { width:16px; height:16px; }
+  #send svg { width:17px; height:17px; }
   #send:hover { background:#ffe14d; box-shadow:0 4px 18px rgb(255 209 0 / 30%); }
-  #send:active { transform:scale(.95); }
+  #send:active { transform:scale(.92); }
   #send:disabled { opacity:.45; cursor:not-allowed; box-shadow:none; }
+  #stopBtn svg { width:14px; height:14px; }
   #stopBtn {
     background:var(--danger-bg); color:var(--danger); border:1px solid rgb(255 107 107 / 35%);
     border-radius:11px; height:42px; padding:0 16px; font-size:14px; cursor:pointer;
@@ -326,22 +355,8 @@
     </div>
   </div>
   <div class="meta">
-    <label class="switch" title="展示模型的思考过程">
-      <input type="checkbox" id="thinkToggle" checked>
-      <span class="track"><span class="knob"></span></span>
-      <span class="switch-text">思考过程</span>
-    </label>
     <button id="stopBtnTop" class="iconbtn danger" title="停止生成" hidden aria-label="停止生成"></button>
     <button id="settingsBtn" class="iconbtn" title="设置" aria-label="设置" aria-haspopup="dialog"></button>
-    <div class="msel" id="modelSel">
-      <button id="modelTrigger" class="msel-trigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="modelMenu" title="选择模型">
-        <span class="msel-ico" id="modelVendor"></span>
-        <span class="msel-label" id="modelLabel">选择模型</span>
-        <span class="msel-tag" id="modelTag" hidden></span>
-        <span class="msel-chev"></span>
-      </button>
-      <div class="msel-menu" id="modelMenu" role="menu" aria-label="选择模型" hidden></div>
-    </div>
   </div>
 </header>
 
@@ -350,12 +365,29 @@
 <footer>
   <div id="imgPreview" hidden></div>
   <div class="composer">
-    <label id="imgBtn" class="iconbtn lg" title="发送图片：点击选择，也可粘贴或拖拽；或输入 /img 图片路径"><input type="file" id="fileInput" accept="image/*"></label>
-    <textarea id="input" rows="1" placeholder="给当前模型发送消息…  Enter 发送，Shift+Enter 换行；可粘贴 / 拖拽图片，或 /img 图片路径"></textarea>
-    <button id="stopBtn" title="停止生成" hidden></button>
-    <button id="send"></button>
+    <textarea id="input" rows="1" placeholder="给当前模型发送消息…" aria-label="消息输入框"></textarea>
+    <div class="cbar" id="cbar">
+      <label id="imgBtn" class="cbtn" title="发送图片：点击选择，也可粘贴或拖拽；或输入 /img 图片路径"><input type="file" id="fileInput" accept="image/*"></label>
+      <label class="switch cchip" title="展示模型的思考过程">
+        <input type="checkbox" id="thinkToggle" checked>
+        <span class="track"><span class="knob"></span></span>
+        <span class="switch-text">思考</span>
+      </label>
+      <span class="cflex"></span>
+      <div class="msel" id="modelSel">
+        <button id="modelTrigger" class="msel-trigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="modelMenu" title="选择模型">
+          <span class="msel-ico" id="modelVendor"></span>
+          <span class="msel-label" id="modelLabel">选择模型</span>
+          <span class="msel-tag" id="modelTag" hidden></span>
+          <span class="msel-chev"></span>
+        </button>
+        <div class="msel-menu" id="modelMenu" role="menu" aria-label="选择模型" hidden></div>
+      </div>
+      <button id="stopBtn" class="cbtn danger" title="停止生成" hidden aria-label="停止生成"></button>
+      <button id="send" title="发送" aria-label="发送"></button>
+    </div>
   </div>
-  <div class="hint">模型由美团 LongCat API 提供 · api.longcat.chat · 限时价 输入 ¥2 / 输出 ¥8 每百万 tokens · 生成中输入 /stop 停止 · 输入 /model 切换模型</div>
+  <div class="hint">Enter 发送，Shift+Enter 换行 · 可粘贴 / 拖拽图片，或 /img 图片路径 · 生成中 /stop 停止 · /model 切换模型 · 美团 LongCat 限时价 输入 ¥2 / 输出 ¥8 每百万 tokens</div>
   <div class="hint" id="pvHint" hidden></div>
 </footer>
 
@@ -436,6 +468,7 @@ const SVG = {
   alert: I('<path d="M12 3.5l9.2 16.5H2.8z"/><line x1="12" y1="10" x2="12" y2="14"/><circle cx="12" cy="17" r=".5" fill="currentColor"/>'),
   gear: I('<line x1="4" y1="6" x2="20" y2="6"/><circle cx="9" cy="6" r="2.2" fill="currentColor" stroke="none"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2.2" fill="currentColor" stroke="none"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="7" cy="18" r="2.2" fill="currentColor" stroke="none"/>'),
   clip: I('<path d="M21.4 11.05l-8.49 8.49a5.5 5.5 0 0 1-7.78-7.78l8.49-8.49a3.5 3.5 0 0 1 4.95 4.95l-8.49 8.49a1.5 1.5 0 0 1-2.12-2.12l7.78-7.78"/>'),
+  plus: I('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>'),
   up: I('<line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>'),
   square: I('<rect x="7" y="7" width="10" height="10" rx="2.2" fill="currentColor" stroke="none"/>'),
   x: I('<line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>'),
@@ -459,9 +492,9 @@ var list = $('list'), input = $('input'), sendBtn = $('send'), stopBtn = $('stop
 $('settingsBtn').innerHTML = SVG.gear;
 dlgClose.innerHTML = SVG.x;
 stopBtnTop.innerHTML = SVG.square;
-stopBtn.innerHTML = SVG.square + '<span>停止</span>';
-sendBtn.innerHTML = SVG.up + '<span>发送</span>';
-$('imgBtn').insertAdjacentHTML('afterbegin', SVG.clip);
+stopBtn.innerHTML = SVG.square;
+sendBtn.innerHTML = SVG.up;
+$('imgBtn').insertAdjacentHTML('afterbegin', SVG.plus);
 document.querySelector('.msel-chev').innerHTML = SVG.chev;
 
 // ---------- 状态 ----------
@@ -812,7 +845,7 @@ async function send() {
   sendBtn.hidden = true;
   stopBtn.hidden = false;
   stopBtnTop.hidden = false;
-  input.value = ''; input.style.height = 'auto';
+  input.value = ''; fitInput();
 
   var imagePath = null, imageText = null;
   if (text === '/img' || text.indexOf('/img ') === 0) {
@@ -969,26 +1002,36 @@ document.addEventListener('keydown', function (e) {
 
 // ---------- 输入交互 ----------
 sendBtn.onclick = send;
+
+// 输入框高度：优先原生 field-sizing，旧浏览器用 JS 兜底
+var nativeGrow = false;
+try { nativeGrow = CSS.supports('field-sizing: content'); } catch (e) {}
+function fitInput() {
+  if (nativeGrow) return;
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+}
+
 input.addEventListener('keydown', function (e) {
   if (e.key === 'Enter' && !e.shiftKey) {
+    // IME 组合态（中文拼音选词）按 Enter 不得发送：isComposing + keyCode 229 双保险
+    // （Safari 存在 compositionend 早于确认 keydown 的事件乱序，见 ime-safe-enter-submit 指南）
+    if (e.isComposing || e.keyCode === 229) return;
     e.preventDefault();
     if (input.value.trim() === '/stop') {
-      input.value = ''; input.style.height = 'auto';
+      input.value = ''; fitInput();
       if (sending) stopGeneration();
       return;
     }
     if (input.value.trim() === '/model') {
-      input.value = ''; input.style.height = 'auto';
+      input.value = ''; fitInput();
       openMenu();
       return;
     }
     send();
   }
 });
-input.addEventListener('input', function () {
-  input.style.height = 'auto';
-  input.style.height = Math.min(input.scrollHeight, 160) + 'px';
-});
+input.addEventListener('input', fitInput);
 input.addEventListener('paste', function (e) {
   var items = e.clipboardData && e.clipboardData.items;
   if (!items) return;
