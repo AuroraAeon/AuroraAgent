@@ -19,6 +19,8 @@ import { IconAlert, IconClose } from './icons';
 function applyToolEvent(live: LiveTurn, ev: Extract<AgentEvent, { type: 'tool_event' }>): LiveTurn {
   const tools = live.tools.slice();
   const idx = tools.findIndex((t) => t.id === ev.toolId);
+  // loop 对「拒绝」会补发 failed：保留拒绝态，不被失败态覆盖
+  if ((ev.phase === 'failed' || ev.phase === 'completed') && tools[idx]?.phase === 'rejected') return live;
   const upsert = (view: LiveTurn['tools'][number]) => {
     if (idx >= 0) tools[idx] = view;
     else tools.push(view);
