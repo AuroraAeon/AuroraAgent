@@ -4,6 +4,8 @@
 
 **当前接入厂商：美团 LongCat-2.5-Preview**（2026-09-25 上线，万亿参数级 Agentic 模型，1M 上下文、128K 输出，OpenAI / Anthropic 双协议兼容）。Base URL、模型目录、Key 均为配置项，接入新厂商只需在 `public/vendors/` 放一张厂商标识、在模型目录映射里加一行。
 
+> AI 编码 agent：动手前必须先读并遵守仓库根目录的 `AGENTS.md`——第一铁律：每个通过测试的小改动都要主动 `git commit & push`。
+
 ## 启动与常驻
 
 - **双击 `~/Applications/ModelTester.app`**：服务已在运行就直接打开浏览器；否则后台拉起服务再打开（日志追加到 `~/Library/Logs/com.modeltester.app.log`）。整个 Bundle 可随意搬移，启动器自定位目录
@@ -145,7 +147,6 @@ npm run publish               # 构建 Bundle + 重启常驻服务，一条命�
 - 数据目录回退对开发副本同样生效：副本内没有 `modeltester.config.json`，自动使用 `~/Library/Application Support/ModelTester`，开发产生的用量照常记入真实账本
 - 也可在开发副本执行 `npm run service` 让 LaunchAgent 直接跑源码（改完 `launchctl kickstart -k gui/$(id -u)/com.modeltester.app` 即生效，免去重新打包）；要改回跑 Bundle，重新 `npm run app:build` 并按提示重注册服务
 - Bundle 内执行 `npm run app:build` 会被自保护拒绝，发布务必在开发副本操作
-- 仓库协作规范见 `AGENTS.md`（每次通过测试的小改动都要主动 commit & push）
 
 ## 接到其他工具
 
