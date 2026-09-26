@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** 连接自检: 验证 API Key 可用、查看模型列表、发一条最小请求（ModelTester） */
+/** 连接自检: 验证 API Key 可用、查看模型列表、发一条最小请求（AuroraAgent） */
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';

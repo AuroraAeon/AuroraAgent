@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 把 ModelTester 安装为 macOS LaunchAgent（开机自启 + 崩溃自恢复）。
+ * 把 AuroraAgent 安装为 macOS LaunchAgent（开机自启 + 崩溃自恢复）。
  *   node tools/install-service.mjs            安装并启动
  *   node tools/install-service.mjs --status   查看运行状态
  *   node tools/install-service.mjs --remove   停止并卸载

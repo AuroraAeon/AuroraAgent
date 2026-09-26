@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * ModelTester 网页服务（零依赖）· 当前接入：美团 LongCat-2.5-Preview
+ * AuroraAgent 网页服务（零依赖）· 当前接入：美团 LongCat-2.5-Preview
  * 用法: node web.mjs   →  http://localhost:8787
  * 特性: 断流即中止上游、用量账本、请求日志、健康检查
  */
@@ -451,7 +451,7 @@ function startServer(attempt = 0) {
   });
   server.listen(PORT, () => {
     const cfg = loadConfig();
-    log('info', `ModelTester 已启动: http://localhost:${PORT}`, { model: cfg.model, hasKey: Boolean(cfg.apiKey), managed: isManaged() });
+    log('info', `AuroraAgent 已启动: http://localhost:${PORT}`, { model: cfg.model, hasKey: Boolean(cfg.apiKey), managed: isManaged() });
     if (process.env.NO_OPEN !== '1') exec(`open http://localhost:${PORT}`);
   });
 }
