@@ -4,6 +4,22 @@
 
 <!-- RELEASE-NOTES:ZH -->
 
+### 文档
+
+- 新增 CHANGELOG.md——6.0.0 里程碑（TUI 规范化/技能/子代理/MCP/权限三档/计划模式/Web 对齐/双语文档站）与 5.0.0 更名背景，README 文档节补指针（`4ecbf86` 2026-09-27）
+- 6.0.0 能力面同步——工具表扩到十一个、权限三档与计划模式、终端 /plan /mcp 与技能派生命令、skills/plan/mcp 接口表、当前状态刷新 192/192 与 e2e 覆盖清单（`cd33288` 2026-09-27）
+- 6.0.0 能力面归档——架构表补 skills/plan/swarm/transcript/mcp 与 llm 开流入口、工具表扩到十一个、权限三档与计划/执行两阶段、实验开关与数据目录新约定、测试基线 192/192（`939851d` 2026-09-27）
+- VitePress 双语文档站——指南/速查/发布笔记三结构，终端设计规范迁入站点作单一真值源，写作规约与 git 历史发布笔记生成；修复发布笔记注入幂等性（原正则不消费闭合标记导致每次生成重复追加），补文档站结构契约守卫（中英页面一一对应/标记在场/依赖例外登记）（`72d26ae` 2026-09-27）
+- AGENTS.md / README 删掉「新增 npm 依赖需经用户同意」相关规约——用户不想要额外条框；只保留事实性描述（前端依赖仅限 web-ui/、后端零依赖）（`6cd81b5` 2026-09-26）
+- AGENTS.md 撤掉我自作主张加的两条规约（公式分段测试方式与 KaTeX emoji 踩坑记录）——用户不想要额外条框；只留事实性更新（测试基线 102、katex 依赖例外、两个新文件的架构表行）（`66e84be` 2026-09-26）
+- README 移除对使用者无用的内容——AI 编码 agent 规约引用行与 Computer Use（CUA）内部调试结论章（旧前端时期的方法论记录，含被策略阻断的状态备注）；面向使用者的文档只保留产品能力、接口、数据与实测结论（`30364ce` 2026-09-26）
+- README 与 AGENTS 全面更名 AuroraAgent——env/数据目录/config 文件名/LaunchAgent label/.app 名/日志名同步更新，Bundle 结构树与命令表现状同步；补记 5.0.0 一次性迁移说明（旧数据目录整体搬迁含 Key 保留、旧 label 自动清理）与配置收敛到 util/config.mjs 后的单一实现约定（`a492bb8` 2026-09-26）
+
+### 修复
+
+- Ultimate 补挂 task 工具——系统提示要求派发子代理但工具集缺失，模型看得见指令够不着工具；补三档 task 挂载回归断言（`afebcc8` 2026-09-27）
+- web.mjs 委派 /api/mcp 前缀并修正 e2e 测试 URL——MCP 路由此前只挂在 /api/agent 前缀下导致 404，注册表 CRUD 与 Agent turn 工具调用 e2e 全链路覆盖（`4196536` 2026-09-27）
+
 ### 新功能
 
 - 流式活动状态行——LiveRow 展示轮次/工具数/走秒计时（>60s 转 m:ss， dots 动画走语义令牌），费用格式化收拢到 projection.fmtCostYen（终端同源 fmtCost，消除第三份重复实现）；LiveTurn 增 round/startedAt 由 model_round_started/turn_started 驱动；附源码契约（`a8ed1af` 2026-09-27）
@@ -19,23 +35,33 @@
 - 计划模式与权限三档接线——loop 抽出 runRound/runToolCalls 闭包供计划与执行两阶段共用；计划轮只用只读/检索/待办工具（plan.mjs 白名单单点定义）产出计划，plan_proposed 事件等用户批准，批准后计划作为既定契约注入执行轮，驳回以 finishReason=plan_rejected 收尾；POST /api/agent/plan 决策通道（断开按驳回）；turn 优先级 请求体>会话meta>config 解析 permissionMode/planMode，PATCH 可改；终端 /plan 开关 + 计划展示 y/n + footer 计划段；policy.evaluate 换 effective（三档生效）（`708b152` 2026-09-27）
 - 权限三档 permissionMode——always_ask / ask_when_needed / never_ask 叠加在规则集之上设定 ask 类动作默认效应（never_ask 放行 ask 但不推翻 deny，always_ask 把默认规则的只读放行提升为逐次询问但不推翻用户「总是允许」沉淀的会话规则）；grantAlways 打 source 标记不落盘；附单测（`70eb9da` 2026-09-27）
 - edit_file diff 视图 + 待办面板——ToolCard 读 extra.diff/extra.todos 结构化负载渲染行级 diff（diff 语义令牌上色）与待办清单；会话级 TodoPanel 吸顶展示进度并随 tool_event 实时刷新；TOOL_META 补 grep/glob/todo/skill 四个新工具；types/projection/App 贯通 extra 数据管道（`25088fc` 2026-09-27）
+- todo 待办工具 + edit_file diff 结构化负载 + extra 契约——工具可返回 {output, extra}，extra（diff/todos）进转录与 tool_event 供两端渲染但不进模型消息；todo 随会话 meta 持久化经 ctx.todoStore 读写；终端待办完成打印进度行；附单测与 e2e（USE_TODO/USE_EDIT 触发词）（`5d32801` 2026-09-27）
+- 新增检索工具 grep（正则+glob 文件名过滤+预算截断）与 glob（星号星号跨目录路径匹配）；policy 默认放行检索/待办/skill；harness standard/ultimate 挂上 grep/glob/todo 并在系统提示引导使用；终端工具标签同步；附真实查找单测（含路径禁锢与非法正则）（`b46c923` 2026-09-27）
+- 技能系统接线——系统提示注入技能目录（正文按需加载）、loop 贯穿 skills 并有技能时把 skill 工具并入请求 tools、tools.mjs 新增 skill 工具（kosong 形状，读 ctx.skills）、policy 默认放行 skill、GET /api/agent/skills 路由、终端 /<技能名> 斜杠命令进同一张命令表；mock 增 USE_SKILL 触发词；e2e 覆盖工具调用与回填，npm run check 真实上游通过（`ca53ce6` 2026-09-27）
+- 新增技能系统 util/agent/skills.mjs——SKILL.md frontmatter 解析、内置/用户双目录加载（用户覆盖）、系统提示清单块、斜杠注入文本；内置 4 个技能（auroraagent-ops / code-review / systematic-debugging / test-writing，对标 kimi custom-theme 结构）；build-app 补拷 skills/ 进 Bundle；附单测（`f9e180b` 2026-09-27）
+- 终端 REPL 重构为协调器——裸 ANSI 换语义色板 painter、声明式斜杠命令表、/sessions /harness /theme 可搜索选择器、footer 状态条；流式渲染拆出 terminal-turn.mjs、纯助手拆出 terminal-format.mjs；修复 raw mode 下 Ctrl+C 不中断生成的缺陷（rl SIGINT 事件中转）；README/AGENTS 同步（`41e5d97` 2026-09-27）
+- 单选对话框 pick.mjs（TTY 原始模式读键 + 非 TTY 回退）与增量重绘 screen.mjs；searchable-list 补 setCursor/focusById；附 pty 验证过的 readline 共存机制与单测（`a29b9dc` 2026-09-26）
+- 新增 kosong 风格工具抽象 util/llm(tool 归一化+wire 转换、errors 状态分类)，tools.mjs 改采共享转换器；config 增补实验特性解析器与 permissionMode/planMode 字段(缺省等价现状)；落 docs/tui-design.md 设计规范单一真值源；附单测（`3c7a59a` 2026-09-26）
+- 新增零依赖 TUI 工具包 util/tui——语义色板(暗/亮+对比度守卫)、Kitty CSI-u 键位解码、CJK 渲染、SearchableList；附单测与仓库守卫(零 emoji/颜色单一真值源/对比度/行数预算)接入 npm test（`30a881e` 2026-09-26）
+- 正文支持 LaTeX 公式渲染——KaTeX 自托管，五种分隔符全覆盖（`b35dbda` 2026-09-26）
 
 ### 重构
 
 - 转录投影层 transcript.mjs——工具标签/图标键/资源摘要/费用格式化的单一真值源（修复终端与 Web 标签表漂移：Web 缺 task 与 MCP 推导），projectTurns 统一记录分组规则（工具记录不拆散并行调用、新文本开新轮）；终端 terminal-format 与 Web projection/ToolCard/Message 全部改为消费同一份契约；附投影单测与两端同源源码契约；构建产物同步（`7671d3d` 2026-09-27）
 - 抽象层落地——消息序列转换抽到 llm/message.mjs（OpenAI ↔ Anthropic turns 纯函数），上游错误话术并入 llm/errors.mjs（单一 QUOTA_WORDING），wire.mjs 收窄为请求构造与帧翻译薄封装；toolSchemas 落实 deferred 过滤（标记工具不进请求顶层 tools[] 以保持字节稳定命中提示缓存，Loop 侧仍可解析执行）；附消息转换与 deferred 单测（`8865515` 2026-09-27）
+- 旧命名 ModelTester 全套更名 AuroraAgent——env（AURORAAGENT_DATA_DIR/BASE_URL/API_KEY）、数据目录 ~/Library/Application Support/AuroraAgent、config 文件名 auroraagent.config.json、LaunchAgent label com.auroraagent.app 与日志名同步更换；数据目录回退与 loadConfig 从 web.mjs/check.mjs/install-service.mjs 三处内联收敛到 util/config.mjs 单一实现（顺带修复 web.mjs 硬编码 VERSION 4.0.0 与 package.json 脱节，改为读 package.json）；附一次性迁移：旧数据目录整体搬迁含 Key 保留、旧 label 安装时自动 bootout 防双 job 抢端口；已实测线上服务平滑切换（health hasKey:true，92/92 全绿）（`b7b4012` 2026-09-26）
 
 ### 杂项
 
 - 追加 mcp.json——MCP 服务器配置含连接信息，与 providers.json 同级不提交（`4fa473f` 2026-09-27）
 
-### 修复
-
-- web.mjs 委派 /api/mcp 前缀并修正 e2e 测试 URL——MCP 路由此前只挂在 /api/agent 前缀下导致 404，注册表 CRUD 与 Agent turn 工具调用 e2e 全链路覆盖（`4196536` 2026-09-27）
-
 ### 测试
 
 - 子代理覆盖——Loop stub 覆盖 task 并行派发聚合（真实子会话落盘、subAgent 标记透出、子代理文本不回显）与嵌套深度封顶（孙代理派发被拒、子/孙两层会话）；mock 增 USE_SWARM 触发词（tasks 双子任务 + 子代理终稿）；e2e 覆盖子会话新建可查、转录含子任务与终稿、聚合输出收尾（`9e0e46d` 2026-09-27）
 - 计划模式覆盖——Loop stub 覆盖批准进执行（计划轮只读工具集 + 执行轮注入已批准计划 + 计划提示只在计划轮）与驳回不执行（finishReason=plan_rejected 且不再请求上游）；e2e 覆盖 plan_proposed/plan_approved/plan_rejected 事件链、计划轮 tools 只读断言、批准注入落转录、无等待计划请求 ok:false；mock 增 USE_PLAN 触发词（计划轮只回计划文本，批准后执行轮回终稿）（`3591b31` 2026-09-27）
+
+### build
+
+- .app 更名 AuroraAgent.app——Bundle 内可执行文件、CFBundleExecutable/Identifier（com.auroraagent.app）、启动器 env 与日志路径同步更换；构建时把落地目录里的旧 ModelTester.app 改名为 .legacy 让位（避免两个 App 抢 8787，可手动改回）；旧名 config 迁移时按新名落盘；经临时目录实测打包与让位（`b20b488` 2026-09-26）
 
 <!-- /RELEASE-NOTES:ZH -->
