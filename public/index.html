@@ -6,6 +6,7 @@
 <title>ModelTester</title>
 <meta name="color-scheme" content="dark">
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
+<link rel="stylesheet" href="/providers.css">
 <style>
   :root {
     --bg:#0e1014; --panel:#151820; --surface:#1b1f2a; --surface-hover:#232936;
@@ -268,7 +269,7 @@
 
   /* ---------- 设置弹层（原生 dialog + top-layer 动画，见 animate-to-from-top-layer 指南） ---------- */
   dialog#settingsDlg {
-    position:fixed; inset:0; margin:auto; width:min(440px, calc(100vw - 40px)); height:fit-content;
+    position:fixed; inset:0; margin:auto; width:min(560px, calc(100vw - 32px)); height:fit-content;
     background:var(--panel); border:1px solid #333b52; border-radius:18px; padding:0;
     box-shadow:0 24px 80px rgb(0 0 0 / 55%);
     opacity:1; transform:scale(1);
@@ -355,6 +356,7 @@
     <button id="send"></button>
   </div>
   <div class="hint">模型由美团 LongCat API 提供 · api.longcat.chat · 限时价 输入 ¥2 / 输出 ¥8 每百万 tokens · 生成中输入 /stop 停止 · 输入 /model 切换模型</div>
+  <div class="hint" id="pvHint" hidden></div>
 </footer>
 
 <dialog id="settingsDlg" closedby="any" aria-labelledby="dlgTitle">
@@ -376,6 +378,14 @@
     </div>
     <div class="set-status" id="svcStatus">读取中…</div>
   </section>
+  <section class="dlg-sec" id="providersSec">
+    <div class="dlg-sec-title">提供方</div>
+    <p class="pv-intro">填入各提供方的 API 密钥即可使用其模型。</p>
+    <div class="pv-rows" id="pvRows"></div>
+    <button type="button" class="pv-btn ghost block" id="pvAddBtn"></button>
+    <div id="pvAddHost"></div>
+    <div class="pv-notice" id="pvNotice" role="status" aria-live="polite" hidden></div>
+  </section>
   <section class="dlg-sec">
     <div class="dlg-sec-title">关于</div>
     <div class="set-row"><div class="set-info"><div class="set-title">数据目录</div></div><span class="set-val" id="dataDirPath"></span></div>
@@ -384,8 +394,38 @@
   </section>
 </dialog>
 
+<dialog id="pvPickDlg" class="pv-dlg" closedby="any" aria-labelledby="pvPickTitle">
+  <div class="pv-dlg-head">
+    <h2 id="pvPickTitle">选择要添加的模型</h2>
+    <button type="button" class="pv-iconbtn" id="pvPickClose" aria-label="关闭"></button>
+  </div>
+  <div class="pv-dlg-body">
+    <search class="pv-search">
+      <input class="pv-input" id="pvPickSearch" type="search" placeholder="搜索模型" aria-label="搜索模型">
+    </search>
+    <div id="pvPickBody"></div>
+  </div>
+  <div class="pv-dlg-foot">
+    <button type="button" class="pv-btn" id="pvPickCancel">取消</button>
+    <button type="button" class="pv-btn primary" id="pvPickApply" disabled>添加所选</button>
+  </div>
+</dialog>
+
+<dialog id="pvDelDlg" class="pv-dlg" closedby="any" aria-labelledby="pvDelTitle">
+  <div class="pv-dlg-head">
+    <h2 id="pvDelTitle">删除提供方</h2>
+    <button type="button" class="pv-iconbtn" id="pvDelClose" aria-label="关闭"></button>
+  </div>
+  <div class="pv-dlg-body"><p class="pv-dlg-text" id="pvDelText"></p></div>
+  <div class="pv-dlg-foot">
+    <button type="button" class="pv-btn" id="pvDelCancel">取消</button>
+    <button type="button" class="pv-btn danger" id="pvDelOk">删除</button>
+  </div>
+</dialog>
+
 <script type="module">
 import { SseParser } from '/util/sse.mjs';
+import { mountProviders } from '/providers.mjs';
 
 // ---------- 图标（内联 SVG，替代全部 emoji） ----------
 const I = (paths, extra) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"' + (extra || '') + '>' + paths + '</svg>';
@@ -431,7 +471,7 @@ var stopped = false; // 模块级声明：strict mode 下 stopGeneration 需可�
 var pendingImage = null;
 var abortCtrl = null;
 var currentRequestId = null;
-var modelState = { status: 'idle', models: [], error: null };
+var modelState = { status: 'idle', models: [], providers: [], error: null };
 var currentModel = '';
 try { currentModel = localStorage.getItem('modeltester.model') || ''; } catch (e) {}
 var modelsInflight = null;
@@ -482,6 +522,7 @@ function loadModels(force) {
       modelState.status = j.ok ? 'ready' : 'error';
       modelState.models = Array.isArray(j.models) ? j.models : [];
       modelState.error = j.error || null;
+      modelState.providers = Array.isArray(j.providers) ? j.providers : [];
       if (!currentModel && j.default) currentModel = j.default;
     } catch (e) {
       modelState.status = 'error';
@@ -495,6 +536,20 @@ function loadModels(force) {
 function modelById(id) {
   for (var i = 0; i < modelState.models.length; i++) if (modelState.models[i].id === id) return modelState.models[i];
   return null;
+}
+
+// 提供方目录（/api/models 随模型一起返回）：模型选择器按提供方分组，发送时按模型反查提供方
+function providerById(id) {
+  for (var i = 0; i < modelState.providers.length; i++) if (modelState.providers[i].id === id) return modelState.providers[i];
+  return null;
+}
+function providerForModel(id) {
+  var m = modelById(id);
+  return m ? providerById(m.provider) : null;
+}
+function currentProviderId() {
+  var p = providerForModel(currentModel);
+  return p ? p.id : '';
 }
 
 // 当前接入厂商的标识：按模型 ID 前缀匹配，接入新厂商时在 public/vendors/ 放图标并在此追加一行
@@ -512,20 +567,37 @@ function renderTrigger() {
   else { modelTagEl.textContent = ''; modelTagEl.hidden = true; }
   var mark = vendorMarkFor(currentModel);
   modelVendor.innerHTML = mark ? '<img src="' + mark + '" alt="">' : SVG.spark;
+  renderProviderHint();
 }
 
-function renderMenu() {
+// 当前提供方提示：自定义提供方时说明价格按该厂商计，避免误读内置的限时价
+function renderProviderHint() {
+  var p = providerForModel(currentModel);
+  var box = $('pvHint');
+  if (!box) return;
+  if (!p || p.builtin) { box.hidden = true; box.textContent = ''; return; }
+  box.hidden = false;
+  box.textContent = '当前提供方：' + p.name + ' · ' + p.baseUrl
+    + (p.price ? ' · 输入 ¥' + p.price.input + ' / 输出 ¥' + p.price.output + ' 每百万 tokens' : ' · 未设置单价，账本按内置价格估算');
+}
+
+// 按提供方分组的模型列表（内置在前，自定义提供方按加入顺序）
+function groupsHtml() {
+  var order = [], byProvider = {};
+  for (var i = 0; i < modelState.models.length; i++) {
+    var m = modelState.models[i];
+    var pid = m.provider || '';
+    if (!byProvider[pid]) { byProvider[pid] = []; order.push(pid); }
+    byProvider[pid].push(m);
+  }
   var html = '';
-  if (modelState.status === 'loading') {
-    html = '<div class="msel-status">' + SVG.dots + '正在加载模型列表…</div>';
-  } else if (modelState.status === 'error') {
-    html = '<div class="msel-status err">' + SVG.alert + '<span>' + esc(modelState.error || '加载失败') + '</span><button type="button" class="msel-retry" id="modelRetry">重试</button></div>';
-  } else if (!modelState.models.length) {
-    html = '<div class="msel-status">暂未获取到可用模型</div>';
-  } else {
-    html = '<div class="msel-head">可用模型</div>';
-    for (var i = 0; i < modelState.models.length; i++) {
-      var m = modelState.models[i];
+  for (var g = 0; g < order.length; g++) {
+    var pid = order[g];
+    var p = providerById(pid);
+    html += '<div class="msel-head">' + esc(p ? p.name : pid) + '</div>';
+    var list = byProvider[pid];
+    for (var j = 0; j < list.length; j++) {
+      var m = list[j];
       var cur = m.id === currentModel;
       html += '<button type="button" role="menuitem" class="msel-item" data-model="' + esc(m.id) + '"' + (cur ? ' aria-current="true"' : '') + '>'
         + '<span class="ck">' + (cur ? SVG.check : '') + '</span>'
@@ -534,6 +606,22 @@ function renderMenu() {
         + (m.owned ? '<span class="tg">默认</span>' : '')
         + '</button>';
     }
+  }
+  return html;
+}
+
+function renderMenu() {
+  var html = '';
+  if (modelState.status === 'loading') {
+    html = '<div class="msel-status">' + SVG.dots + '正在加载模型列表…</div>';
+  } else if (modelState.status === 'error') {
+    html = '<div class="msel-status err">' + SVG.alert + '<span>' + esc(modelState.error || '加载失败') + '</span><button type="button" class="msel-retry" id="modelRetry">重试</button></div>';
+    // 内置目录失败时自定义提供方的模型在本地，仍要能选
+    html += groupsHtml();
+  } else if (!modelState.models.length) {
+    html = '<div class="msel-status">暂未获取到可用模型</div>';
+  } else {
+    html = groupsHtml();
   }
   modelMenu.innerHTML = html;
   var retry = $('modelRetry');
@@ -773,7 +861,7 @@ async function send() {
     var resp = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: chatHistory, thinking: thinkToggle.checked, imagePath: imagePath, imageText: imageText, requestId: currentRequestId, model: currentModel }),
+      body: JSON.stringify({ messages: chatHistory, thinking: thinkToggle.checked, imagePath: imagePath, imageText: imageText, requestId: currentRequestId, model: currentModel, provider: currentProviderId() }),
       signal: abortCtrl.signal,
     });
     if (!resp.ok) {
@@ -992,6 +1080,13 @@ autostartToggle.onchange = async function () {
     autostartToggle.disabled = false;
   }
 };
+// ---------- 自定义 Provider（实现见 public/providers.mjs） ----------
+mountProviders({
+  onChanged: function () {
+    // 提供方变动后重取模型目录：自定义提供方的模型立即出现在选择器里
+    loadModels(true).then(renderTrigger);
+  },
+});
 </script>
 </body>
 </html>

@@ -527,6 +527,7 @@ export function mountProviders(opts) {
   // 挑选弹层
   $('pvPickClose').innerHTML = SVG.close;
   $('pvPickClose').addEventListener('click', () => els().pick.close());
+  $('pvPickCancel').addEventListener('click', () => els().pick.close());
   $('pvPickApply').addEventListener('click', applyPicked);
   $('pvPickSearch').addEventListener('input', renderPicker);
   // closedby 特性检测：不支持时用点击 backdrop 关闭兜底
@@ -536,6 +537,7 @@ export function mountProviders(opts) {
   }
   $('pvDelClose').innerHTML = SVG.close;
   $('pvDelClose').addEventListener('click', () => els().del.close());
+  $('pvDelCancel').addEventListener('click', () => els().del.close());
 
   reload();
 }

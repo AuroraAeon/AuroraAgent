@@ -260,6 +260,23 @@ try {
     const html = await r.text();
     assert(html.includes('ModelTester') && html.includes('id="send"'), '页面缺少关键元素');
     assert(html.includes('id="stopBtn"') && html.includes('id="stopBtnTop"'), '页面缺少停止按钮');
+    assert(html.includes('id="providersSec"') && html.includes('id="pvRows"'), '页面缺少提供方设置区');
+    assert(html.includes('id="pvPickDlg"') && html.includes('id="pvDelDlg"'), '页面缺少提供方弹层');
+    assert(html.includes('href="/providers.css"'), '页面未引用提供方样式');
+  });
+  await test('GET /providers.css 与 /providers.mjs 提供静态资源', async () => {
+    const css = await fetch(`${BASE}/providers.css`);
+    eq(css.status, 200);
+    eq(css.headers.get('content-type'), 'text/css');
+    assert((await css.text()).includes('.pv-row'), '样式缺少提供方行');
+    const js = await fetch(`${BASE}/providers.mjs`);
+    eq(js.status, 200);
+    assert((await js.text()).includes('mountProviders'), '模块缺少挂载入口');
+  });
+  await test('静态资源走白名单，目录穿越取不到文件', async () => {
+    eq((await fetch(`${BASE}/web.mjs`)).status, 404);
+    eq((await fetch(`${BASE}/../web.mjs`)).status, 404);
+    eq((await fetch(`${BASE}/util/providers.mjs`)).status, 404);
   });
   await test('GET /util/sse.mjs 提供模块', async () => {
     const r = await fetch(`${BASE}/util/sse.mjs`);

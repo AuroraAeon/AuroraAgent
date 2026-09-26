@@ -151,6 +151,11 @@ async function loadModelCatalog(force = false) {
 }
 
 // ---------- 静态文件 ----------
+const STATIC_ASSETS = {
+  '/util/sse.mjs': join(__dirname, 'util', 'sse.mjs'),
+  '/providers.mjs': join(__dirname, 'public', 'providers.mjs'),
+  '/providers.css': join(__dirname, 'public', 'providers.css'),
+};
 const MIME = { '.html': 'text/html; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml; charset=utf-8' };
 function serveStatic(res, filePath) {
   if (!existsSync(filePath)) { res.writeHead(404); res.end('not found'); return; }
@@ -205,7 +210,9 @@ const server = createServer(async (req, res) => {
   const url = req.url.split('?')[0];
 
   if (req.method === 'GET' && (url === '/' || url === '/index.html')) return serveStatic(res, join(__dirname, 'public', 'index.html'));
-  if (req.method === 'GET' && url === '/util/sse.mjs') return serveStatic(res, join(__dirname, 'util', 'sse.mjs'));
+  // 前端模块与样式：白名单映射（而非目录通配），任意路径都不 serveStatic 出去
+  const asset = STATIC_ASSETS[url];
+  if (req.method === 'GET' && asset) return serveStatic(res, asset);
   if (req.method === 'GET' && url === '/icon.svg') return serveStatic(res, join(__dirname, 'public', 'icon.svg'));
   // 厂商标识：/vendor/<name>.svg（正则白名单防目录穿越），接入新厂商把 svg 放进 public/vendors/ 即可
   if (req.method === 'GET' && /^\/vendor\/[a-z0-9-]+\.svg$/.test(url)) {
