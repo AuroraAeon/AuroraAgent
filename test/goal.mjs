@@ -19,7 +19,7 @@ import { applyUsage, budgetBreach, rearmAfterBudgetRaise, goalUsageChip, formatG
 import { replyFingerprint, advanceBreakers } from '../util/agent/goal/breaker.mjs';
 import { createGoalRuntime } from '../util/agent/goal/runtime.mjs';
 import { parseVerdict } from '../util/agent/goal/verification.mjs';
-import { GOAL_CONTINUATION_NOTE, GOAL_WRAPUP_NOTE, goalContinuationNote, goalVerifierFeedbackNote } from '../util/agent/goal/continuation.mjs';
+import { GOAL_CONTINUATION_NOTE, GOAL_WRAPUP_NOTE, goalContinuationNote, goalObjectiveUpdatedNote, goalVerifierFeedbackNote } from '../util/agent/goal/continuation.mjs';
 
 export async function runGoalTests(test, assert, eq) {
   console.log('\nGoal 模式单测');
@@ -423,6 +423,66 @@ export async function runGoalTests(test, assert, eq) {
     eq(g.tokensUsed, 35, '触顶轮的用量照记');
   });
 
+  await test('goal: 运行时——turn 内改写目标文本，工具轮下一轮收到【目标已更新】且只提醒一次', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'goal-rt-edit-'));
+    const store = new GoalStore(dir);
+    const events = [];
+    const rt = createGoalRuntime({
+      goalStore: store, sessionId: 'rtedit', config: parseGoalConfig(undefined),
+      harnessTools: ['create_goal', 'update_goal', 'get_goal'], emit: (t, p) => events.push({ t, p }),
+    });
+    rt.tools[0].run({ objective: 'GOAL_EDIT_OLD 把 README 安装章节改写' });
+    rt.beginTurn();
+    const usage = { prompt_tokens: 20, completion_tokens: 15 };
+    eq(rt.afterRound({ replyText: '开工', toolCalls: [{ name: 'read_file' }], usage, roundMs: 100 }), undefined);
+    // 用户在 turn 进行中经网页 /goal edit 改写目标文本（REST 落盘）
+    store.update('rtedit', (g) => ({ ...g, objective: 'GOAL_EDIT_NEW 把发布笔记章节改写' }));
+    eq(rt.afterRound({ replyText: '继续', toolCalls: [{ name: 'read_file' }], usage, roundMs: 100 }), 'updated', '工具轮检出目标改写应转 updated');
+    const note = rt.consumeNote();
+    assert(note.includes('【目标已更新】') && note.includes('GOAL_EDIT_NEW'), '提醒应带新目标文本');
+    eq(rt.consumeNote(), null, '提醒一次性消费');
+    eq(rt.afterRound({ replyText: '再继续', toolCalls: [{ name: 'read_file' }], usage, roundMs: 100 }), undefined, '同一改写只提醒一次');
+    assert(events.some((e) => e.t === 'goal_status_changed' && e.p.goal.objective.includes('GOAL_EDIT_NEW')), '改写应触发状态事件让两端刷新文本');
+  });
+
+  await test('goal: 运行时——空转轮前改写目标走【目标已更新】，针对旧目标的提案作废', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'goal-rt-edit2-'));
+    const store = new GoalStore(dir);
+    const events = [];
+    const rt = createGoalRuntime({
+      goalStore: store, sessionId: 'rtedit2', config: parseGoalConfig(undefined),
+      harnessTools: ['create_goal', 'update_goal', 'get_goal'], emit: (t, p) => events.push({ t, p }),
+    });
+    rt.tools[0].run({ objective: 'GOAL_EDIT_OLD 把 README 安装章节改写' });
+    rt.beginTurn();
+    const usage = { prompt_tokens: 20, completion_tokens: 15 };
+    eq(rt.afterRound({ replyText: '开工', toolCalls: [{ name: 'read_file' }], usage, roundMs: 100 }), undefined);
+    store.update('rtedit2', (g) => ({ ...g, objective: 'GOAL_EDIT_NEW 把发布笔记章节改写' }));
+    // 模型不知情，仍按旧目标提案完成
+    rt.tools[1].run({ mode: 'status', status: 'complete', summary: '旧目标已搞定' });
+    eq(rt.afterRound({ replyText: '', toolCalls: [{ name: 'update_goal' }], usage, roundMs: 100 }), 'proposal');
+    const d = await rt.onProposal();
+    eq(d.action, 'continue', '旧提案作废：改带【目标已更新】续轮而非直接结算');
+    assert(d.extraSystem.includes('【目标已更新】') && d.extraSystem.includes('GOAL_EDIT_NEW'), '续轮提醒应带新目标');
+    eq(store.get('rtedit2').status, 'active', '旧目标的完成提案不得把新目标标记完成');
+    assert(!events.some((e) => e.t === 'goal_status_changed' && e.p.goal.status !== 'active'), '不应发生任何状态迁移');
+  });
+
+  await test('goal: 运行时——目标不在管辖（暂停）时改写文本不产生提醒', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'goal-rt-edit3-'));
+    const store = new GoalStore(dir);
+    const rt = createGoalRuntime({
+      goalStore: store, sessionId: 'rtedit3', config: parseGoalConfig(undefined),
+      harnessTools: ['create_goal', 'update_goal', 'get_goal'], emit: () => {},
+    });
+    rt.tools[0].run({ objective: '旧目标' });
+    store.update('rtedit3', (g) => ({ ...g, status: 'paused', statusReason: 'paused(user_requested)' }));
+    rt.beginTurn();
+    store.update('rtedit3', (g) => ({ ...g, objective: '新目标' }));
+    eq(rt.afterRound({ replyText: 'x', toolCalls: [{ name: 'read_file' }], usage: { prompt_tokens: 1, completion_tokens: 1 }, roundMs: 10 }), undefined);
+    eq(rt.consumeNote(), null, '非管辖目标不注入提醒');
+  });
+
   await test('goal: 运行时 onProposal 结算完成提案为 complete(worker_proposal)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'goal-rt5-'));
     const store = new GoalStore(dir);
@@ -546,6 +606,17 @@ export async function runGoalTests(test, assert, eq) {
     assert(escaped.includes('a&lt;b&gt;&amp;c'), '目标按不可信数据 XML 转义（对齐 escapeXmlText）');
     assert(!goalContinuationNote({}).includes('<objective>'), '无目标文本时不加空 objective 块');
     assert(!goalContinuationNote({ objective: 'x'.repeat(2500) }).includes('x'.repeat(2001)), '超长目标截断到 2000 字符');
+  });
+
+  await test('goal: 目标已更新提醒——不可信包裹 + 预算快照（对齐 MiniMax renderObjectiveUpdatedPrompt）', () => {
+    const note = goalObjectiveUpdatedNote({ objective: 'a<b>&c', tokensUsed: 1200, tokenBudget: 5000 });
+    assert(note.includes('【目标已更新】'), '应带标记');
+    assert(note.includes('<untrusted_objective>') && note.includes('a&lt;b&gt;&amp;c'), '新目标按不可信数据 XML 转义包裹');
+    assert(note.includes('已用 1200') && note.includes('上限 5000') && note.includes('剩余 3800'), '应附预算快照');
+    assert(note.includes('不要继续') && note.includes('不要因此调用 update_goal'), '应提示调整方向且不借此提案完成');
+    const unlimited = goalObjectiveUpdatedNote({ objective: 'x', tokensUsed: 10, tokenBudget: null });
+    assert(unlimited.includes('上限 unlimited') && unlimited.includes('剩余 unlimited'), '无预算记 unlimited（对齐 codex parity）');
+    assert(!goalObjectiveUpdatedNote({}).includes('<untrusted_objective>'), '无目标文本时不加空包裹块');
   });
 
   await test('goal: 续跑/收尾/验证反馈提醒文案单一事实源', () => {

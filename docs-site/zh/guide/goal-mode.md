@@ -63,6 +63,8 @@ Goal 模式给会话挂一个**跨轮次存续的目标**：模型自主推进�
 
 适配单 SSE turn 模型，不建队列子系统：turn 内模型不再要求工具、而目标仍 `active`、无终态提案、未触预算 / 熔断时，注入 goal-continuation 系统提醒续轮（受 harness 轮次上限与 goal 主轮预算双重封顶）。你发新消息即收尾，目标状态延续到下一次用户 turn。等待授权 / 计划批准 / 验证时发布 `goal_wait_changed`（`executionWait`），两端渲染「等待中」而非「卡住」。
 
+在 turn 进行中改写目标文本（网页 `/goal edit` / Composer 或 REST）时，在飞模型不会蒙在鼓里：下一轮即收到【目标已更新】提醒——新目标按不可信数据包裹（`<untrusted_objective>`）并附预算快照（已用 / 上限 / 剩余，无预算记 `unlimited`），模型据此调整方向，不再继续只为旧目标服务的工作；针对旧目标提出的待定终态提案同时作废（对齐 MiniMax `renderObjectiveUpdatedPrompt` 与绑定失配取消语义）。
+
 ## 用户面操作
 
 终端与网页 Composer 共用同一份 `/goal` 命令解析（`util/agent/goal/command.mjs` 单一事实源，语义对齐 MiniMax-code 的 `thread-goal-command`），两端行为完全一致：

@@ -61,6 +61,8 @@ No implicit routing: evaluator only runs when `goal.evaluatorModel` is explicitl
 
 Adapted to the single-SSE-turn model with no queue subsystem: within a turn, when the model stops calling tools while the goal is still `active`, with no terminal proposal and no budget / breaker trip, a goal-continuation system reminder extends the round (capped by both the harness round limit and the goal's main-turn budget). A new user message ends the continuation; the goal state carries into your next turn. While waiting for permission, plan approval, or verification, `goal_wait_changed` (`executionWait`) is emitted so both clients render "waiting" instead of "stuck".
 
+Rewriting the objective mid-turn (web `/goal edit` / Composer or REST) does not leave the in-flight model in the dark: its next round receives a "Goal updated" reminder — the new objective is wrapped as untrusted data (`<untrusted_objective>`) with a budget snapshot (used / cap / remaining, `unlimited` when uncapped) — so it adjusts course instead of continuing work that only served the old objective. A pending terminal proposal for the old objective is discarded at the same time (mirrors MiniMax `renderObjectiveUpdatedPrompt` and binding-staleness cancellation).
+
 ## User-side operations
 
 The terminal and the web Composer share one `/goal` parser (`util/agent/goal/command.mjs`, the single source of truth, mirroring MiniMax-code's `thread-goal-command`), so both clients behave identically:

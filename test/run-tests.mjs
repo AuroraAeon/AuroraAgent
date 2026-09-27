@@ -2520,6 +2520,27 @@ await test('Agent turn：USE_GOAL_IDLE 空转轮后续跑并提案完成', async
   assert(goalFile.turnsUsed >= 3, 'create/空转/提案三个 goal 轮都应入账');
 });
 
+await test('Agent turn：USE_GOAL_EDIT turn 内改写目标——在飞模型下一轮收到【目标已更新】并按新目标结算', async () => {
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: `USE_GOAL_EDIT:${s.id} 盯着把 README 安装章节改写并通过自检` }),
+  });
+  const all = await drainAgentStream(openAgentStream(resp));
+  const editReq = mock.state.requests.find((r) => r.body.includes('【目标已更新】'));
+  assert(editReq, 'turn 内改写目标后，在飞模型下一轮应收到【目标已更新】提醒');
+  assert(editReq.body.includes('GOAL_EDIT_NEW') && editReq.body.includes('<untrusted_objective>'), '提醒应带新目标文本并按不可信数据包裹');
+  assert(editReq.body.includes('预算快照'), '提醒应附预算快照');
+  const changed = all.find((e) => e.type === 'goal_status_changed' && e.goal.status === 'complete');
+  assert(changed, '应按新目标结算完成');
+  eq(changed.statusReason, 'complete(worker_proposal)');
+  assert(changed.goal.objective.includes('GOAL_EDIT_NEW'), '完成事件应透出改写后的新目标');
+  const goalFile = JSON.parse(readFileSync(join(tmpDataDir, 'goals', `${s.id}.json`), 'utf8'));
+  assert(goalFile.objective.includes('GOAL_EDIT_NEW'), '目标文件应落盘改写后的文本');
+  eq(goalFile.status, 'complete');
+  assert(all.at(-1).type === 'turn_completed', '应以 turn_completed 收尾');
+});
+
 await test('Agent turn：USE_GOAL_VERIFY_MET 经 evaluator 裁决 met → complete(verifier_met)', async () => {
   // goal 验证档配置落临时数据目录（evaluator 同路由小快模型）
   writeFileSync(join(tmpDataDir, 'auroraagent.config.json'), JSON.stringify({ goal: { verification: 'evaluator', evaluatorModel: 'LongCat-2.0' } }));

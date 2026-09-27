@@ -10,7 +10,7 @@ export function startMock(port = 18901) {
   const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (d) => { body += d; });
-    req.on('end', () => {
+    req.on('end', async () => {
       state.requests.push({ method: req.method, url: req.url, body });
       state.lastChatMeta = {
         url: req.url,
@@ -66,11 +66,26 @@ export function startMock(port = 18901) {
         const isGoalBudgetRound = lastText.includes('USE_GOAL_BUDGET') && !hasToolResult;
         const isGoalCreateRound = lastText.includes('USE_GOAL') && !hasToolResult;
         const isGoalWrapUp = body.includes('【目标预算收尾】');
+        // USE_GOAL_EDIT：用户在 turn 进行中经网页改写目标文本——mock 同步代打 REST edit
+        // （落盘必须早于宿主对下一轮的结算，在飞模型才能收到【目标已更新】）；只改写一次
+        const isGoalEditRound = body.includes('USE_GOAL_EDIT') && lastToolText.includes('目标已创建') && !state.goalEditDone;
+        if (isGoalEditRound) {
+          state.goalEditDone = true;
+          const editSid = /USE_GOAL_EDIT:([0-9a-f-]{36})/.exec(body)?.[1];
+          if (editSid) {
+            try {
+              await fetch('http://127.0.0.1:18787/api/agent/goal/edit', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sessionId: editSid, objective: 'GOAL_EDIT_NEW 把发布笔记章节改写并通过自检' }),
+              });
+            } catch { /* 改写失败时集成测试断言会红，不静默放过 */ }
+          }
+        }
         const isEvaluatorRound = body.includes('你是目标验证器');
         const isGoalIdleRound = body.includes('USE_GOAL_IDLE') && !isGoalWrapUp && body.includes('目标已创建')
           && !body.includes('【目标续跑】') && !lastToolText.includes('已记录');
         // 提案轮：首提案（上一条工具结果是 create 回执）或验证未通过反馈在场的复议；收尾轮不带工具不能误判
-        const isGoalProposalRound = !isGoalWrapUp && !isGoalIdleRound && (
+        const isGoalProposalRound = !isGoalWrapUp && !isGoalIdleRound && !isGoalEditRound && (
           lastToolText.includes('目标已创建')
           || (body.includes('【目标验证未通过') && lastToolText.includes('已记录'))
         );
@@ -78,7 +93,10 @@ export function startMock(port = 18901) {
         // 会话标题生成请求（titleMode=model）：系统提示带【会话标题生成】标记，回一个固定标题供断言
         const isTitleRound = body.includes('【会话标题生成】');
         const toolName = isGoalCreateRound ? 'create_goal' : isGoalProposalRound ? 'update_goal' : isSkillRound ? 'skill' : isTodoRound ? 'todo' : isEditRound ? 'edit_file' : isSwarmRound ? 'task' : isMcpRound ? 'mcp__mock__echo' : lastText.includes('USE_TOOL_WRITE') ? 'write_file' : 'read_file';
-        const toolArgs = isGoalCreateRound ? { objective: isGoalBudgetRound ? '把测试基线扩展到 300 个并保持全绿' : '把 README 安装章节改写并通过自检', ...(isGoalBudgetRound ? { token_budget: 10 } : {}) }
+        const createObjective = isGoalBudgetRound ? '把测试基线扩展到 300 个并保持全绿'
+          : body.includes('USE_GOAL_EDIT') ? 'GOAL_EDIT_OLD 把 README 安装章节改写并通过自检'
+          : '把 README 安装章节改写并通过自检';
+        const toolArgs = isGoalCreateRound ? { objective: createObjective, ...(isGoalBudgetRound ? { token_budget: 10 } : {}) }
           : isGoalProposalRound ? { mode: 'status', status: 'complete', summary: body.includes('USE_GOAL_VERIFY_MET') ? 'VERIFY_MET 已改写 README 安装章节并通过自检' : body.includes('USE_GOAL_VERIFY_RETRY') ? 'VERIFY_RETRY 已改写 README 安装章节' : body.includes('USE_GOAL_VERIFY') ? 'VERIFY_NOTMET 已改写 README 安装章节' : 'README 安装章节已改写并通过自检' }
           : isSkillRound ? { name: 'code-review' }
           : isTodoRound ? { action: 'add', item: 'mock 待办事项' }

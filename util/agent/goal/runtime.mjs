@@ -6,7 +6,8 @@
  *
  * 与 loop 的协作约定：
  *   - beginTurn()  turn 开始时定格目标是否 active（决定本 turn 是否受 goal 管辖）；
- *   - afterRound() 有工具调用的模型轮结束后调用，返回 undefined / 'finish' / 'wrapup'；
+ *   - afterRound() 有工具调用的模型轮结束后调用，返回 undefined / 'finish' / 'wrapup / 'updated'；
+ *     'updated' = 用户在 turn 内改写了目标文本，经 consumeNote() 取走【目标已更新】提醒注入下一轮；
  *   - onIdle()    无工具调用的模型轮结束后调用（含入账），返回 finish / wrapup / continue；
  *   - wait(reason) 权限 / 计划 / 验证等待期间设置 executionWait（供两端渲染「等待中」）；
  *   - finish()     turn 正常结束或上游失败时调用，结算待定的终态提案。
@@ -16,7 +17,7 @@ import { CREATE_GOAL_DEF, UPDATE_GOAL_DEF, GET_GOAL_DEF, resolveUpdateGoalMode }
 import { applyUsage, budgetBreach, rearmAfterBudgetRaise } from './budget.mjs';
 import { advanceBreakers } from './breaker.mjs';
 import { goalLimits, parseGoalConfig } from './config.mjs';
-import { GOAL_WRAPUP_NOTE, goalContinuationNote, goalVerifierFeedbackNote } from './continuation.mjs';
+import { GOAL_WRAPUP_NOTE, goalContinuationNote, goalObjectiveUpdatedNote, goalVerifierFeedbackNote } from './continuation.mjs';
 import { verifyGoalProposal, sameMissingSet } from './verification.mjs';
 
 export { GOAL_WRAPUP_NOTE };
@@ -50,6 +51,8 @@ export function createGoalRuntime({
   let pendingProposal = null;     // 本 turn 的终态提案 { status, summary }
   let createdThisTurn = false;    // 本 turn 内经 create_goal 武装
   let goalActiveAtStart = false;  // turn 开始时目标是否 active
+  let seenObjective = null;      // turn 开始（或 create_goal）时定格的目标文本：用户中途改写即失配
+  let updatedNote = null;        // afterRound 检出改写时暂存的【目标已更新】提醒（loop 经 consumeNote 取走）
 
   const allowed = (name) => harnessTools.includes(name);
   const inPlay = () => goalActiveAtStart || createdThisTurn;
@@ -73,6 +76,7 @@ export function createGoalRuntime({
           });
           createdThisTurn = true;
           goalActiveAtStart = true;
+          seenObjective = goal.objective;
           emit('goal_created', { sessionId, goal: publicGoal(goal) });
           const cap = goal.tokenBudget != null ? `，token 预算 ${goal.tokenBudget}` : '，无预算上限';
           return `目标已创建并开始追踪（goalId ${goal.goalId}，状态 active${cap}）。达成后用 update_goal 提案 complete，确实受阻时提案 blocked；进行中可用 get_goal 查看最新状态与用量。`;
@@ -136,6 +140,7 @@ export function createGoalRuntime({
     goalActiveAtStart = Boolean(cur && cur.status === 'active');
     createdThisTurn = false;
     pendingProposal = null;
+    seenObjective = goalActiveAtStart ? cur.objective : null;
   };
 
   /**
@@ -181,8 +186,19 @@ export function createGoalRuntime({
     if (!r) return undefined;
     if (r.directive) emitStatus(r.goal);
     emitUsage(r.goal);
+    if (!r.directive && r.goal.objective !== seenObjective) {
+      // 用户在 turn 进行中改写了目标文本（REST edit / 网页 Composer）：在飞模型下一轮
+      // 必须看到新目标（对齐 MiniMax objective-updated 与 binding-stale 的失配取消语义）
+      seenObjective = r.goal.objective;
+      updatedNote = goalObjectiveUpdatedNote(r.goal);
+      emitStatus(r.goal); // 状态未变但目标文本变了：让两端刷新展示
+      return 'updated';
+    }
     return r.directive;
   };
+
+  /** 取走并清空【目标已更新】提醒（afterRound 返回 'updated' 后由 loop 注入下一轮） */
+  const consumeNote = () => { const note = updatedNote; updatedNote = null; return note; };
 
   /** 结算一次终态提案；allowContinue 决定验证未过（未到阈值）时是否带反馈续跑 */
   const settleProposal = async (goal, proposal, { allowContinue = false } = {}) => {
@@ -298,6 +314,13 @@ export function createGoalRuntime({
 
   /** 目标仍 active 时的下一步：有待定提案走结算（可带验证反馈续跑），否则注入续跑提醒 */
   const decideNext = async (goal) => {
+    if (goal.objective !== seenObjective) {
+      // 空转轮前用户改写了目标：同样以【目标已更新】续轮；针对旧目标的待定提案作废
+      // （对齐 MiniMax 绑定失配即取消——旧提案回答了没人再问的问题）
+      seenObjective = goal.objective;
+      pendingProposal = null;
+      return { action: 'continue', extraSystem: goalObjectiveUpdatedNote(goal) };
+    }
     if (!pendingProposal) return { action: 'continue', extraSystem: goalContinuationNote(goal) };
     const d = await settleProposal(goal, pendingProposal, { allowContinue: true });
     const after = goalStore.get(sessionId);
@@ -338,5 +361,5 @@ export function createGoalRuntime({
   /** 读最新目标（/goal 命令与 footer 芯片用） */
   const current = () => goalStore.get(sessionId);
 
-  return { tools, beginTurn, afterRound, onIdle, onProposal, finish, wait, current, bindSpawn: (s) => { spawn = s; } };
+  return { tools, beginTurn, afterRound, onIdle, onProposal, finish, wait, current, consumeNote, bindSpawn: (s) => { spawn = s; } };
 }

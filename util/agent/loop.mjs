@@ -358,6 +358,7 @@ export async function runAgentTurn(ctx) {
       await runToolCalls(withIds(r.toolCalls, r.roundText));
       const stop = goalRt?.afterRound({ replyText: r.roundText, toolCalls: r.toolCalls, usage: currentEntry.usage, roundMs: Date.now() - roundT0 });
       if (stop === 'wrapup') { await runGoalWrapUp(); finished = true; break; }
+      if (stop === 'updated') { goalNote = goalRt.consumeNote() || ''; continue; } // 用户改写了目标文本：下一轮带【目标已更新】
       if (stop === 'proposal') {
         // 终态提案：结算（验证未过且未到阈值时可带反馈续跑）
         const d = await goalRt.onProposal();
