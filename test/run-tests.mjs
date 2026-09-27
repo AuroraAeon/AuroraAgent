@@ -2203,6 +2203,68 @@ await test('Agent turn：USE_GOAL_BUDGET 触顶转 budget_limited(token) 并跑�
   assert(goalFile.tokensUsed > 10, '触顶后用量照记（含收尾轮）');
 });
 
+await test('Agent turn：USE_GOAL_IDLE 空转轮后续跑并提案完成', async () => {
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_GOAL_IDLE 盯着把 README 安装章节改写' }),
+  });
+  const all = await drainAgentStream(openAgentStream(resp));
+  assert(all.some((e) => e.type === 'text_chunk' && String(e.text).includes('理清现状')), '应先有一轮空转文本');
+  assert(mock.state.requests.some((r) => r.body.includes('【目标续跑】')), '应注入 goal 续跑提醒');
+  assert(all.find((e) => e.type === 'tool_event' && e.toolName === 'update_goal' && e.phase === 'completed'), '续跑后应提案');
+  assert(all.find((e) => e.type === 'goal_status_changed' && e.goal.status === 'complete'), '应结算为完成');
+  const goalFile = JSON.parse(readFileSync(join(tmpDataDir, 'goals', `${s.id}.json`), 'utf8'));
+  eq(goalFile.status, 'complete');
+  assert(goalFile.turnsUsed >= 3, 'create/空转/提案三个 goal 轮都应入账');
+});
+
+await test('Agent turn：USE_GOAL_VERIFY_MET 经 evaluator 裁决 met → complete(verifier_met)', async () => {
+  // goal 验证档配置落临时数据目录（evaluator 同路由小快模型）
+  writeFileSync(join(tmpDataDir, 'auroraagent.config.json'), JSON.stringify({ goal: { verification: 'evaluator', evaluatorModel: 'LongCat-2.0' } }));
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_GOAL_VERIFY_MET 盯着把 README 安装章节改写' }),
+  });
+  const all = await drainAgentStream(openAgentStream(resp));
+  const changed = all.find((e) => e.type === 'goal_status_changed' && e.goal.status === 'complete');
+  assert(changed, '应有完成状态变更事件');
+  eq(changed.statusReason, 'complete(verifier_met)');
+  eq(changed.lastVerification.verdict, 'met');
+  assert(all.some((e) => e.type === 'goal_wait_changed' && e.reason === 'verification'), '验证期间应标记等待中');
+  assert(all.some((e) => e.type === 'goal_wait_changed' && e.reason === null), '验证结束应清除等待');
+  const evaluatorReq = mock.state.requests.map((r) => { try { return JSON.parse(r.body); } catch { return null; } })
+    .find((b) => b && JSON.stringify(b.messages?.[0]?.content || '').includes('你是目标验证器'));
+  assert(evaluatorReq, '应发起一次 evaluator 验证请求');
+  eq(evaluatorReq.model, 'LongCat-2.0', 'evaluator 应走配置的小快模型');
+  eq(evaluatorReq.temperature, 0, 'evaluator 应低温');
+  eq(evaluatorReq.max_tokens, 4096, 'evaluator maxTokens 封顶 4096');
+  assert(!evaluatorReq.tools, 'evaluator 请求不应带工具');
+  const goalFile = JSON.parse(readFileSync(join(tmpDataDir, 'goals', `${s.id}.json`), 'utf8'));
+  eq(goalFile.status, 'complete');
+  eq(goalFile.statusReason, 'complete(verifier_met)');
+});
+
+await test('Agent turn：USE_GOAL_VERIFY_NOTMET 连续未达到阈值转 blocked(verifier_impossible)', async () => {
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_GOAL_VERIFY_NOTMET 盯着把 README 安装章节改写' }),
+  });
+  const all = await drainAgentStream(openAgentStream(resp));
+  const blocked = all.find((e) => e.type === 'goal_status_changed' && e.goal.status === 'blocked');
+  assert(blocked, '连续 not_met 到阈值应转 blocked');
+  eq(blocked.statusReason, 'blocked(verifier_impossible)');
+  assert(blocked.lastVerification.notMetStreak >= 5, '未达成连胜应达到阈值 5');
+  const feedbackCount = mock.state.requests.filter((r) => r.body.includes('【目标验证未通过')).length;
+  assert(feedbackCount >= 4, '前几次未达成应带证据反馈续跑（第 5 次直接判受阻）');
+  const goalFile = JSON.parse(readFileSync(join(tmpDataDir, 'goals', `${s.id}.json`), 'utf8'));
+  eq(goalFile.status, 'blocked');
+  eq(goalFile.statusReason, 'blocked(verifier_impossible)');
+  assert(goalFile.lastVerification.notMetStreak >= 5);
+});
+
 await test('Agent turn：计划模式驳回后不执行', async () => {
   const s = await createAgentSession();
   const resp = await fetch(`${AGENT}/turn`, {

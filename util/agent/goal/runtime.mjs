@@ -1,30 +1,28 @@
 /**
  * Goal 运行时编排：loop.mjs 的唯一 goal 交互面。
- * 工具执行、用量入账、熔断推进、预算检查、终态提案结算全部收敛在本文件；
- * loop.mjs 只保留钩子调用（beginTurn / afterRound / finish），无目标会话的钩子
- * 是一次廉价读文件后原样返回，不改变正常 turn 的任何行为。
+ * 工具执行、用量入账、熔断推进、预算检查、终态提案结算（含独立验证）、
+ * 自动续跑决策、执行等待全部收敛在本文件；loop.mjs 只保留钩子调用。
+ * 无目标会话的钩子是一次廉价读文件后原样返回，不改变正常 turn 的任何行为。
  *
  * 与 loop 的协作约定：
- *   - beginTurn() 在 turn 开始时调用，记录目标当时是否 active（决定本 turn 是否受 goal 管辖）；
- *   - afterRound() 在每个模型轮（含其工具执行）结束后调用，返回 undefined（不干预）/
- *     'finish'（本 turn 收尾）/ 'wrapup'（需追加一个无工具预算收尾轮）；
- *   - finish() 在 turn 正常结束或上游失败时调用，结算待定的终态提案。
+ *   - beginTurn()  turn 开始时定格目标是否 active（决定本 turn 是否受 goal 管辖）；
+ *   - afterRound() 有工具调用的模型轮结束后调用，返回 undefined / 'finish' / 'wrapup'；
+ *   - onIdle()    无工具调用的模型轮结束后调用（含入账），返回 finish / wrapup / continue；
+ *   - wait(reason) 权限 / 计划 / 验证等待期间设置 executionWait（供两端渲染「等待中」）；
+ *   - finish()     turn 正常结束或上游失败时调用，结算待定的终态提案。
  */
 import { GoalConflictError } from './store.mjs';
 import { CREATE_GOAL_DEF, UPDATE_GOAL_DEF, GET_GOAL_DEF, resolveUpdateGoalMode } from './tools.mjs';
 import { applyUsage, budgetBreach, rearmAfterBudgetRaise } from './budget.mjs';
 import { advanceBreakers } from './breaker.mjs';
 import { goalLimits, parseGoalConfig } from './config.mjs';
+import { GOAL_CONTINUATION_NOTE, GOAL_WRAPUP_NOTE, goalVerifierFeedbackNote } from './continuation.mjs';
+import { verifyGoalProposal } from './verification.mjs';
 
-/** goal 簿记工具：它们本身不算「干了活」（熔断的 noToolStreak 不因它们重置） */
+export { GOAL_WRAPUP_NOTE };
+
+/** goal 簿记工具：本身不算「干了活」（熔断的 noToolStreak 不因它们重置） */
 const BOOKKEEPING_TOOLS = new Set(['get_goal', 'update_goal']);
-
-/** 预算触顶后追加的唯一收尾轮的系统提醒：只总结，不让继续干活 */
-export const GOAL_WRAPUP_NOTE = [
-  '【目标预算收尾】本会话的进行中目标已触及预算上限，自动续跑已停止。',
-  '这一轮不要调用任何工具，用一段话向用户总结：已完成什么、未完成什么、为何在此停止。',
-  '并告知用户：可以说「把目标预算提高到 N」或「清除预算上限」，经 update_goal 调整后继续跑。',
-].join('\n');
 
 /** 事件与 UI 用的公开投影（存储形状已归一化，直接浅拷贝） */
 export function publicGoal(goal) {
@@ -35,15 +33,23 @@ export function publicGoal(goal) {
  * @param goalStore  GoalStore 实例（一会话一个目标文件）
  * @param sessionId  当前会话
  * @param config     parseGoalConfig 的产物
- * @param harnessTools 当前 harness 收录的工具名（goal 三项仅 standard/ultimate 有）
+ * @param harnessTools 当前 harness 收录的工具名（goal 三项仅 standard/ultimate 收录）
  * @param emit       AgentEvent 出口
+ * @param store      会话存储（transcript 证据用）
+ * @param provider   提供方（evaluator 同路由验证用）
+ * @param signal     turn 级 AbortSignal（验证请求可被中止）
+ * @param onExtraUsage (usage, ms, purpose) 验证等附加请求的账本记账回调
  */
-export function createGoalRuntime({ goalStore, sessionId, config, harnessTools = [], emit, log = () => {} }) {
+export function createGoalRuntime({
+  goalStore, sessionId, config, harnessTools = [], emit, log = () => {},
+  store = null, provider = null, signal = null, onExtraUsage = null,
+}) {
   const cfg = config || parseGoalConfig(null);
   const limits = goalLimits(cfg);
-  let pendingProposal = null;    // 本 turn 的终态提案 { status, summary }
-  let createdThisTurn = false;   // 本 turn 内经 create_goal 武装
-  let goalActiveAtStart = false; // turn 开始时目标是否 active
+  let spawn = null;               // 子代理派发器（loop 创建后经 bindSpawn 注入）
+  let pendingProposal = null;     // 本 turn 的终态提案 { status, summary }
+  let createdThisTurn = false;    // 本 turn 内经 create_goal 武装
+  let goalActiveAtStart = false;  // turn 开始时目标是否 active
 
   const allowed = (name) => harnessTools.includes(name);
   const inPlay = () => goalActiveAtStart || createdThisTurn;
@@ -91,7 +97,7 @@ export function createGoalRuntime({ goalStore, sessionId, config, harnessTools =
         if (!cur) return '当前会话没有目标：请先用 create_goal 创建。';
         if (mode === 'token_budget') {
           if (String(args.expected_goal_id || '') !== cur.goalId) {
-            return 'expected_goal_id 与当前目标不符：请先调用 get_goal 获取最新快照，再原样带回 its goalId 与 updatedAt。';
+            return 'expected_goal_id 与当前目标不符：请先调用 get_goal 获取最新快照，再原样带回它的 goalId 与 updatedAt。';
           }
           if (!Number.isInteger(args.expected_updated_at)) {
             return '预算变更必须带 get_goal 返回的 expected_updated_at（决策纪元）：请先调用 get_goal。';
@@ -101,7 +107,7 @@ export function createGoalRuntime({ goalStore, sessionId, config, harnessTools =
             const next = goalStore.update(sessionId, (g) => rearmAfterBudgetRaise(g, tb), { expectedUpdatedAt: args.expected_updated_at });
             emitStatus(next);
             const resumed = cur.status !== 'active' && next.status === 'active';
-            return `token 预算已更新为 ${next.tokenBudget == null ? '无上限' : next.tokenBudget}${resumed ? '，目标已恢复进行中' : ''}。本次变更不结束当前回合。`;
+            return `token 预算已更新为 ${next.tokenBudget == null ? '无上限' : next.tokenBudget}${resumed ? '，目标已恢复进行中' : ''}。本次更新不结束当前轮。`;
           } catch (e) {
             if (e?.code === 'GOAL_STALE') return '目标刚被其他操作修改（纪元不符）：请重新调用 get_goal 获取最新快照后再改预算。';
             throw e;
@@ -133,28 +139,27 @@ export function createGoalRuntime({ goalStore, sessionId, config, harnessTools =
   };
 
   /**
-   * 每个模型轮结束后：用量入账 + 熔断推进 + 预算检查（一次原子落盘）。
-   * @returns undefined 不干预 / 'finish' 收尾本 turn / 'wrapup' 追加预算收尾轮
+   * 一轮的用量入账 + 熔断推进 + 预算检查（一次原子落盘）。
+   * @returns null（本 turn 不受 goal 管辖）或 { goal, directive }
    */
-  const afterRound = ({ replyText = '', toolCalls = [], usage = null, roundMs = 0 } = {}) => {
+  const account = ({ replyText = '', toolCalls = [], usage = null, roundMs = 0 }) => {
     const cur = goalStore.get(sessionId);
-    if (!cur || !inPlay()) return undefined;
+    if (!cur || !inPlay()) return null;
     const tokens = (usage?.prompt_tokens || 0) + (usage?.completion_tokens || 0);
     const turnSeconds = Math.max(0, Math.round(roundMs / 1000));
     if (cur.status !== 'active') {
-      // 目标在本 turn 内被停下（用户操作）或已终态：用量照记，熔断与预算不再推进，turn 收尾
-      const n = goalStore.update(sessionId, (g) => applyUsage(g, { tokens, turnSeconds }));
-      emitUsage(n);
-      return 'finish';
+      // 目标在本 turn 内被停下（用户操作）或已终态：用量照记，熔断与预算不再推进
+      return { goal: goalStore.update(sessionId, (g) => applyUsage(g, { tokens, turnSeconds })), directive: 'finish' };
     }
-    const toolCommitted = toolCalls.some((c) => !BOOKKEEPING_TOOLS.has(c.name));
+    // 提案轮也算「接了 goal 协议」：noToolStreak 不因提案累加，验证连胜才是提案打转的后备闸
+    const toolCommitted = toolCalls.some((c) => !BOOKKEEPING_TOOLS.has(c.name)) || Boolean(pendingProposal);
     let directive;
     const next = goalStore.update(sessionId, (g) => {
       let n = applyUsage(g, { tokens, turnSeconds });
       const br = advanceBreakers(n, { replyText, toolCommitted, limit: cfg.repeatedReplyLimit });
       n = br.goal;
       if (pendingProposal) {
-        directive = 'finish'; // 提案已成立：本 turn 收尾，finish() 统一结算
+        directive = 'proposal'; // 提案已成立：结束轮次循环，转 settleProposal 结算（可能带反馈续跑）
       } else {
         const breach = budgetBreach(n, limits);
         if (breach) {
@@ -167,30 +172,139 @@ export function createGoalRuntime({ goalStore, sessionId, config, harnessTools =
       }
       return n;
     });
-    if (directive) emitStatus(next);
-    emitUsage(next);
-    return directive;
+    return { goal: next, directive };
   };
 
-  /** turn 收尾：结算待定的终态提案（P1 直接结算；验证档位随后续迭代接入） */
+  /** 有工具调用的模型轮结束后：入账 + 熔断 + 预算，返回 undefined / 'finish' / 'wrapup' */
+  const afterRound = (args) => {
+    const r = account(args);
+    if (!r) return undefined;
+    if (r.directive) emitStatus(r.goal);
+    emitUsage(r.goal);
+    return r.directive;
+  };
+
+  /** 结算一次终态提案；allowContinue 决定验证未过（未到阈值）时是否带反馈续跑 */
+  const settleProposal = async (goal, proposal, { allowContinue = false } = {}) => {
+    pendingProposal = null; // 提案一旦进入结算即消费，避免重复结算
+    const proposalRec = { status: proposal.status, summary: proposal.summary, at: Date.now() };
+    if (proposal.status === 'blocked') {
+      const next = goalStore.update(sessionId, (g) => ({
+        ...g, status: 'blocked', statusReason: 'blocked(worker_reported)', lastWorkerProposal: proposalRec,
+      }));
+      emitStatus(next);
+      return { action: 'finish' };
+    }
+    if (cfg.verification === 'none') {
+      const next = goalStore.update(sessionId, (g) => ({
+        ...g, status: 'complete', statusReason: 'complete(worker_proposal)', lastWorkerProposal: proposalRec,
+      }));
+      emitStatus(next);
+      return { action: 'finish' };
+    }
+    // 验证档：先标「验证中」等待，裁决后无论成败都清等待
+    wait('verification');
+    const verifyT0 = Date.now();
+    let result;
+    try {
+      result = await verifyGoalProposal({ store, sessionId, goal, proposal, config: cfg, provider, spawn, signal });
+    } finally {
+      wait(null);
+    }
+    if (result?.usage) {
+      goalStore.update(sessionId, (g) => applyUsage(g, { tokens: (result.usage.prompt_tokens || 0) + (result.usage.completion_tokens || 0), isGoalTurn: false }));
+      onExtraUsage?.(result.usage, Date.now() - verifyT0, 'goal-verify');
+    }
+    if (!result || result.available === false) {
+      const next = goalStore.update(sessionId, (g) => ({
+        ...g, status: 'paused', statusReason: 'paused(verifier_unavailable)',
+        lastVerification: { verdict: 'unavailable', at: Date.now(), evidence: String(result?.error || '验证器不可用').slice(0, 500) },
+      }));
+      emitStatus(next);
+      return { action: 'finish' };
+    }
+    if (result.verdict === 'met') {
+      const next = goalStore.update(sessionId, (g) => ({
+        ...g, status: 'complete', statusReason: 'complete(verifier_met)', lastWorkerProposal: proposalRec,
+        lastVerification: { verdict: 'met', at: Date.now(), evidence: result.evidence, notMetStreak: 0 },
+      }));
+      emitStatus(next);
+      return { action: 'finish' };
+    }
+    if (result.verdict === 'impossible') {
+      const next = goalStore.update(sessionId, (g) => ({
+        ...g, status: 'blocked', statusReason: 'blocked(verifier_impossible)', lastWorkerProposal: proposalRec,
+        lastVerification: { verdict: 'impossible', at: Date.now(), evidence: result.evidence },
+      }));
+      emitStatus(next);
+      return { action: 'finish' };
+    }
+    // not_met / inconclusive：累加连续未达成，到阈值才判受阻
+    const streak = Number(goal.lastVerification?.notMetStreak || 0) + 1;
+    if (streak >= cfg.repeatedNotMetLimit) {
+      const next = goalStore.update(sessionId, (g) => ({
+        ...g, status: 'blocked', statusReason: 'blocked(verifier_impossible)', lastWorkerProposal: proposalRec,
+        lastVerification: { verdict: result.verdict, at: Date.now(), evidence: result.evidence, notMetStreak: streak },
+      }));
+      emitStatus(next);
+      return { action: 'finish' };
+    }
+    const next = goalStore.update(sessionId, (g) => ({
+      ...g, lastVerification: { verdict: result.verdict, at: Date.now(), evidence: result.evidence, notMetStreak: streak },
+    }));
+    emitStatus(next); // 状态未变但验证结论刷新（lastVerification 随事件透出）
+    if (allowContinue) {
+      return { action: 'continue', extraSystem: goalVerifierFeedbackNote(result, streak, cfg.repeatedNotMetLimit) };
+    }
+    return { action: 'finish' };
+  };
+
+  /**
+   * 无工具调用的模型轮结束后：入账 + 提案结算 / 续跑决策。
+   * @returns { action: 'finish' | 'wrapup' | 'continue', extraSystem? }
+   */
+  const onIdle = async (args) => {
+    const r = account({ ...args, toolCalls: [] });
+    if (!r) return { action: 'finish' };
+    if (r.directive) emitStatus(r.goal);
+    emitUsage(r.goal);
+    if (r.directive === 'wrapup') return { action: 'wrapup' };
+    if (r.directive === 'finish') return { action: 'finish' };
+    return decideNext(r.goal);
+  };
+
+  /** 目标仍 active 时的下一步：有待定提案走结算（可带验证反馈续跑），否则注入续跑提醒 */
+  const decideNext = async (goal) => {
+    if (!pendingProposal) return { action: 'continue', extraSystem: GOAL_CONTINUATION_NOTE };
+    const d = await settleProposal(goal, pendingProposal, { allowContinue: true });
+    const after = goalStore.get(sessionId);
+    if (after) emitUsage(after);
+    return d;
+  };
+
+  /** 提案轮（update_goal 单独成轮或与其他工具同轮）结束后的结算入口 */
+  const onProposal = async () => {
+    const cur = goalStore.get(sessionId);
+    if (!cur || !pendingProposal) return { action: 'finish' };
+    return decideNext(cur);
+  };
+
+  /** 设置 / 清除执行等待（permission / plan / verification）；仅 active 目标有意义 */
+  const wait = (reason) => {
+    const cur = goalStore.get(sessionId);
+    if (!cur || cur.status !== 'active') return;
+    if ((cur.executionWait?.reason || null) === (reason || null)) return;
+    const next = goalStore.update(sessionId, (g) => ({ ...g, executionWait: reason ? { reason, sinceMs: Date.now() } : null }));
+    emit('goal_wait_changed', { sessionId, goal: publicGoal(next), reason: reason || null });
+  };
+
+  /** turn 收尾：结算待定的终态提案（不允许续跑）并发出最终用量快照 */
   const finish = async () => {
     const cur = goalStore.get(sessionId);
     if (!cur) return;
     if (pendingProposal && cur.status === 'active') {
       try {
-        if (pendingProposal.status === 'blocked') {
-          const next = goalStore.update(sessionId, (g) => ({
-            ...g, status: 'blocked', statusReason: 'blocked(worker_reported)',
-            lastWorkerProposal: { status: 'blocked', summary: pendingProposal.summary, at: Date.now() },
-          }));
-          emitStatus(next);
-        } else {
-          const next = goalStore.update(sessionId, (g) => ({
-            ...g, status: 'complete', statusReason: 'complete(worker_proposal)',
-            lastWorkerProposal: { status: 'complete', summary: pendingProposal.summary, at: Date.now() },
-          }));
-          emitStatus(next);
-        }
+        await settleProposal(cur, pendingProposal, { allowContinue: false });
       } catch (e) { log('warn', 'goal 提案结算失败', { sessionId, error: String(e) }); }
     }
     pendingProposal = null;
@@ -201,5 +315,5 @@ export function createGoalRuntime({ goalStore, sessionId, config, harnessTools =
   /** 读最新目标（/goal 命令与 footer 芯片用） */
   const current = () => goalStore.get(sessionId);
 
-  return { tools, beginTurn, afterRound, finish, current };
+  return { tools, beginTurn, afterRound, onIdle, onProposal, finish, wait, current, bindSpawn: (s) => { spawn = s; } };
 }

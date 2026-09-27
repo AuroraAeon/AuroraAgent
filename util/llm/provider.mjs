@@ -13,14 +13,17 @@ const RETRY_OPTS = { attempts: 3 };
  * 打开一条上游对话流。
  * @param provider 提供方记录（含 protocol / baseUrl / apiKey / builtin）
  * @param opts     buildChatRequest 的 opts（model / messages / toolNames / extraTools / gen 参数）
- * @param io       { signal, onRetry }
+ * @param io       { signal, onRetry, retryAttempts }（retryAttempts 覆盖连接期重试总次数）
  * @returns {{ reader: ReadableStreamDefaultReader, translate: function|undefined }}
  *          上游非 2xx 时抛出带 kind / status 的 Error（message 即中文提示）；
  *          网络层失败原样抛出（kind=network），调用方按需兜底。
  */
 export async function openChatStream(provider, opts, io = {}) {
   const wire = buildChatRequest(provider, opts);
-  const resp = await fetchUpstream(wire, { ...RETRY_OPTS, signal: io.signal, onRetry: io.onRetry });
+  const resp = await fetchUpstream(wire, {
+    ...RETRY_OPTS, ...(io.retryAttempts !== undefined ? { attempts: io.retryAttempts } : {}),
+    signal: io.signal, onRetry: io.onRetry,
+  });
   if (!resp.ok) {
     const errText = await resp.text().catch(() => '');
     const err = new Error(upstreamHint(provider, resp.status, errText));

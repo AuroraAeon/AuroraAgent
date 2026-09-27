@@ -19,7 +19,8 @@ import { DEFAULT_SESSION_NAME } from './session.mjs';
 import { DEFAULT_TITLE_MODE } from '../config.mjs';
 import { PLAN_MAX_ROUNDS, PLAN_MODE_PROMPT, planExecutionNote, planToolNames } from './plan.mjs';
 import { assembleMessages, needsCompaction, planCompaction, compactionMessages, contextWindowOf } from './context.mjs';
-import { createGoalRuntime, GOAL_WRAPUP_NOTE } from './goal/runtime.mjs';
+import { createGoalRuntime } from './goal/runtime.mjs';
+import { GOAL_WRAPUP_NOTE } from './goal/continuation.mjs';
 
 /** 单轮用量结算：提供方单价优先，缺侧回退内置价（与 settleUsage 同规则） */
 function settlePrice(provider, builtinPrice) {
@@ -71,16 +72,17 @@ export async function runAgentTurn(ctx) {
     emit('token_usage_updated', { sessionId, turnId, model, inputTokens: inTok, outputTokens: outTok, cost: Number(cost.toFixed(6)) });
   };
 
-  /** 标题请求记账（titleMode=model 的增量成本）：同一套单价，进账本与会话汇总，但不进转录与轮次脚注（渲染口径与本地模式一致） */
-  const recordTitleUsage = (u, ms) => {
+  /** 附加请求记账（titleMode=model 的标题轮 / goal 验证轮）：同一套单价，进账本与会话汇总，但不进转录与轮次脚注（渲染口径与本地模式一致） */
+  const recordExtraUsage = (u, ms, purpose) => {
     if (!u) return;
     const inTok = u.prompt_tokens || 0;
     const outTok = u.completion_tokens || 0;
     const cost = (inTok * price.input + outTok * price.output) / 1_000_000;
     totIn += inTok; totOut += outTok; totCost = Number((totCost + cost).toFixed(6));
     store.patch(sessionId, { inputTokens: totIn, outputTokens: totOut, cost: totCost });
-    usage.record({ kind: 'agent', requestId: `title_${turnId}`, sessionId, model, provider: provider.id, ms, inputTokens: inTok, outputTokens: outTok, reasoningTokens: 0, cost: Number(cost.toFixed(6)), purpose: 'title' });
+    usage.record({ kind: 'agent', requestId: `${purpose}_${turnId}`, sessionId, model, provider: provider.id, ms, inputTokens: inTok, outputTokens: outTok, reasoningTokens: 0, cost: Number(cost.toFixed(6)), purpose });
   };
+  const recordTitleUsage = (u, ms) => recordExtraUsage(u, ms, 'title');
 
   /**
    * 自动总结标题：会话仍是默认名时才起名（用户改名或显式命名不覆盖）。
@@ -130,9 +132,14 @@ export async function runAgentTurn(ctx) {
   // 钩子（beginTurn / afterRound / finish）驱动用量入账、熔断、预算与提案结算。
   // 无 goalStore（旧调用方 / 测试）时全部钩子为空操作，行为与本节之前完全一致。
   const goalRt = goalStore && depth === 0
-    ? createGoalRuntime({ goalStore, sessionId, config: goalCfg || undefined, harnessTools: harness.tools, emit, log })
+    ? createGoalRuntime({
+      goalStore, sessionId, config: goalCfg || undefined, harnessTools: harness.tools, emit, log,
+      store, provider, signal: controller.signal,
+      onExtraUsage: (u, ms, purpose) => recordExtraUsage(u, ms, purpose),
+    })
     : null;
   const allTools = goalRt ? [...extraTools, ...goalRt.tools] : extraTools;
+  if (goalRt) goalRt.bindSpawn(spawn); // 验证档 subagent 派发只读验证子代理
 
   /** 超长时把早期记录折叠成一条 summary（压缩本身花一轮模型调用，失败不阻塞主流程） */
   const maybeCompact = async () => {
@@ -157,22 +164,24 @@ export async function runAgentTurn(ctx) {
 
   /** 权限询问：abort 即视为拒绝，绝不让 turn 挂死在无人响应的确认上 */
   const askPermission = (payload) => new Promise((resolve) => {
-    const onAbort = () => resolve('deny');
+    const onAbort = () => { goalRt?.wait(null); resolve('deny'); };
     if (controller.signal.aborted) return resolve('deny');
     controller.signal.addEventListener('abort', onAbort, { once: true });
+    goalRt?.wait('permission');
     Promise.resolve(requestPermission(payload))
-      .then((d) => { controller.signal.removeEventListener('abort', onAbort); resolve(d === 'allow' || d === 'always' ? d : 'deny'); })
-      .catch(() => { controller.signal.removeEventListener('abort', onAbort); resolve('deny'); });
+      .then((d) => { controller.signal.removeEventListener('abort', onAbort); goalRt?.wait(null); resolve(d === 'allow' || d === 'always' ? d : 'deny'); })
+      .catch(() => { controller.signal.removeEventListener('abort', onAbort); goalRt?.wait(null); resolve('deny'); });
   });
 
   /** 计划决策询问：abort 即视为驳回 */
   const askPlan = (plan) => new Promise((resolve) => {
-    const onAbort = () => resolve('reject');
+    const onAbort = () => { goalRt?.wait(null); resolve('reject'); };
     if (controller.signal.aborted) return resolve('reject');
     controller.signal.addEventListener('abort', onAbort, { once: true });
+    goalRt?.wait('plan');
     Promise.resolve(requestPlanDecision({ plan }))
-      .then((d) => { controller.signal.removeEventListener('abort', onAbort); resolve(d === 'approve' ? 'approve' : 'reject'); })
-      .catch(() => { controller.signal.removeEventListener('abort', onAbort); resolve('reject'); });
+      .then((d) => { controller.signal.removeEventListener('abort', onAbort); goalRt?.wait(null); resolve(d === 'approve' ? 'approve' : 'reject'); })
+      .catch(() => { controller.signal.removeEventListener('abort', onAbort); goalRt?.wait(null); resolve('reject'); });
   });
 
   let messages = assembleMessages({ harness, workspace: session.workspace, records, skills });
@@ -331,22 +340,31 @@ export async function runAgentTurn(ctx) {
 
     // —— 执行阶段：完整工具集（计划批准后计划文本作为既定契约已在上下文中）——
     const execToolNames = [...new Set([...harness.tools, ...(skills.length ? ['skill'] : []), ...allTools.map((t) => t.name)])];
+    let goalNote = ''; // goal 续跑 / 验证反馈提醒：只带一轮（runRound 消费后即清）
     for (round = round + 1; round <= harness.maxRounds; round++) {
       const roundT0 = Date.now();
-      const r = await runRound({ toolNames: execToolNames });
+      const r = await runRound({ toolNames: execToolNames, extraSystem: goalNote });
+      goalNote = '';
       if (r.failed) { await goalRt?.finish(); return { turnId, text: finalText, rounds: round, tools: totalTools, failed: true }; }
       finalText = r.roundText;
       if (!r.toolCalls.length) {
+        // 无工具轮：goal 在管辖时入账 + 提案结算 / 续跑决策；不在管辖时照旧结束
+        const d = goalRt ? await goalRt.onIdle({ replyText: r.roundText, usage: currentEntry.usage, roundMs: Date.now() - roundT0 }) : { action: 'finish' };
+        if (d.action === 'wrapup') { await runGoalWrapUp(); finished = true; break; }
+        if (d.action === 'continue') { goalNote = d.extraSystem || ''; continue; }
         finished = true;
-        // goal 钩子：无工具轮也要入账与熔断；'wrapup' 时补一个预算收尾轮再结束
-        if (goalRt?.afterRound({ replyText: r.roundText, toolCalls: [], usage: currentEntry.usage, roundMs: Date.now() - roundT0 }) === 'wrapup') {
-          await runGoalWrapUp();
-        }
         break;
       }
       await runToolCalls(withIds(r.toolCalls, r.roundText));
       const stop = goalRt?.afterRound({ replyText: r.roundText, toolCalls: r.toolCalls, usage: currentEntry.usage, roundMs: Date.now() - roundT0 });
       if (stop === 'wrapup') { await runGoalWrapUp(); finished = true; break; }
+      if (stop === 'proposal') {
+        // 终态提案：结算（验证未过且未到阈值时可带反馈续跑）
+        const d = await goalRt.onProposal();
+        if (d.action === 'continue') { goalNote = d.extraSystem || ''; continue; }
+        finished = true;
+        break;
+      }
       if (stop) { finished = true; break; }
     }
   } catch (err) {

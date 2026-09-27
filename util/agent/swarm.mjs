@@ -13,7 +13,8 @@ export const MAX_DEPTH = 2;
 
 /**
  * 造一个派发器。ctx 与 loop.mjs 的 runAgentTurn 入参同构（runTurn 注入自身）。
- * @returns {(task?: string, tasks?: string[]) => Promise<{ output: string, extra: { children } }>}
+ * @returns {(task?: string, tasks?: string[], opts?: { harness? }) => Promise<{ output: string, extra: { children } }>}
+ *          opts.harness 覆盖子代理模式（goal 只读验证子代理用）
  */
 export function createSpawner(ctx) {
   const {
@@ -23,14 +24,14 @@ export function createSpawner(ctx) {
   } = ctx;
 
   /** 跑一个子代理：新建子会话（继承工作目录与权限规则）→ 嵌套 turn → 汇总 */
-  const spawnOne = async (taskText) => {
+  const spawnOne = async (taskText, childHarness = harness) => {
     const task = String(taskText || '').slice(0, 500);
     if (depth >= MAX_DEPTH) {
       return { task, ok: false, text: `子代理嵌套深度已达上限（${MAX_DEPTH} 层），不再派生`, sessionId: '', rounds: 0, tools: 0 };
     }
     const child = store.create({
       name: `子任务：${task.slice(0, 24)}`,
-      model, provider: provider.id, harness: harness.id, workspace,
+      model, provider: provider.id, harness: childHarness.id, workspace,
     });
     if (rules.length) store.patch(child.id, { rules: rules.map(({ action, resource, effect }) => ({ action, resource, effect })) });
     const childController = new AbortController();
@@ -46,7 +47,7 @@ export function createSpawner(ctx) {
     let result;
     try {
       result = await runTurn({
-        store, usage, session: child, input: task, provider, model, harness,
+        store, usage, session: child, input: task, provider, model, harness: childHarness,
         builtinPrice, skills, gen, extraTools,
         emit: childEmit, controller: childController,
         requestPermission, permissionMode, titleMode,
@@ -66,7 +67,8 @@ export function createSpawner(ctx) {
   };
 
   /** 派发入口：task 单发或 tasks 并行（上限 MAX_CHILDREN），聚合为工具结果 */
-  return async function spawn(task, tasks) {
+  return async function spawn(task, tasks, opts = {}) {
+    const childHarness = opts.harness || harness;
     if (depth >= MAX_DEPTH) {
       return { output: `子代理嵌套深度已达上限（${MAX_DEPTH} 层），本次派发被拒绝。请自行完成剩余工作。`, extra: { children: [] } };
     }
@@ -75,7 +77,7 @@ export function createSpawner(ctx) {
       .filter(Boolean)
       .slice(0, MAX_CHILDREN);
     if (!list.length) return { output: '没有可派发的子任务：task 或 tasks 至少填一项，且描述不能为空', extra: { children: [] } };
-    const children = await Promise.all(list.map((t) => spawnOne(t)));
+    const children = await Promise.all(list.map((t) => spawnOne(t, childHarness)));
     const okCount = children.filter((c) => c.ok).length;
     const lines = [`子代理结果（${okCount}/${children.length} 成功）：`];
     children.forEach((c, i) => {

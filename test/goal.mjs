@@ -16,6 +16,8 @@ import { parseGoalConfig, GOAL_CONFIG_DEFAULTS, goalLimits } from '../util/agent
 import { applyUsage, budgetBreach, rearmAfterBudgetRaise, goalUsageChip } from '../util/agent/goal/budget.mjs';
 import { replyFingerprint, advanceBreakers } from '../util/agent/goal/breaker.mjs';
 import { createGoalRuntime } from '../util/agent/goal/runtime.mjs';
+import { parseVerdict } from '../util/agent/goal/verification.mjs';
+import { GOAL_CONTINUATION_NOTE, GOAL_WRAPUP_NOTE, goalVerifierFeedbackNote } from '../util/agent/goal/continuation.mjs';
 
 export async function runGoalTests(test, assert, eq) {
   console.log('\nGoal 模式单测');
@@ -344,7 +346,7 @@ export async function runGoalTests(test, assert, eq) {
     eq(g.tokensUsed, 35, '触顶轮的用量照记');
   });
 
-  await test('goal: 运行时 finish 结算完成提案为 complete(worker_proposal)', async () => {
+  await test('goal: 运行时 onProposal 结算完成提案为 complete(worker_proposal)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'goal-rt5-'));
     const store = new GoalStore(dir);
     const events = [];
@@ -355,14 +357,112 @@ export async function runGoalTests(test, assert, eq) {
     rt.tools[0].run({ objective: '提案结算' });
     rt.beginTurn();
     rt.tools[1].run({ mode: 'status', status: 'complete', summary: '已搞定' });
-    eq(rt.afterRound({ replyText: '', toolCalls: [{ name: 'update_goal' }], usage: { prompt_tokens: 20, completion_tokens: 15 }, roundMs: 100 }), 'finish', '提案轮后应收尾');
-    await rt.finish();
+    eq(rt.afterRound({ replyText: '', toolCalls: [{ name: 'update_goal' }], usage: { prompt_tokens: 20, completion_tokens: 15 }, roundMs: 100 }), 'proposal', '提案轮应转结算而非直接收尾');
+    const d = await rt.onProposal();
+    eq(d.action, 'finish', 'none 档验证直接采信提案');
     const g = store.get('rt5');
     eq(g.status, 'complete');
     eq(g.statusReason, 'complete(worker_proposal)');
     eq(g.lastWorkerProposal.summary, '已搞定');
-    const blockedEvents = events.filter((e) => e.t === 'goal_status_changed' && e.p.goal.status === 'complete');
-    eq(blockedEvents.length, 1, '应恰好发一次完成事件');
+    const done = events.filter((e) => e.t === 'goal_status_changed' && e.p.goal.status === 'complete');
+    eq(done.length, 1, '应恰好发一次完成事件');
+  });
+
+  await test('goal: 运行时 finish 兜底结算（maxRounds 触顶时提案不丢）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'goal-rt7-'));
+    const store = new GoalStore(dir);
+    const rt = createGoalRuntime({
+      goalStore: store, sessionId: 'rt7', config: parseGoalConfig(undefined),
+      harnessTools: ['create_goal', 'update_goal', 'get_goal'], emit: () => {},
+    });
+    rt.tools[0].run({ objective: '兜底结算' });
+    rt.beginTurn();
+    rt.tools[1].run({ mode: 'status', status: 'blocked', summary: '外部依赖缺失' });
+    await rt.finish();
+    const g = store.get('rt7');
+    eq(g.status, 'blocked');
+    eq(g.statusReason, 'blocked(worker_reported)');
+  });
+
+  await test('goal: onIdle 无目标照旧结束，有目标注入续跑提醒', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'goal-rt8-'));
+    const store = new GoalStore(dir);
+    const events = [];
+    const mk = (sid) => createGoalRuntime({
+      goalStore: store, sessionId: sid, config: parseGoalConfig(undefined),
+      harnessTools: ['create_goal', 'update_goal', 'get_goal'], emit: (t, p) => events.push({ t, p }),
+    });
+    const none = mk('rt8-none');
+    none.beginTurn();
+    eq((await none.onIdle({ replyText: '普通回答', usage: { prompt_tokens: 1, completion_tokens: 1 } })).action, 'finish', '无目标不应续跑');
+    const active = mk('rt8');
+    active.tools[0].run({ objective: '续跑测试' });
+    active.beginTurn();
+    const d = await active.onIdle({ replyText: '我先想想', usage: { prompt_tokens: 20, completion_tokens: 15 }, roundMs: 1000 });
+    eq(d.action, 'continue', 'active 目标空转应续跑');
+    assert(d.extraSystem.includes('【目标续跑】'), '续跑提醒应带标记');
+    const g = store.get('rt8');
+    eq(g.turnsUsed, 1, '空转轮也计入 goal 轮');
+    eq(g.timeUsedSeconds, 1);
+  });
+
+  await test('goal: wait 设置/清除 executionWait 并发 goal_wait_changed，非 active 无效', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'goal-rt9-'));
+    const store = new GoalStore(dir);
+    const events = [];
+    const rt = createGoalRuntime({
+      goalStore: store, sessionId: 'rt9', config: parseGoalConfig(undefined),
+      harnessTools: ['create_goal', 'update_goal', 'get_goal'], emit: (t, p) => events.push({ t, p }),
+    });
+    rt.tools[0].run({ objective: '等待测试' });
+    rt.beginTurn();
+    rt.wait('permission');
+    eq(store.get('rt9').executionWait.reason, 'permission');
+    rt.wait('permission');
+    eq(events.filter((e) => e.t === 'goal_wait_changed').length, 1, '同因不重复发事件');
+    rt.wait(null);
+    eq(store.get('rt9').executionWait, null);
+    store.update('rt9', (g) => ({ ...g, status: 'paused' }));
+    rt.wait('verification');
+    eq(store.get('rt9').executionWait, null, '非 active 目标不记录等待');
+    eq(events.filter((e) => e.t === 'goal_wait_changed').length, 2, '非 active 的 wait 不应发事件');
+  });
+
+  await test('goal: parseVerdict 只认 JSON 裁决，失败按 inconclusive', () => {
+    eq(parseVerdict('{"verdict":"met","evidence":"ok"}').verdict, 'met');
+    eq(parseVerdict('{"verdict":"not_met","evidence":"缺口"}').verdict, 'not_met');
+    eq(parseVerdict('前缀 {"verdict":"impossible","evidence":"x"} 后缀').verdict, 'impossible');
+    eq(parseVerdict('我觉得大概完成了').verdict, 'inconclusive', '非 JSON 不能悄悄放行');
+    eq(parseVerdict('{"verdict":"maybe"}').verdict, 'inconclusive', '非法裁决值按 inconclusive');
+    eq(parseVerdict('').verdict, 'inconclusive');
+  });
+
+  await test('goal: 续跑/收尾/验证反馈提醒文案单一事实源', () => {
+    assert(GOAL_CONTINUATION_NOTE.includes('【目标续跑】'), '续跑提醒应带标记（mock 与测试依赖）');
+    assert(GOAL_WRAPUP_NOTE.includes('【目标预算收尾】'), '收尾提醒应带标记');
+    assert(GOAL_WRAPUP_NOTE.includes('不要调用任何工具'), '收尾轮禁工具');
+    const note = goalVerifierFeedbackNote({ evidence: 'README 未改' }, 2, 5);
+    assert(note.includes('第 2/5 次') && note.includes('README 未改'), '反馈提醒应带连胜与证据');
+  });
+
+  await test('goal: evaluator 档验证器不可用转 paused(verifier_unavailable)，不静默放行', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'goal-rt10-'));
+    const store = new GoalStore(dir);
+    const events = [];
+    const rt = createGoalRuntime({
+      goalStore: store, sessionId: 'rt10', config: parseGoalConfig({ verification: 'evaluator', evaluatorModel: 'LongCat-2.0' }),
+      harnessTools: ['create_goal', 'update_goal', 'get_goal'], emit: (t, p) => events.push({ t, p }),
+      provider: { id: 'fake', protocol: 'openai', baseUrl: 'http://127.0.0.1:1', apiKey: 'x', builtin: false },
+    });
+    rt.tools[0].run({ objective: '验证不可用' });
+    rt.beginTurn();
+    rt.tools[1].run({ mode: 'status', status: 'complete', summary: '自称完成' });
+    const d = await rt.onProposal();
+    eq(d.action, 'finish', '验证器不可用应收尾并暂停，不放行');
+    const g = store.get('rt10');
+    eq(g.status, 'paused');
+    eq(g.statusReason, 'paused(verifier_unavailable)');
+    eq(g.lastVerification.verdict, 'unavailable');
   });
 
   await test('goal: 无目标会话的钩子是廉价空操作', () => {
