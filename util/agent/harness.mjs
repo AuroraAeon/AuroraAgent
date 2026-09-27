@@ -22,7 +22,7 @@ export const HARNESSES = [
     id: 'standard',
     label: 'Standard',
     summary: '日常任务：按需调用工具，多步推进并核对结果',
-    tools: ['read_file', 'list_dir', 'write_file', 'edit_file', 'shell', 'web_fetch', 'grep', 'glob', 'todo', 'task'],
+    tools: ['read_file', 'list_dir', 'write_file', 'edit_file', 'shell', 'web_fetch', 'grep', 'glob', 'todo', 'task', 'create_goal', 'update_goal', 'get_goal'],
     maxRounds: 24,
     compactRatio: 0.7,
     systemPrompt: [
@@ -33,6 +33,7 @@ export const HARNESSES = [
       '找内容用 grep、找文件用 glob，不要用 shell 的 find / grep 绕行；多步任务用 todo 跟踪进度。',
       'shell 命令保持幂等与可重入；命令输出很长时先缩小范围再读。',
       '任务可拆成相互独立的子任务时用 task 派发子代理并行处理；子任务描述必须自含（子代理看不到当前会话）。',
+      '用户明确要求「盯着一个目标直到完成」时用 create_goal 建立目标；目标进行中用 get_goal 查看用量，达成后用 update_goal 提案完成，确实受阻时提案受阻。不要从普通任务里推断目标。',
       '回答使用与用户相同的语言，简洁、直接、可执行。',
     ].join('\n'),
   },
@@ -40,7 +41,7 @@ export const HARNESSES = [
     id: 'ultimate',
     label: 'Ultimate',
     summary: '复杂任务：充分探索、逐步验证、汇总结果',
-    tools: ['read_file', 'list_dir', 'write_file', 'edit_file', 'shell', 'web_fetch', 'grep', 'glob', 'todo', 'task'],
+    tools: ['read_file', 'list_dir', 'write_file', 'edit_file', 'shell', 'web_fetch', 'grep', 'glob', 'todo', 'task', 'create_goal', 'update_goal', 'get_goal'],
     maxRounds: 64,
     compactRatio: 0.6,
     systemPrompt: [
@@ -51,6 +52,7 @@ export const HARNESSES = [
       '遇到不确定的分支时明确说出假设，再继续推进。',
       '复杂任务可拆成相互独立的子任务用 task 派发子代理并行处理，最后汇总各子代理结果；子任务描述必须自含。',
       '找内容用 grep、找文件用 glob；多步任务用 todo 规划并逐项更新。',
+      '用户明确要求「盯着一个目标直到完成」时用 create_goal 建立目标；目标进行中用 get_goal 查看用量，达成后用 update_goal 提案完成，确实受阻时提案受阻。不要从普通任务里推断目标。',
       '回答使用与用户相同的语言，简洁、直接、可执行。',
     ].join('\n'),
   },

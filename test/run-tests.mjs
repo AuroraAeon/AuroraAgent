@@ -33,6 +33,7 @@ import { runTuiComponentTests } from './tui-components.mjs';
 import { runPickTests } from './pick.mjs';
 import { runSkillsTests } from './skills.mjs';
 import { runTitleTests } from './title.mjs';
+import { runGoalTests } from './goal.mjs';
 import { TITLE_MAX_TOKENS } from '../util/agent/title-model.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -87,6 +88,7 @@ await runTuiComponentTests(test, assert, eq);
   await runPickTests(test, assert, eq);
   await runSkillsTests(test, assert, eq);
 await runTitleTests(test, assert, eq);
+await runGoalTests(test, assert, eq);
 await runGuardTests(test, assert);
 
 // ---------- 单元测试: SseParser ----------
@@ -2156,6 +2158,49 @@ await test('Agent turn：task 派发子代理并汇总，子会话可查', async
   assert(kid.records.some((r) => r.t === 'assistant' && String(r.text).includes('子代理')), '子会话转录应含子代理终稿');
   const beforeIds = new Set(before.sessions.map((m) => m.id));
   assert(after.sessions.filter((m) => m.name.startsWith('子任务：')).every((m) => !beforeIds.has(m.id)), '子会话应为本次新建');
+});
+
+await test('Agent turn：USE_GOAL 全链路——create_goal → update_goal 提案 → complete(worker_proposal)', async () => {
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_GOAL 请盯着把 README 安装章节改写并通过自检' }),
+  });
+  const all = await drainAgentStream(openAgentStream(resp));
+  const created = all.find((e) => e.type === 'goal_created');
+  assert(created, '应有 goal_created 事件');
+  assert(created.goal.objective.includes('README'), '目标文本应来自模型调用');
+  assert(all.find((e) => e.type === 'tool_event' && e.toolName === 'create_goal' && e.phase === 'completed'), 'create_goal 应执行');
+  assert(all.find((e) => e.type === 'tool_event' && e.toolName === 'update_goal' && e.phase === 'completed'), 'update_goal 提案应执行');
+  const changed = all.find((e) => e.type === 'goal_status_changed' && e.goal.status === 'complete');
+  assert(changed, '应有完成状态变更事件');
+  eq(changed.statusReason, 'complete(worker_proposal)');
+  assert(all.some((e) => e.type === 'goal_usage_updated'), '应发用量事件');
+  assert(all.at(-1).type === 'turn_completed', '应以 turn_completed 收尾');
+  const goalFile = JSON.parse(readFileSync(join(tmpDataDir, 'goals', `${s.id}.json`), 'utf8'));
+  eq(goalFile.status, 'complete');
+  eq(goalFile.statusReason, 'complete(worker_proposal)');
+  assert(goalFile.tokensUsed >= 70, '两个 goal 轮的用量应入账');
+  eq(goalFile.turnsUsed, 2, '应计两个 goal 轮');
+});
+
+await test('Agent turn：USE_GOAL_BUDGET 触顶转 budget_limited(token) 并跑唯一收尾轮', async () => {
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_GOAL_BUDGET 盯着把测试基线扩展到 300 个' }),
+  });
+  const all = await drainAgentStream(openAgentStream(resp));
+  const changed = all.find((e) => e.type === 'goal_status_changed' && e.goal.status === 'budget_limited');
+  assert(changed, '应转 budget_limited');
+  eq(changed.statusReason, 'budget_limited(token)');
+  assert(all.some((e) => e.type === 'text_chunk' && String(e.text).includes('停止原因')), '收尾轮应总结已完成/未完成/停止原因');
+  assert(all.at(-1).type === 'turn_completed', '应以 turn_completed 收尾');
+  const goalFile = JSON.parse(readFileSync(join(tmpDataDir, 'goals', `${s.id}.json`), 'utf8'));
+  eq(goalFile.status, 'budget_limited');
+  eq(goalFile.statusReason, 'budget_limited(token)');
+  eq(goalFile.tokenBudget, 10);
+  assert(goalFile.tokensUsed > 10, '触顶后用量照记（含收尾轮）');
 });
 
 await test('Agent turn：计划模式驳回后不执行', async () => {

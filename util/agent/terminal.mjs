@@ -6,6 +6,7 @@
  */
 import { createInterface } from 'node:readline';
 import { SessionStore } from './session.mjs';
+import { GoalStore } from './goal/store.mjs';
 import { UsageLedger } from '../usage.mjs';
 import { ProviderStore } from '../providers.mjs';
 import { HARNESSES, getHarness } from './harness.mjs';
@@ -56,6 +57,7 @@ export async function runTerminal({ argv = [] } = {}) {
   // 技能目录：内置 skills/ + 用户 <数据目录>/skills/（进程启动时加载一次，新增技能重启后生效）
   const skills = loadSkills({ userDir: join(dataDir, 'skills') });
   const store = new SessionStore(dataDir);
+  const goals = new GoalStore(dataDir);
   const usage = new UsageLedger(dataDir);
   const providers = new ProviderStore(dataDir, {
     baseUrl: BASE, pathPrefix: '/openai/v1', apiKey: () => cfg.apiKey, model: () => cfg.model,
@@ -285,6 +287,7 @@ export async function runTerminal({ argv = [] } = {}) {
 
   const runTurn = (input) => runTerminalTurn({
     extraTools: mcp ? mcp.tools : [],
+    goalStore: goals,
     store, usage, session: meta, input, skills,
     provider: providers.get(meta.provider) || providers.providerForModel(meta.model || cfg.model),
     model: meta.model || cfg.model,

@@ -19,6 +19,7 @@ import { DEFAULT_SESSION_NAME } from './session.mjs';
 import { DEFAULT_TITLE_MODE } from '../config.mjs';
 import { PLAN_MAX_ROUNDS, PLAN_MODE_PROMPT, planExecutionNote, planToolNames } from './plan.mjs';
 import { assembleMessages, needsCompaction, planCompaction, compactionMessages, contextWindowOf } from './context.mjs';
+import { createGoalRuntime, GOAL_WRAPUP_NOTE } from './goal/runtime.mjs';
 
 /** 单轮用量结算：提供方单价优先，缺侧回退内置价（与 settleUsage 同规则） */
 function settlePrice(provider, builtinPrice) {
@@ -47,7 +48,8 @@ export async function runAgentTurn(ctx) {
   const {
     store, usage, session, input, provider, model, harness, builtinPrice,
     gen = {}, skills = [], extraTools = [], emit, controller, requestPermission, requestPlanDecision,
-    permissionMode = 'ask_when_needed', planMode = false, titleMode = DEFAULT_TITLE_MODE, depth = 0, log = () => {},
+    permissionMode = 'ask_when_needed', planMode = false, titleMode = DEFAULT_TITLE_MODE, depth = 0,
+    goalStore = null, goalCfg = null, log = () => {},
   } = ctx;
   const sessionId = session.id;
   const turnId = randomUUID();
@@ -124,6 +126,13 @@ export async function runAgentTurn(ctx) {
     emit, controller, requestPermission, permissionMode, titleMode, rules: sessionRules, gen, extraTools,
     workspace: session.workspace, depth, log,
   });
+  // Goal 运行时：仅顶层会话启用（子代理不接管目标）；工具经 allTools 进请求与解析，
+  // 钩子（beginTurn / afterRound / finish）驱动用量入账、熔断、预算与提案结算。
+  // 无 goalStore（旧调用方 / 测试）时全部钩子为空操作，行为与本节之前完全一致。
+  const goalRt = goalStore && depth === 0
+    ? createGoalRuntime({ goalStore, sessionId, config: goalCfg || undefined, harnessTools: harness.tools, emit, log })
+    : null;
+  const allTools = goalRt ? [...extraTools, ...goalRt.tools] : extraTools;
 
   /** 超长时把早期记录折叠成一条 summary（压缩本身花一轮模型调用，失败不阻塞主流程） */
   const maybeCompact = async () => {
@@ -183,7 +192,7 @@ export async function runAgentTurn(ctx) {
       // LLM 抽象层统一入口：构造请求 + 连接期重试 + 中文错误话术 + 协议帧翻译选择；
       // extraTools（MCP 等外部工具）的 schema 经此进入请求，模型才看得见这些工具
       opened = await openChatStream(provider, {
-        model, messages, toolNames, extraTools,
+        model, messages, toolNames, extraTools: allTools,
         sendThinking: provider.builtin || Boolean(provider.thinking),
         thinkingOn: gen.thinkingOn !== false,
         maxTokens: provider.builtin ? gen.maxTokens : provider.maxTokens,
@@ -221,7 +230,7 @@ export async function runAgentTurn(ctx) {
       const t0 = Date.now();
       store.append(sessionId, { t: 'tool_call', id: toolId, name: call.name, args: safeArgs(call.arguments) });
       emit('tool_event', { sessionId, turnId, phase: 'started', toolId, toolName: call.name, params: safeArgs(call.arguments) });
-      const tool = resolveTool(call.name, extraTools);
+      const tool = resolveTool(call.name, allTools);
       let ok = true;
       let output = '';
       let extra;
@@ -272,11 +281,18 @@ export async function runAgentTurn(ctx) {
     }
   };
 
+  /** 预算触顶后的唯一收尾轮：不带工具 + 收尾提醒，只总结进展与停止原因 */
+  const runGoalWrapUp = async () => {
+    await runRound({ toolNames: [], extraSystem: GOAL_WRAPUP_NOTE });
+  };
+
   const withIds = (toolCalls, roundText) => {
     const calls = toolCalls.map((c) => ({ ...c, id: c.id || `call_${randomUUID().slice(0, 8)}` }));
     messages.push({ role: 'assistant', content: roundText, tool_calls: calls.map((c) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments } })) });
     return calls;
   };
+
+  goalRt?.beginTurn();
 
   try {
     // —— 计划阶段：只读 / 检索 / 待办工具产出计划，用户批准后才进入执行 ——
@@ -314,13 +330,24 @@ export async function runAgentTurn(ctx) {
     }
 
     // —— 执行阶段：完整工具集（计划批准后计划文本作为既定契约已在上下文中）——
-    const execToolNames = [...new Set([...harness.tools, ...(skills.length ? ['skill'] : []), ...extraTools.map((t) => t.name)])];
+    const execToolNames = [...new Set([...harness.tools, ...(skills.length ? ['skill'] : []), ...allTools.map((t) => t.name)])];
     for (round = round + 1; round <= harness.maxRounds; round++) {
+      const roundT0 = Date.now();
       const r = await runRound({ toolNames: execToolNames });
-      if (r.failed) return { turnId, text: finalText, rounds: round, tools: totalTools, failed: true };
+      if (r.failed) { await goalRt?.finish(); return { turnId, text: finalText, rounds: round, tools: totalTools, failed: true }; }
       finalText = r.roundText;
-      if (!r.toolCalls.length) { finished = true; break; }
+      if (!r.toolCalls.length) {
+        finished = true;
+        // goal 钩子：无工具轮也要入账与熔断；'wrapup' 时补一个预算收尾轮再结束
+        if (goalRt?.afterRound({ replyText: r.roundText, toolCalls: [], usage: currentEntry.usage, roundMs: Date.now() - roundT0 }) === 'wrapup') {
+          await runGoalWrapUp();
+        }
+        break;
+      }
       await runToolCalls(withIds(r.toolCalls, r.roundText));
+      const stop = goalRt?.afterRound({ replyText: r.roundText, toolCalls: r.toolCalls, usage: currentEntry.usage, roundMs: Date.now() - roundT0 });
+      if (stop === 'wrapup') { await runGoalWrapUp(); finished = true; break; }
+      if (stop) { finished = true; break; }
     }
   } catch (err) {
     const aborted = controller.signal.aborted || err?.name === 'AbortError';
@@ -334,6 +361,7 @@ export async function runAgentTurn(ctx) {
     return { turnId, text: finalText, rounds: round, tools: totalTools, failed: true };
   }
   if (titleMode === 'model') await autoTitle(finalText); // 等终稿出来再花这笔标题钱，失败回退本地推导
+  await goalRt?.finish(); // 终态提案结算与最终用量快照先于 turn_completed，客户端按序看到终态
   emit('turn_completed', { sessionId, turnId, totalRounds: round, totalTools, durationMs: Date.now() - started, finishReason: finished ? 'stop' : 'max_rounds' });
   return { turnId, text: finalText, rounds: round, tools: totalTools };
 }

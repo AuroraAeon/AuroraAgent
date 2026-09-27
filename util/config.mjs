@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, copyFil
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { parseGoalConfig } from './agent/goal/config.mjs';
 
 /** 限时折扣价: 输入 ¥2 / 输出 ¥8 每百万 tokens */
 export const PRICE = { input: 2, output: 8 };
@@ -67,7 +68,7 @@ export function resolveDataDir() {
   return appDir;
 }
 
-export function loadConfig() {
+export function loadConfig({ warn } = {}) {
   let saved = {};
   let fileExists = false;
   try {
@@ -86,6 +87,8 @@ export function loadConfig() {
     permissionMode: PERMISSION_MODES.includes(saved.permissionMode) ? saved.permissionMode : DEFAULT_PERMISSION_MODE,
     planMode: saved.planMode === true,
     titleMode: TITLE_MODES.includes(saved.titleMode) ? saved.titleMode : DEFAULT_TITLE_MODE,
+    // goal 段解析（单叶容错 + 钳制）落在 goal/config.mjs；启动方传 warn  surfaced 坏值告警
+    goal: parseGoalConfig(saved.goal, warn ? { warn } : {}),
   };
 }
 
@@ -99,6 +102,7 @@ export function saveConfig(cfg) {
     permissionMode: PERMISSION_MODES.includes(cfg.permissionMode) ? cfg.permissionMode : DEFAULT_PERMISSION_MODE,
     planMode: cfg.planMode === true,
     titleMode: TITLE_MODES.includes(cfg.titleMode) ? cfg.titleMode : DEFAULT_TITLE_MODE,
+    goal: parseGoalConfig(cfg.goal),
   };
   if (!cfg.keyIsOverride) out.apiKey = cfg.apiKey;
   writeFileSync(join(resolveDataDir(), CONFIG_FILE), JSON.stringify(out, null, 2) + '\n');

@@ -56,17 +56,29 @@ export function startMock(port = 18901) {
         const isPlanRound = lastText.includes('USE_PLAN') && !lastText.includes('【已批准的计划】');
         const isSwarmRound = lastText.includes('USE_SWARM') && !hasToolResult;
         const isMcpRound = lastText.includes('USE_MCP') && !hasToolResult;
-        const isToolRound = (lastText.includes('USE_TOOL') || isSkillRound || isTodoRound || isEditRound || isSwarmRound || isMcpRound) && !hasToolResult;
+        // Goal 触发词（USE_GOAL_BUDGET 含 USE_GOAL 子串，必须先判）：
+        // USE_GOAL → create_goal 轮 → update_goal 完成提案轮（提案后宿主结算，无第三轮）；
+        // USE_GOAL_BUDGET → create_goal 带小额预算 → 触顶收尾轮（系统提示带【目标预算收尾】标记）
+        const toolTexts = hasToolResult ? j.messages.filter((m) => m.role === 'tool').map((m) => (typeof m.content === 'string' ? m.content : '')) : [];
+        const lastToolText = toolTexts.at(-1) || '';
+        const isGoalBudgetRound = lastText.includes('USE_GOAL_BUDGET') && !hasToolResult;
+        const isGoalCreateRound = lastText.includes('USE_GOAL') && !hasToolResult;
+        const isGoalWrapUp = body.includes('【目标预算收尾】');
+        // 收尾轮不带工具，不能误判成提案轮（它的上一条工具结果正是 create_goal 的回执）
+        const isGoalProposalRound = !isGoalWrapUp && lastToolText.includes('目标已创建') && !lastToolText.includes('已记录');
+        const isToolRound = (((lastText.includes('USE_TOOL') || isSkillRound || isTodoRound || isEditRound || isSwarmRound || isMcpRound) && !hasToolResult) || isGoalCreateRound || isGoalProposalRound);
         // 会话标题生成请求（titleMode=model）：系统提示带【会话标题生成】标记，回一个固定标题供断言
         const isTitleRound = body.includes('【会话标题生成】');
-        const toolName = isSkillRound ? 'skill' : isTodoRound ? 'todo' : isEditRound ? 'edit_file' : isSwarmRound ? 'task' : isMcpRound ? 'mcp__mock__echo' : lastText.includes('USE_TOOL_WRITE') ? 'write_file' : 'read_file';
-        const toolArgs = isSkillRound ? { name: 'code-review' }
+        const toolName = isGoalCreateRound ? 'create_goal' : isGoalProposalRound ? 'update_goal' : isSkillRound ? 'skill' : isTodoRound ? 'todo' : isEditRound ? 'edit_file' : isSwarmRound ? 'task' : isMcpRound ? 'mcp__mock__echo' : lastText.includes('USE_TOOL_WRITE') ? 'write_file' : 'read_file';
+        const toolArgs = isGoalCreateRound ? { objective: isGoalBudgetRound ? '把测试基线扩展到 300 个并保持全绿' : '把 README 安装章节改写并通过自检', ...(isGoalBudgetRound ? { token_budget: 10 } : {}) }
+          : isGoalProposalRound ? { mode: 'status', status: 'complete', summary: 'README 安装章节已改写并通过自检' }
+          : isSkillRound ? { name: 'code-review' }
           : isTodoRound ? { action: 'add', item: 'mock 待办事项' }
           : isEditRound ? { path: 'edit_me.txt', old_string: 'old', new_string: 'new' }
           : isSwarmRound ? { tasks: ['子任务甲：统计工作目录文件数', '子任务乙：读取 README 前 20 行'] }
           : isMcpRound ? { text: '来自模型的调用' }
           : toolName === 'write_file' ? { path: 'written_by_agent.txt', content: 'AGENT_WROTE' } : { path: 'mock.txt' };
-        const answer = isToolRound ? '' : isTitleRound ? 'README 安装章节改写' : hasToolResult ? `工具结果已收到：${toolEcho}` : isImg ? '图中有一个蓝色的圆形。' : isPlanRound ? '计划：先读取目标文件确认现状，再用 edit_file 精确替换，最后汇报差异。' : lastText.includes('【已批准的计划】') ? '已按批准的计划执行完毕。' : lastText.includes('子任务甲') ? '子代理甲结果：工作目录共 3 个文件。' : lastText.includes('子任务乙') ? '子代理乙结果：README 开头是 AuroraAgent 本地 Agent 运行时。' : `你好！我是 ${j.model}。`;
+        const answer = isToolRound ? '' : isTitleRound ? 'README 安装章节改写' : isGoalWrapUp ? '已完成：建立目标并开始追踪；未完成：目标本身的工作；停止原因：token 预算已耗尽，可经 update_goal 抬高预算后续跑。' : hasToolResult ? `工具结果已收到：${toolEcho}` : isImg ? '图中有一个蓝色的圆形。' : isPlanRound ? '计划：先读取目标文件确认现状，再用 edit_file 精确替换，最后汇报差异。' : lastText.includes('【已批准的计划】') ? '已按批准的计划执行完毕。' : lastText.includes('子任务甲') ? '子代理甲结果：工作目录共 3 个文件。' : lastText.includes('子任务乙') ? '子代理乙结果：README 开头是 AuroraAgent 本地 Agent 运行时。' : `你好！我是 ${j.model}。`;
         // FLAKY：首次请求直接掐断 socket，模拟网络层失败（用于测试连接期重试）
         if (lastText.includes('FLAKY') && !state.flakyDone) {
           state.flakyDone = true;

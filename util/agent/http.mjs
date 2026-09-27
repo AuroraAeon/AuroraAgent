@@ -8,6 +8,7 @@ import { SessionStore } from './session.mjs';
 import { runAgentTurn } from './loop.mjs';
 import { getHarness, harnessSummaries } from './harness.mjs';
 import { sseFrame } from './events.mjs';
+import { GoalStore } from './goal/store.mjs';
 import { loadSkills, findSkill, skillInvocationText } from './skills.mjs';
 import { PERMISSION_MODES, TITLE_MODES, experimentalEnabled } from '../config.mjs';
 import { McpRegistry } from '../mcp/registry.mjs';
@@ -34,6 +35,8 @@ function json(res, status, obj) {
 export function createAgentApi(deps) {
   const { dataDir, usage, resolveChatProvider, loadConfig, pickModel, log = () => {}, builtinPrice } = deps;
   const sessions = new SessionStore(dataDir, { warn: (m, e) => log('warn', m, e) });
+  // Goal 存储：<数据目录>/goals/<sessionId>.json（一会话一个目标）
+  const goals = new GoalStore(dataDir, { warn: (m, e) => log('warn', m, e) });
   // 技能目录：内置 skills/ + 用户 <数据目录>/skills/（进程启动时加载一次）
   const skills = loadSkills({ userDir: join(dataDir, 'skills') });
   const activeTurns = new Map(); // sessionId -> { controller }
@@ -238,6 +241,7 @@ export function createAgentApi(deps) {
           builtinPrice, skills,
           gen: { maxTokens: cfg.maxTokens, temperature: cfg.temperature, thinkingOn: body.thinking !== false },
           emit, controller, permissionMode, planMode, titleMode, extraTools: mcpTools(),
+          goalStore: goals, goalCfg: cfg.goal,
           requestPermission: ({ requestId }) => new Promise((resolve) => {
             pendingPermissions.set(requestId, { resolve, sessionId });
           }),

@@ -38,6 +38,10 @@ export function defaultRules() {
     { action: 'glob', resource: '*', effect: 'allow' },
     { action: 'todo', resource: '*', effect: 'allow' },
     { action: 'task', resource: '*', effect: 'allow' },
+    // goal 簿记工具（create_goal / update_goal / get_goal）：只读写数据目录内的目标文件，无外部副作用
+    { action: 'create_goal', resource: '*', effect: 'allow' },
+    { action: 'update_goal', resource: '*', effect: 'allow' },
+    { action: 'get_goal', resource: '*', effect: 'allow' },
     // MCP 工具（mcp__<服务器>__<工具>）默认 ask：外部系统副作用必须确认；
     // evaluate 对未命中规则本就回退 ask，此处显式声明便于阅读与 grep
     { action: 'mcp__*', resource: '*', effect: 'ask' },
