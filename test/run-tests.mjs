@@ -1611,6 +1611,10 @@ try {
     assert(/if \(!currentId && intent\.kind !== 'create'\)/.test(app), '无会话时非 create 意图应直接告警（对齐 MiniMax execute() 的 session 缺失分支）');
     assert(app.includes('await createSession({})') && app.includes('await openSession(s.id)') && app.includes('currentIdRef.current = s.id;'), '无会话且 create 应先自动建会话再设立目标（对齐 MiniMax ensureSessionId；等会话落地防回执被投影冲掉）');
     assert(app.includes('无法为当前目标创建会话'), '自动建会话失败应给出可操作提示（对齐 MiniMax 的 ensureSessionId 失败分支）');
+    const goalEvents = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'goal-events.ts'), 'utf8');
+    assert(goalEvents.includes('/api/agent/events?sessionId=') && goalEvents.includes("'goal_cleared'"), 'goal-events 模块应订阅 /api/agent/events 并覆盖 goal_cleared');
+    assert(app.includes('connectGoalEvents(currentId') && app.includes("ev.type === 'goal_cleared'"), 'App 应接线跨客户端 goal 事件流并按 goal_cleared 清横幅（对齐 MiniMax 全局事件投影）');
+    assert(app.includes('if (ev.sessionId !== currentIdRef.current) return;'), '跨客户端事件流应校验会话归属（切会话后迟到的帧不投影）');
     assert(app.includes('const epoch = ++goalViewEpochRef.current;') && app.includes('if (goalViewEpochRef.current !== epoch) return;'), 'openSession 迟到响应应凭纪元丢弃（快切会话不投影旧会话内容）');
     assert(/当前没有会话[\s\S]{0,240}setGoalPrefill/.test(app), '无会话时 goal 命令应原样回填草稿（对齐 MiniMax retained 语义）');
     const msg = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Message.tsx'), 'utf8');

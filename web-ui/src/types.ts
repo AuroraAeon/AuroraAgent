@@ -19,6 +19,7 @@ export type AgentEvent =
   | { type: 'goal_status_changed'; sessionId: string; goal: GoalState; statusReason: string | null; lastVerification: GoalVerification | null }
   | { type: 'goal_usage_updated'; sessionId: string; goal: GoalState }
   | { type: 'goal_wait_changed'; sessionId: string; goal: GoalState; reason: string | null }
+  | { type: 'goal_cleared'; sessionId: string }
   | { type: 'turn_completed'; sessionId: string; turnId: string; totalRounds: number; totalTools: number; durationMs: number; finishReason: string }
   | { type: 'turn_cancelled'; sessionId: string; turnId: string }
   | { type: 'turn_failed'; sessionId: string; turnId: string; error: string; round?: number };

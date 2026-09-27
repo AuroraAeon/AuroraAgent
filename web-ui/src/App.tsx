@@ -14,6 +14,7 @@ import {
   listHarnesses, listModels, listSkills, listProviders, listSessions, patchSession, respondPermission, respondPlan, runTurn,
 } from './api';
 import { GOAL_COMMAND_HELP, formatGoalReceipt, formatGoalSummary, parseGoalCommand } from '../../util/agent/goal/command.mjs';
+import { connectGoalEvents } from './goal-events';
 import { GOAL_STATUS_LABELS } from './types';
 import type { AgentEvent, GoalState, Harness, LiveTurn, ModelInfo, MsgPart, MsgView, PlanView, ProviderRow, SessionMeta, SettingsInfo, TodoItem, ToolView, SkillRow } from './types';
 
@@ -273,6 +274,17 @@ export default function App() {
     }
     prevGoal.current = cur;
   }, [goal]);
+
+  // 跨客户端 goal 事件流：另一客户端（终端 / 另一标签页）经 REST 改动目标时，横幅与本地状态
+  // 即时校正（goal_cleared 清横幅；其余按服务端快照整体覆写）——对齐 MiniMax 全局事件投影
+  useEffect(() => {
+    if (!currentId) return;
+    return connectGoalEvents(currentId, (ev) => {
+      if (ev.sessionId !== currentIdRef.current) return; // 切会话后迟到的帧不投影
+      if (ev.type === 'goal_cleared') { setGoal(null); return; }
+      setGoal(ev.goal);
+    });
+  }, [currentId]);
 
   /**
    * /goal 斜杠命令：解析与终端 REPL 共用 command.mjs 单一事实源；执行走 /api/agent/goal* REST 面。
