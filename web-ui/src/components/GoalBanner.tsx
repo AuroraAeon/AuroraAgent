@@ -62,6 +62,7 @@ export function GoalBanner({ goal, onAction }: Props) {
         </div>
       ) : null}
       {goal.status === 'budget_limited' ? <div className="goalbanner-hint">预算已耗尽：在输入框输入 /goal budget=更大值 或 /goal budget=clear 调整后续跑</div> : null}
+      {goal.status === 'usage_limited' ? <div className="goalbanner-hint">用量受限：等待提供方访问（配额 / 限流）恢复后点「恢复」或输入 /goal resume 继续</div> : null}
       <div className="goalbanner-hint">{goalActionHint(goal.status)}</div>
       {actions.length ? (
         <div className="goalbanner-actions">

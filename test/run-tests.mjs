@@ -1571,6 +1571,7 @@ try {
     assert(banner.includes('goalbanner-chip') && banner.includes('GOAL_STATUS_LABELS[goal.status]'), '横幅应有状态芯片');
     assert(banner.includes('goalActionsFor(goal.status)'), '横幅动作应按状态裁剪');
     assert(banner.includes('tokenBudget != null'), '横幅应展示预算上限');
+    assert(banner.includes("goal.status === 'usage_limited'") && banner.includes('等待提供方访问'), 'usage_limited 应展示恢复提示（对齐 MiniMax goalPolicySummary）');
     assert(banner.includes('goal.turnsUsed') && banner.includes('最近验证'), '横幅应展示轮次用量与最近验证结论');
     assert(banner.includes('setInterval') && banner.includes('goalActionHint(goal.status)'), '横幅应有 live elapsed 与随状态动作提示');
     assert(banner.includes("goal.status === 'complete') return null"), '横幅 complete 时隐藏（回执由 notice 承载，对齐 MiniMax banner）');
