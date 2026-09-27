@@ -18,6 +18,8 @@ export const getSession = (id: string) => api<{ meta: SessionMeta; records: Sess
 export const deleteSession = (id: string) => api<{ deleted: boolean }>(`/api/agent/sessions/${id}`, { method: 'DELETE' });
 export const patchSession = (id: string, body: { harness?: string; name?: string; model?: string; provider?: string; permissionMode?: string; planMode?: boolean; titleMode?: string }) =>
   api<{ meta: SessionMeta }>(`/api/agent/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(body) }).then((r) => r.meta);
+export const forkSession = (id: string) =>
+  api<{ session: SessionMeta }>(`/api/agent/sessions/${id}/fork`, { method: 'POST' }).then((r) => r.session);
 export const listSkills = () => api<{ skills: SkillRow[] }>('/api/agent/skills').then((r) => r.skills);
 export const listHarnesses = () => api<{ harnesses: Harness[]; default: string }>('/api/agent/harnesses');
 export const listModels = () => api<{ models: ModelInfo[]; status: string }>('/api/models');

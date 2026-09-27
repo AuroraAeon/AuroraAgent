@@ -1,5 +1,5 @@
 /** 侧栏：品牌 / 新建会话 / 会话列表（相对时间）/ 模式切换 / 设置入口。 */
-import { IconGear, IconPlus, IconSpark, IconTrash } from '../icons';
+import { IconCopy, IconGear, IconPlus, IconSpark, IconTrash } from '../icons';
 import { fmtRel } from '../projection';
 import type { Harness, SessionMeta } from '../types';
 
@@ -9,6 +9,7 @@ type Props = {
   onSelect: (id: string) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
+  onFork: (id: string) => void;
   harnesses: Harness[];
   harness: string;
   onHarness: (id: string) => void;
@@ -17,7 +18,7 @@ type Props = {
 };
 
 export function Sidebar({
-  sessions, currentId, onSelect, onNew, onDelete, harnesses, harness, onHarness, onOpenSettings, version,
+  sessions, currentId, onSelect, onNew, onDelete, onFork, harnesses, harness, onHarness, onOpenSettings, version,
 }: Props) {
   return (
     <aside className="sidebar">
@@ -43,6 +44,15 @@ export function Sidebar({
                 <span className="sess-preview">{s.preview || '（暂无消息）'}</span>
               </span>
               <span className="sess-time">{fmtRel(s.updatedAt)}</span>
+            </button>
+            <button
+              type="button"
+              className="sess-fork"
+              title="派生会话（复制历史到新会话）"
+              aria-label={`派生会话 ${s.name || ''}`}
+              onClick={(ev) => { ev.stopPropagation(); onFork(s.id); }}
+            >
+              <IconCopy size={14} />
             </button>
             <button
               type="button"

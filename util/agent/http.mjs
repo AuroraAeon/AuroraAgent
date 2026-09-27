@@ -16,6 +16,7 @@ import { PERMISSION_MODES, TITLE_MODES, experimentalEnabled } from '../config.mj
 import { McpRegistry } from '../mcp/registry.mjs';
 
 const SESSION_RE = /^\/api\/agent\/sessions\/([0-9a-f-]{36})$/;
+const SESSION_FORK_RE = /^\/api\/agent\/sessions\/([0-9a-f-]{36})\/fork$/;
 const GOAL_GET_RE = /^\/api\/agent\/goal\/([0-9a-f-]{36})$/;
 const GOAL_ACTION_RE = /^\/api\/agent\/goal\/(pause|resume|stop|budget)$/;
 
@@ -142,6 +143,14 @@ export function createAgentApi(deps) {
       }
       log('info', 'Agent 会话已更新', { sessionId: sessionMatch[1], changes: Object.keys(changes) });
       return json(res, 200, { meta: sessions.patch(sessionMatch[1], changes) });
+    }
+
+    // 派生会话：复制 meta + 转录到新会话（新 id / 新时间戳），源会话只读不动
+    if (req.method === 'POST' && SESSION_FORK_RE.test(url)) {
+      const meta = sessions.fork(SESSION_FORK_RE.exec(url)[1]);
+      if (!meta) return json(res, 404, { error: { message: '会话不存在或已删除' } });
+      log('info', 'Agent 会话已派生', { from: SESSION_FORK_RE.exec(url)[1], sessionId: meta.id });
+      return json(res, 200, { session: meta });
     }
 
     if (req.method === 'POST' && url === '/api/agent/abort') {

@@ -1528,6 +1528,13 @@ try {
     assert(composer.includes('MentionPalette') && composer.includes('insertMention') && composer.includes('searchFiles(sessionId, q)'), 'Composer 应接 @ 提及时调色板与防抖搜索');
     assert(composer.includes('/api/files/search') === false, '前端不直连路径，走 api.ts');
     assert(js.includes('mentionpal'), '构建产物应含提及调色板（改了 web-ui 忘了 build:web 会红）');
+    // 会话派生：侧栏入口、api 客户端、App 接线与产物同步
+    const sidebar = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Sidebar.tsx'), 'utf8');
+    assert(sidebar.includes('sess-fork') && sidebar.includes('onFork(s.id)') && !hasEmoji(sidebar), '侧栏应有派生入口且零 emoji');
+    const api2 = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'api.ts'), 'utf8');
+    assert(api2.includes('/api/agent/sessions/${id}/fork') && api2.includes('forkSession'), 'api 客户端应覆盖会话派生');
+    assert(app.includes('forkSession(id)') && app.includes('onFork={forkSessionById}'), 'App 应接线派生会话');
+    assert(js.includes('sess-fork'), '构建产物应含派生入口（改了 web-ui 忘了 build:web 会红）');
   });
   await test('OSC 终端标题接线源码契约：状态词随模式变、挂起清除、退出清空', async () => {
     const term = readFileSync(join(__dirname, '..', 'util', 'agent', 'terminal.mjs'), 'utf8');
@@ -2061,6 +2068,31 @@ await test('PATCH /api/agent/sessions/:id 切换模式 / 改名 / 换模型', as
   eq(detail.meta.harness, 'ultimate', '失败的 PATCH 不应改动会话');
   eq((await fetch(`${AGENT}/sessions/nope`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 404, '未知会话 404');
   await fetch(`${AGENT}/sessions/${s.id}`, { method: 'DELETE' });
+});
+
+await test('POST /api/agent/sessions/:id/fork 复制历史到新会话，源会话只读不动', async () => {
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: '你好，随便聊聊' }),
+  });
+  await drainAgentStream(openAgentStream(resp));
+  const src = await (await fetch(`${AGENT}/sessions/${s.id}`)).json();
+  assert(src.records.length > 0, '源会话应有转录记录');
+  const forked = await (await fetch(`${AGENT}/sessions/${s.id}/fork`, { method: 'POST' })).json();
+  const f = forked.session;
+  assert(f && f.id !== s.id, '应返回新会话');
+  eq(f.name, '测试会话（副本）', '名字应加副本后缀');
+  const detail = await (await fetch(`${AGENT}/sessions/${f.id}`)).json();
+  eq(detail.records.length, src.records.length, '转录应整体复制');
+  eq(JSON.stringify(detail.records), JSON.stringify(src.records), '转录内容应逐条一致');
+  eq((await (await fetch(`${AGENT}/sessions/${s.id}`)).json()).records.length, src.records.length, '源会话不应被改动');
+  const list = await (await fetch(`${AGENT}/sessions`)).json();
+  eq(list.sessions.find((x) => x.id === f.id)?.name, '测试会话（副本）', '列表应能查到派生会话');
+  const miss = await fetch(`${AGENT}/sessions/00000000-0000-0000-0000-000000000000/fork`, { method: 'POST' });
+  eq(miss.status, 404, '源会话不存在应 404');
+  await fetch(`${AGENT}/sessions/${s.id}`, { method: 'DELETE' });
+  await fetch(`${AGENT}/sessions/${f.id}`, { method: 'DELETE' });
 });
 
 await test('Agent turn：titleMode=model 经上游总结标题并记账', async () => {

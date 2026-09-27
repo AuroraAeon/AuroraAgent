@@ -9,7 +9,7 @@ import { Composer } from './components/Composer';
 import { SettingsDialog } from './components/SettingsDialog';
 import { projectRecords } from './projection';
 import {
-  abortTurn, createSession, deleteSession, getGoal, getSession, getSettings, goalAction, listHarnesses, listModels, listSkills,
+  abortTurn, createSession, deleteSession, forkSession, getGoal, getSession, getSettings, goalAction, listHarnesses, listModels, listSkills,
   listProviders, listSessions, patchSession, respondPermission, respondPlan, runTurn,
 } from './api';
 import type { AgentEvent, GoalState, Harness, LiveTurn, ModelInfo, MsgView, PlanView, ProviderRow, SessionMeta, SettingsInfo, TodoItem, ToolView, SkillRow } from './types';
@@ -271,6 +271,16 @@ export default function App() {
     }
   };
 
+  const forkSessionById = async (id: string) => {
+    try {
+      const s = await forkSession(id);
+      setSessions((prev) => [s, ...prev]);
+      openSession(s.id);
+    } catch (e) {
+      setError(`派生会话失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
   const removeSession = async (id: string) => {
     try { await deleteSession(id); } catch { /* 继续本地移除 */ }
     let list: SessionMeta[] = [];
@@ -316,6 +326,7 @@ export default function App() {
         onSelect={openSession}
         onNew={newSession}
         onDelete={removeSession}
+        onFork={forkSessionById}
         harnesses={harnesses}
         harness={current?.harness || 'standard'}
         onHarness={changeHarness}

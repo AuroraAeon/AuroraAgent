@@ -33,7 +33,7 @@
   content:''; position:absolute; left:0; top:8px; bottom:8px; width:3px; border-radius:99px; background:var(--accent);
 }
 .sess-main {
-  width:100%; display:flex; flex-direction:column; gap:2px; padding:9px 34px 9px 12px;
+  width:100%; display:flex; flex-direction:column; gap:2px; padding:9px 63px 9px 12px;
   background:none; border:0; color:var(--text); cursor:pointer; text-align:left; font:inherit;
 }
 .sess-name { font-size:13.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -43,13 +43,16 @@
   background:var(--accent-soft); color:var(--accent-hi); border:1px solid var(--accent-line);
 }
 .sess-preview { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.sess-time { position:absolute; top:9px; right:34px; color:var(--faint); font-size:11px; }
-.sess-del {
-  position:absolute; top:7px; right:7px; width:24px; height:24px; border:0; border-radius:7px;
+.sess-time { position:absolute; top:9px; right:63px; color:var(--faint); font-size:11px; }
+.sess-fork, .sess-del {
+  position:absolute; top:7px; width:24px; height:24px; border:0; border-radius:7px;
   background:transparent; color:var(--faint); display:grid; place-items:center; cursor:pointer; opacity:0;
   transition:opacity .12s var(--ease), color .12s var(--ease), background .12s var(--ease);
 }
-.sess:hover .sess-del, .sess.cur .sess-del { opacity:1; }
+.sess-fork { right:35px; }
+.sess-del { right:7px; }
+.sess:hover .sess-fork, .sess.cur .sess-fork, .sess:hover .sess-del, .sess.cur .sess-del { opacity:1; }
+.sess-fork:hover { background:var(--accent-soft); color:var(--accent-hi); }
 .sess-del:hover { background:var(--danger-bg-hi); color:var(--danger-ink); }
 .side-foot { border-top:1px solid var(--line); padding:10px 12px; display:flex; flex-direction:column; gap:8px; }
 .mode-seg { display:flex; background:var(--surface); border:1px solid var(--line); border-radius:9px; padding:2px; gap:2px; }

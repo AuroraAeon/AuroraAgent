@@ -121,6 +121,32 @@ export class SessionStore {
     return next;
   }
 
+  /**
+   * 派生会话：把 meta 与全部转录复制到新会话（新 id、新时间戳、名字加「副本」后缀）。
+   * 不复制 goal（目标按会话隔离，新会话从零开始）；用量汇总随转录一并保留——历史开销真实发生过。
+   * 返回新 meta；源会话不存在返回 null。
+   */
+  fork(id) {
+    const meta = this.#readMeta(String(id || ''));
+    if (!meta) return null;
+    const now = new Date().toISOString();
+    const next = {
+      ...meta,
+      id: randomUUID(),
+      name: `${meta.name || DEFAULT_SESSION_NAME}（副本）`.slice(0, 60),
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.#writeMeta(next);
+    const records = this.records(meta.id);
+    if (records.length) {
+      try {
+        writeFileSync(join(this.dir, `${next.id}.jsonl`), records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+      } catch (e) { this.warn('会话派生转录写入失败', { id: next.id, error: String(e) }); }
+    }
+    return next;
+  }
+
   remove(id) {
     const sid = String(id || '');
     this.#recordsCache.delete(sid);
