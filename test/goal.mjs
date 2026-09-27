@@ -199,8 +199,10 @@ export async function runGoalTests(test, assert, eq) {
     eq(formatGoalCount(2500000), '2.5M');
   });
 
-  await test('goal: replyFingerprint 对空白不敏感，空回复不参与', () => {
-    eq(replyFingerprint('你好  世界'), replyFingerprint('你好 世界'));
+  await test('goal: replyFingerprint 仅行尾与首尾空白算展示差异（对齐 MiniMax fingerprintThreadGoalReply）', () => {
+    assert(replyFingerprint('你好  世界') !== replyFingerprint('你好 世界'), '内部空白是语义的一部分：改一个空格算新回复');
+    eq(replyFingerprint('a\r\nb'), replyFingerprint('a\nb'), '行尾形态是展示差异');
+    eq(replyFingerprint('  a  '), replyFingerprint('a'), '首尾空白是展示差异');
     assert(replyFingerprint('a') !== replyFingerprint('b'));
     eq(replyFingerprint('   '), '', '纯空白按空回复处理');
   });

@@ -3,19 +3,18 @@
  *   noProgressStreak  归一化回复指纹连续相同（模型在原地打转）
  *   noToolStreak      连续多个 goal 轮正常结束却一个工具都没提交（光说不练）
  * 工具信号缺失或不可信时 noToolStreak 重置为 0，不把「不可信的零」计成零。
- * 任一计数器触顶 → paused(no_progress)。
+ * 任一计数器触顶 → paused(no_progress)。指纹算法与 MiniMax 逐字节同语义：
+ * 模型改一个内部空格都算新回复（展示性重排不赦免），杜绝「换皮复读」漏网。
  */
+import { createHash } from 'node:crypto';
 
-/** 归一化回复指纹：去空白、截断，取稳定哈希（零依赖，FNV-1a 变体） */
+
+/** 归一化回复指纹：仅行尾形态与首尾空白算展示差异，内部内容原样参与哈希
+ * （语义对齐 MiniMax fingerprintThreadGoalReply：行尾归一化 + trim + sha256 全文） */
 export function replyFingerprint(text) {
-  const norm = String(text || '').replace(/\s+/g, '').slice(0, 512);
-  if (!norm) return '';
-  let h = 0x811c9dc5;
-  for (let i = 0; i < norm.length; i++) {
-    h ^= norm.charCodeAt(i);
-    h = (h * 0x01000193) >>> 0;
-  }
-  return h.toString(36);
+  const normalized = String(text ?? '').replace(/\r\n?|\n/gu, '\n').trim();
+  if (!normalized) return '';
+  return createHash('sha256').update(normalized).digest('hex');
 }
 
 /**
