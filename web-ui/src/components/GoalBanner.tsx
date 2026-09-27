@@ -1,7 +1,7 @@
 /** 目标横幅：会话级 goal 的状态芯片 + 用量/预算/轮次 + 验证结论 + 用户面动作（与终端 /goal、REST 面同源）。
  * 零 emoji、全设计令牌；恢复入口按状态裁剪（complete / budget_limited 不给恢复，与后端 canTransition 一致）。
  * live elapsed：仅 active 且无 executionWait 时按 1s tick 本地插值，服务端新快照到达即重置偏移。 */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { IconStop, IconTag } from '../icons';
 import { GOAL_STATUS_LABELS, GOAL_WAIT_LABELS, goalActionsFor } from '../types';
 import type { GoalState } from '../types';
@@ -25,12 +25,8 @@ export function GoalBanner({ goal, onAction }: Props) {
   const actions = goalActionsFor(goal.status);
   const live = goal.status === 'active' && !goal.executionWait;
   const [liveSecs, setLiveSecs] = useState(0);
-  const lastTime = useRef(goal.timeUsedSeconds);
   // 服务端每次用量快照到达即重置本地插值（新基线含已累计的轮内活跃秒数）
-  useEffect(() => {
-    if (goal.timeUsedSeconds !== lastTime.current) lastTime.current = goal.timeUsedSeconds;
-    setLiveSecs(0);
-  }, [goal.timeUsedSeconds]);
+  useEffect(() => { setLiveSecs(0); }, [goal.timeUsedSeconds]);
   useEffect(() => {
     if (!live) return;
     const id = setInterval(() => setLiveSecs((s) => s + 1), 1000);
