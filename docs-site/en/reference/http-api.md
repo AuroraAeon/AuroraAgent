@@ -16,9 +16,9 @@ Same-origin `/api/*`, all JSON; SSE frames are `event:` + `data:` lines.
 | Method & path | Notes |
 | --- | --- |
 | `GET /api/agent/harnesses` | harness list |
-| `GET/POST /api/agent/sessions` | list / create |
-| `GET/PATCH/DELETE /api/agent/sessions/:id` | detail (`{ meta, records }`) / rename & switch / delete |
-| `POST /api/agent/turn` | run a turn (SSE); single active turn (409); when the session still has the default name, the first round summarizes a title from the input and emits `session_renamed` |
+| `GET/POST /api/agent/sessions` | list / create (titleMode defaults to the global setting) |
+| `GET/PATCH/DELETE /api/agent/sessions/:id` | detail (`{ meta, records }`) / rename & switch (incl. titleMode) / delete |
+| `POST /api/agent/turn` | run a turn (SSE); single active turn (409); when the session still has the default name, the first round summarizes a title from the input and emits `session_renamed` (titleMode resolves as request body > session meta > global config) |
 | `POST /api/agent/abort` | abort, keeping generated content |
 | `POST /api/agent/permission` | `{ requestId, decision: allow/deny/always }` |
 | `POST /api/agent/plan` | `{ sessionId, decision: approve/reject }` |

@@ -12,7 +12,7 @@
 执行顺序永远是：
 
 1. 改代码（一个可独立验证的小改动，例如「修复一个错误映射」「新增一个厂商标识」）
-2. `npm test` 全绿（基线 138 个测试；不绿不准提交）
+2. `npm test` 全绿（基线 213 个测试；不绿不准提交）
 3. `git add <具体文件>` → `git commit -m "中文描述"` → `git push`
 
 规约：
@@ -60,6 +60,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 | `util/agent/harness.mjs` | 三档模式契约 minimal / standard / ultimate：系统提示、工具集、轮次上限（1 / 24 / 64）、压缩阈值；Creative 留待后续 |
 | `util/agent/session.mjs` | 会话存储：`sessions/<id>.meta.json` 原子落盘 + `.jsonl` 追加式转录；投影重建容错误行；create / list / get / patch / delete |
 | `util/agent/title.mjs` | 会话标题自动总结：首条用户消息本地推导简短标题（零成本纯函数，不调模型）——首行提取 / markdown 噪声剥离 / 技能注入取用户原话 / 斜杠命令取参数 / emoji 与控制符清洗 / CJK 宽度截断（≤24 列）；仅会话仍是 `DEFAULT_SESSION_NAME` 时套用 |
+| `util/agent/title-model.mjs` | 模型总结标题：titleMode=model 时一次无工具低温请求（≤64 token，参考首条消息与终稿）生成标题，失败回退本地推导；成本记 `purpose:'title'` 账本与会话汇总，不进转录与轮次脚注 |
 | `util/tui/` | 终端 TUI 工具包（零依赖）：`theme.mjs` 语义色板暗/亮双调 + 对比度守卫（全仓库唯一允许原始 SGR 的文件）；`render.mjs` CJK/ANSI 感知宽度截断；`printable-key.mjs` Kitty CSI-u 解码；`searchable-list.mjs` 光标/搜索/翻页状态机；`select.mjs`+`pick.mjs` 单选对话框（TTY 原始模式读键 + 非 TTY 退化）；`footer.mjs` 状态条；`commands.mjs` 声明式斜杠命令；`screen.mjs` 增量重绘；规范单一真值源 `docs-site/zh/reference/tui-design.md` |
 | `util/llm/` | LLM 抽象：`tool.mjs` kosong 风格 Tool 归一化与 OpenAI/Anthropic 双协议转换（`tools.mjs` 共用，`deferred` 标记的工具不进请求顶层 `tools[]` 以保字节稳定）；`errors.mjs` 状态码 → 中文错误分类（额度措辞先于 400）；`provider.mjs` `openChatStream` 统一开流入口（`/api/chat` 与 Loop 共用，非 2xx 抛带 kind/status 的 Error）；`message.mjs` OpenAI ↔ Anthropic 消息序列纯函数 |
 | `util/agent/tools.mjs` | 十一个内置工具（read_file / list_dir / write_file / edit_file / shell / web_fetch / grep / glob / todo / skill / task）：JSON Schema、`resolveInside` 路径禁锢（拒绝穿越）、输出截断、shell 超时（默认 30s 上限 120s）；MCP 与技能工具经 `util/llm/tool.mjs` 归一化后同形态入列 |
@@ -118,7 +119,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 2. 同目录已存在 `auroraagent.config.json` → 用当前目录（源码开发态）
 3. 否则 `~/Library/Application Support/AuroraAgent`（App 态，数据与 Bundle 解耦）
 
-配置字段：`apiKey` / `model` / `thinking` / `temperature` / `maxTokens` / `permissionMode` / `planMode`；用量账本 `usage.jsonl` 逐行追加；会话在 `sessions/<id>.meta.json` + `.jsonl`；新建会话默认名 `新会话`（`session.mjs` 的 `DEFAULT_SESSION_NAME` 单一常量），首条消息自动总结出标题后替换，用户改名不被覆盖。环境变量 `AURORAAGENT_API_KEY`、`AURORAAGENT_BASE_URL` 优先级高于配置文件。实验特性开关：`AURORAAGENT_EXPERIMENTAL_<NAME>`（如 `AURORAAGENT_EXPERIMENTAL_MCP`）单开、`AURORAAGENT_EXPERIMENTAL_FLAG` 全开，缺省关（`util/config.mjs` 单一实现）。
+配置字段：`apiKey` / `model` / `thinking` / `temperature` / `maxTokens` / `permissionMode` / `planMode` / `titleMode`（标题生成方式：local 本地推导零成本 / model 调模型总结，缺省 local，非法值回退缺省）；用量账本 `usage.jsonl` 逐行追加；会话在 `sessions/<id>.meta.json` + `.jsonl`；新建会话默认名 `新会话`（`session.mjs` 的 `DEFAULT_SESSION_NAME` 单一常量），首条消息自动总结出标题后替换，用户改名不被覆盖；titleMode 可全局配置，也可会话级热切换（网页输入区「本地总结 / 模型总结」选择器 PATCH 落 meta / 终端 `/title local|model`，新建会话继承当前选择）。环境变量 `AURORAAGENT_API_KEY`、`AURORAAGENT_BASE_URL` 优先级高于配置文件。实验特性开关：`AURORAAGENT_EXPERIMENTAL_<NAME>`（如 `AURORAAGENT_EXPERIMENTAL_MCP`）单开、`AURORAAGENT_EXPERIMENTAL_FLAG` 全开，缺省关（`util/config.mjs` 单一实现）。
 
 **`auroraagent.config.json`、`usage.jsonl`、`providers.json`、`mcp.json`、`sessions/` 已在 `.gitignore`，永远不许提交**——Key 泄露即安全事故。自定义提供方（含 API 密钥、单价）存 `providers.json`，内置 LongCat 提供方在内存里合成（`builtin: true`，只读）。用户技能放 `<数据目录>/skills/<名称>/SKILL.md`（与内置 `skills/` 合并展示）；MCP 服务器配置存 `mcp.json`（含连接信息，同级不提交）。
 
@@ -155,10 +156,10 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 - e2e 模式：mock 上游（`127.0.0.1:18901`，复刻真实 SSE 帧与 401 / 402 错误、`tool_calls` 帧与 tool 结果回执）+ 真实 socket 拉起 `web.mjs`（`127.0.0.1:18787`）
 - **数据隔离**：测试以临时目录作 `AURORAAGENT_DATA_DIR`，绝不许写真实数据目录
 - 新路由 / 新行为 / 新错误映射必须带中文测试名进入 `test/run-tests.mjs`；mock 需要新行为时改 `test/mock-longcat.mjs`
-- mock 触发词：消息含 `USE_TOOL` → 模型发起 `read_file mock.txt`；含 `USE_TOOL_WRITE` → 发起 `write_file written_by_agent.txt`；`FLAKY` 断网重试；`SLOW` 慢速；`USE_SKILL` / `USE_TODO` / `USE_EDIT` / `USE_PLAN` / `USE_SWARM` / `USE_MCP` 分别触发技能加载 / 待办维护 / diff 回传 / 计划两阶段 / 子代理派发 / MCP 工具调用
+- mock 触发词：消息含 `USE_TOOL` → 模型发起 `read_file mock.txt`；含 `USE_TOOL_WRITE` → 发起 `write_file written_by_agent.txt`；`FLAKY` 断网重试；`SLOW` 慢速；`USE_SKILL` / `USE_TODO` / `USE_EDIT` / `USE_PLAN` / `USE_SWARM` / `USE_MCP` 分别触发技能加载 / 待办维护 / diff 回传 / 计划两阶段 / 子代理派发 / MCP 工具调用；系统提示带 `【会话标题生成】` 标记即标题生成轮（titleMode=model），回固定标题 `README 安装章节改写`
 - 前端契约测试（`/app` 服务、哈希资产、令牌 CSS 在场、零 emoji、旧路由 404、ProviderEditor 源码校验规则）守着构建产物与 `web-ui/` 的同步；改了 `web-ui/` 忘了 `build:web` 会红
 - 仓库守卫（`test/guards.mjs`，已入 `npm test`）：产品源码零 emoji、TUI 颜色单一真值源（仅 `theme.mjs` 出 SGR）、色板对比度达标、新模块 ≤500 行、文档站结构契约（中英页面一一对应 / 发布笔记标记在场 / 依赖例外登记）
-- 基线 206/206 通过。提交前 `npm test` 必须全绿；不许 `skip`，不许放宽断言迁就失败
+- 基线 213/213 通过。提交前 `npm test` 必须全绿；不许 `skip`，不许放宽断言迁就失败
 - `npm run check` 走真实上游，只在改上游集成时跑（花少量钱）
 - 跑 `npm test` 前确认 18901 无常驻 mock 占用（`pkill -f mock-longcat`）；exec 沙箱会杀后台进程，常驻服务 / mock 用 exec_command 前台会话跑
 
@@ -175,7 +176,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 
 ## 10. 验证基线（改动后自查）
 
-- `npm test` → 206/206
+- `npm test` → 213/213
 - `curl -s localhost:8787/api/health` → `{"ok":true,...}`；`/api/settings` → `version` / `managed` / `dataDir` 符合预期
 - 浏览器打开 http://localhost:8787 ：无 emoji、模型选择器按提供方分组、完整 turn（工具卡 / 权限卡 / 用量脚注）正常、设置弹层可开关开机自启
 - 终端 `npm run chat`：`/help`、权限 y/n/a、`/sessions` 切换正常

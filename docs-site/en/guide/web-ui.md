@@ -4,9 +4,9 @@
 
 ## Layout
 
-- **Sidebar**: brand, new session, session list (relative time, mode, rounds), settings; after the first message of a new session, its title is auto-summarized from that message (local derivation, no model call; manually renamed sessions are kept)
+- **Sidebar**: brand, new session, session list (relative time, mode, rounds), settings; after the first message of a new session, its title is auto-summarized from that message (local derivation by default, no model call; the composer can also switch to model-summarized titles — one extra small request per new session, falling back to local derivation on failure; manually renamed sessions are kept)
 - **Conversation**: streamed answers with an activity line (round / tools / elapsed), collapsible thinking, tool cards (status / params / result / diff / todos), inline permission cards, plan cards, per-round usage footnotes
-- **Composer**: auto-growing textarea, `/` skill palette, thinking toggle, harness switch, permission mode dropdown, plan mode switch, model picker grouped by provider
+- **Composer**: auto-growing textarea, `/` skill palette, thinking toggle, harness switch, permission mode dropdown, plan mode switch, title mode (local / model summary), model picker grouped by provider
 
 ## Design discipline
 

@@ -4,7 +4,7 @@
 
 ## Slash commands
 
-`/new` `/sessions` `/model` `/harness` `/think` `/temp` `/max` `/key` `/plan` `/mcp` `/help` `/quit`; every skill also gets a `/<skill-name>` command. Use `npm run chat -- -p "question"` for one-shot prompts.
+`/new` `/sessions` `/model` `/harness` `/think` `/temp` `/max` `/key` `/plan` `/title` `/mcp` `/help` `/quit`; every skill also gets a `/<skill-name>` command. Use `npm run chat -- -p "question"` for one-shot prompts.
 
 ## Interaction details
 
@@ -12,5 +12,5 @@
 - Type to search; `Backspace clear`; two-stage Esc (clear query first, then cancel)
 - Dim streaming thoughts, single-line tool status, permission prompts `y` / `n` / `a`
 - Footer status bar: model · mode · thinking · cwd · tokens / cost
-- After the first message of a new session, a line notes the auto-summarized session title (local derivation, no model call; manually renamed sessions are kept)
+- After the first message of a new session, a line notes the auto-summarized session title (local derivation by default, no model call; with `/title model` the title is model-summarized — one extra small request per new session, falling back to local derivation on failure; manually renamed sessions are kept)
 - Character comparison always goes through `printableChar()` (Kitty CSI-u decoding)
