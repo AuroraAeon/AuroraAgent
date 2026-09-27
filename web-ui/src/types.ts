@@ -28,6 +28,7 @@ export type SessionMeta = {
   todos?: TodoItem[];
   permissionMode?: string;
   planMode?: boolean;
+  titleMode?: 'local' | 'model';
   inputTokens: number; outputTokens: number; cost: number; preview?: string;
 };
 

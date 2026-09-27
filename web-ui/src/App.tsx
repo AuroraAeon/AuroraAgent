@@ -61,6 +61,7 @@ export default function App() {
   const [live, setLive] = useState<LiveTurn | null>(null);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [permMode, setPermMode] = useState('ask_when_needed');
+  const [titleMode, setTitleMode] = useState('local');
   const [planOn, setPlanOn] = useState(false);
   const [busy, setBusy] = useState(false);
   const [models, setModels] = useState<ModelInfo[]>([]);
@@ -96,6 +97,7 @@ export default function App() {
       setMessages(projectRecords(got.records));
       setTodos(Array.isArray(got.meta.todos) ? got.meta.todos : []);
       setPermMode(got.meta.permissionMode || 'ask_when_needed');
+      setTitleMode(got.meta.titleMode || 'local');
       setPlanOn(got.meta.planMode === true);
     } catch {
       setMessages([]);
@@ -219,6 +221,17 @@ export default function App() {
     }
   };
 
+  const changeTitleMode = async (mode: string) => {
+    if (!current) return;
+    try {
+      const meta = await patchSession(current.id, { titleMode: mode });
+      setSessions((prev) => prev.map((s) => (s.id === meta.id ? meta : s)));
+      setTitleMode(mode);
+    } catch (e) {
+      setError(`切换标题生成方式失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
   const changePlan = async (on: boolean) => {
     if (!current) return;
     try {
@@ -331,6 +344,8 @@ export default function App() {
           onHarness={changeHarness}
           permissionMode={permMode}
           onPermissionMode={changePermMode}
+          titleMode={titleMode}
+          onTitleMode={changeTitleMode}
           planMode={planOn}
           onPlanMode={changePlan}
           skills={skills}

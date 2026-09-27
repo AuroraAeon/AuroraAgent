@@ -135,6 +135,12 @@ export const IconList = (p: IconProps) => (
   </Svg>
 );
 
+export const IconTag = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M20.6 13.4l-7.2 7.2a2 2 0 01-2.8 0l-7-7A2 2 0 013 12.2V5a2 2 0 012-2h7.2a2 2 0 011.4.6l7 7a2 2 0 010 2.8z" />
+    <circle cx="8" cy="8" r="1.3" />
+  </Svg>
+);
 export const IconKey = (p: IconProps) => (
   <Svg {...p}>
     <circle cx="8" cy="15" r="4" />

@@ -1391,6 +1391,13 @@ try {
     assert(term.includes("name: 'new'") && term.includes('titleMode: TITLE_MODES.includes(meta.titleMode)'), '终端新建会话应继承标题生成方式');
     const footer = readFileSync(join(__dirname, '..', 'util', 'tui', 'footer.mjs'), 'utf8');
     assert(footer.includes("state.titleMode === 'model'"), '状态栏应在模型总结模式下提示标题段');
+    const composer = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Composer.tsx'), 'utf8');
+    assert(composer.includes('function TitlePicker') && composer.includes('<TitlePicker'), '输入区应有标题生成方式选择器');
+    assert(composer.includes("TITLE_HINT.local") === false && composer.includes('本地推导') && composer.includes('模型总结'), '选择器应说明两种方式的代价');
+    assert(app.includes('changeTitleMode') && app.includes('onTitleMode={changeTitleMode}'), 'App 应接线标题生成方式切换');
+    assert(app.includes("setTitleMode(got.meta.titleMode || 'local')"), '打开会话应同步标题生成方式');
+    const js2 = await (await fetch(`${BASE}${/\/app\/assets\/[A-Za-z0-9._-]+\.js/.exec(await (await fetch(`${BASE}/`)).text())[0]}`)).text();
+    assert(js2.includes('onTitleMode'), '构建产物应含标题选择器接线（改了 web-ui 忘了 build:web 会红；产物里中文被转义，故用 ASCII 标识断言）');
     const html = await (await fetch(`${BASE}/`)).text();
     const js = await (await fetch(`${BASE}${/\/app\/assets\/[A-Za-z0-9._-]+\.js/.exec(html)[0]}`)).text();
     assert(js.includes('session_renamed'), '构建产物应含标题刷新逻辑（改了 web-ui 忘了 build:web 会红）');

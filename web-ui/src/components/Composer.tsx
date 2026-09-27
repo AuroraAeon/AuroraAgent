@@ -1,7 +1,7 @@
 /** 输入区：自适应文本框 + 工具栏（思考开关 / 模式切换 / 模型选择器）+ 发送 / 停止。 */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
-  Dots, IconBulb, IconCheck, IconChevronDown, IconList, IconSend, IconShield, IconSpark, IconStop,
+  Dots, IconBulb, IconCheck, IconChevronDown, IconList, IconSend, IconShield, IconSpark, IconStop, IconTag,
 } from '../icons';
 import type { Harness, ModelInfo, ProviderRow, SkillRow } from '../types';
 import { SkillPalette } from './SkillPalette';
@@ -225,6 +225,66 @@ function PermPicker({ mode, onMode }: { mode: string; onMode: (m: string) => voi
   );
 }
 
+const TITLE_LABEL: Record<string, string> = {
+  local: '本地总结',
+  model: '模型总结',
+};
+const TITLE_HINT: Record<string, string> = {
+  local: '按首条消息本地推导标题，零成本零延迟（默认）',
+  model: '调模型总结标题：每个新会话多一次小额请求，失败自动回退本地推导',
+};
+
+/** 标题生成方式选择器：本地推导 / 模型总结（会话级，PATCH 落 meta） */
+function TitlePicker({ mode, onMode }: { mode: string; onMode: (m: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const cur = TITLE_LABEL[mode] ? mode : 'local';
+  useLayoutEffect(() => {
+    if (!open) return;
+    const onDoc = (ev: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(ev.target as Node)) setOpen(false); };
+    const onKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+  return (
+    <div className="hpick" ref={boxRef}>
+      <button
+        type="button"
+        className="tchip"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        title={`标题：${TITLE_LABEL[cur]}（${TITLE_HINT[cur]}）`}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <IconTag size={14} />
+        {TITLE_LABEL[cur]}
+        <IconChevronDown size={13} />
+      </button>
+      {open ? (
+        <div className="hpick-menu" role="listbox" aria-label="选择标题生成方式">
+          {Object.keys(TITLE_LABEL).map((m) => (
+            <button
+              key={m}
+              type="button"
+              role="option"
+              aria-selected={m === cur}
+              className="hpick-item"
+              onClick={() => { onMode(m); setOpen(false); }}
+            >
+              <span className="hpick-item-head">
+                <span className="mpick-ck">{m === cur ? <IconCheck size={13} /> : null}</span>
+                {TITLE_LABEL[m]}
+              </span>
+              <span className="hpick-sum">{TITLE_HINT[m]}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 type Props = {
   busy: boolean;
   onSend: (text: string) => void;
@@ -241,6 +301,8 @@ type Props = {
   onHarness: (id: string) => void;
   permissionMode: string;
   onPermissionMode: (m: string) => void;
+  titleMode: string;
+  onTitleMode: (m: string) => void;
   planMode: boolean;
   onPlanMode: (v: boolean) => void;
   skills: SkillRow[];
@@ -249,7 +311,7 @@ type Props = {
 
 export function Composer({
   busy, onSend, onStop, models, modelStatus, model, onModel, providers, thinking, onThinking, harnesses, harness, onHarness, disabled,
-  permissionMode, onPermissionMode, planMode, onPlanMode, skills,
+  permissionMode, onPermissionMode, titleMode, onTitleMode, planMode, onPlanMode, skills,
 }: Props) {
   const [text, setText] = useState('');
   const [skillIdx, setSkillIdx] = useState(0);
@@ -339,6 +401,7 @@ export function Composer({
           </button>
           <HarnessPicker harnesses={harnesses} harness={harness} onHarness={onHarness} />
           <PermPicker mode={permissionMode} onMode={onPermissionMode} />
+          <TitlePicker mode={titleMode} onMode={onTitleMode} />
           <button
             type="button"
             className="tchip"
