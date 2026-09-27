@@ -4,7 +4,7 @@
  *   <id>.jsonl       追加式转录（user / assistant / thinking / tool_call / tool_result / summary / usage）
  * 投影（可见历史）由 jsonl 逐行重建，坏行跳过——与 usage.mjs 的容错读取同构。
  */
-import { appendFileSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_HARNESS } from './harness.mjs';
@@ -16,6 +16,8 @@ const META_SUFFIX = '.meta.json';
 export const DEFAULT_SESSION_NAME = '新会话';
 
 export class SessionStore {
+  #recordsCache = new Map();
+
   constructor(dataDir, { warn = () => {} } = {}) {
     this.dir = join(dataDir, 'sessions');
     this.defaultWorkspace = join(dataDir, 'workspace');
@@ -67,16 +69,31 @@ export class SessionStore {
     return { meta, records: this.records(id) };
   }
 
-  /** 逐行读转录，坏行跳过 */
+  /**
+   * 逐行读转录，坏行跳过。
+   * 缓存按 (mtimeMs, size) 失效：写路径（append / replaceRecords）必然改动 size，
+   * 因此不会服务陈旧数据。命中时返回浅拷贝——调用方（loop.mjs）会 push 返回数组，
+   * 直接给出缓存引用会把调用方的追加写回缓存里。
+   */
   records(id) {
+    const sid = String(id || '');
+    const path = join(this.dir, `${sid}.jsonl`);
+    let st;
+    try { st = statSync(path); } catch { this.#recordsCache.delete(sid); return []; }
+    const hit = this.#recordsCache.get(sid);
+    if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.records.slice();
+    let records = [];
     try {
-      return readFileSync(join(this.dir, `${id}.jsonl`), 'utf8').split('\n').filter(Boolean)
+      records = readFileSync(path, 'utf8').split('\n').filter(Boolean)
         .map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
     } catch { return []; }
+    this.#recordsCache.set(sid, { mtimeMs: st.mtimeMs, size: st.size, records });
+    return records.slice();
   }
 
   /** 追加一条转录记录；写失败只告警不打断（与 usage.mjs 同策略） */
   append(id, record) {
+    this.#recordsCache.delete(String(id || ''));
     try {
       appendFileSync(join(this.dir, `${id}.jsonl`), `${JSON.stringify({ at: new Date().toISOString(), ...record })}\n`);
     } catch (e) { this.warn('会话转录写入失败', { id, error: String(e) }); }
@@ -85,6 +102,7 @@ export class SessionStore {
   /** 整体重写转录（上下文压缩后：早期记录折叠为一条 summary），临时文件 + rename 原子落盘 */
   replaceRecords(id, records) {
     const sid = String(id || '');
+    this.#recordsCache.delete(sid);
     try {
       const p = join(this.dir, `${sid}.jsonl`);
       const tmp = `${p}.tmp`;
@@ -105,6 +123,7 @@ export class SessionStore {
 
   remove(id) {
     const sid = String(id || '');
+    this.#recordsCache.delete(sid);
     let ok = false;
     for (const f of [`${sid}.jsonl`, `${sid}${META_SUFFIX}`]) {
       const p = join(this.dir, f);
