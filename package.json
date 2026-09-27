@@ -20,6 +20,9 @@
     "build:web": "npm --prefix web-ui run build",
     "docs:dev": "npm --prefix docs-site run dev",
     "docs:build": "npm --prefix docs-site run build",
-    "docs:notes": "node tools/gen-release-notes.mjs"
+    "docs:notes": "node tools/gen-release-notes.mjs",
+    "bench": "node tools/perf/run.mjs --suite basic",
+    "bench:smoke": "node tools/perf/run.mjs --suite smoke",
+    "bench:full": "node tools/perf/run.mjs --suite full"
   }
 }

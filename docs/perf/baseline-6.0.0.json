@@ -1,0 +1,67 @@
+{
+  "label": "baseline-6.0.0",
+  "at": "2026-09-27T07:56:05.333Z",
+  "node": "v24.21.0",
+  "platform": "darwin-arm64",
+  "suite": "full",
+  "scenarios": [
+    {
+      "id": "startup",
+      "wallMs": 118,
+      "detail": {
+        "healthWaitMs": 118
+      },
+      "cpu": {
+        "userMs": 11.4,
+        "systemMs": 2.7
+      },
+      "peakRssMiB": 56.5,
+      "mock": {
+        "requests": 0,
+        "toolRounds": 0,
+        "bytes": 0
+      }
+    },
+    {
+      "id": "upstream-100",
+      "wallMs": 130,
+      "detail": {
+        "healthWaitMs": 112,
+        "requests": 100,
+        "bytes": 1602700,
+        "frames": 6600
+      },
+      "cpu": {
+        "userMs": 109.3,
+        "systemMs": 13.8
+      },
+      "peakRssMiB": 102.7,
+      "mock": {
+        "requests": 100,
+        "toolRounds": 0,
+        "bytes": 782100
+      }
+    },
+    {
+      "id": "history-300",
+      "wallMs": 479,
+      "detail": {
+        "healthWaitMs": 111,
+        "turns": 5,
+        "targetRounds": 300,
+        "bytes": 483709,
+        "frames": 1940
+      },
+      "cpu": {
+        "userMs": 137.7,
+        "systemMs": 31.3
+      },
+      "peakRssMiB": 157.2,
+      "mock": {
+        "requests": 301,
+        "toolRounds": 300,
+        "bytes": 143191
+      }
+    }
+  ]
+}
