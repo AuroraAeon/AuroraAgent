@@ -8,7 +8,7 @@
 
 ## 配置文件字段
 
-`apiKey` / `model` / `thinking` / `temperature` / `maxTokens` / `permissionMode` / `planMode` / `titleMode` / `goal` / `tui`。
+`apiKey` / `model` / `thinking` / `temperature` / `maxTokens` / `permissionMode` / `planMode` / `titleMode` / `agentProxy` / `goal` / `tui`。
 
 ### goal 段（目标模式）
 
@@ -27,6 +27,18 @@
 | `evaluatorMaxTokens` | 4096 | evaluator 单次请求 token 上限 |
 | `evaluatorTimeoutSeconds` | 60 | evaluator 超时（秒） |
 | `evaluatorMaxRetries` | 1 | evaluator 重试封顶 |
+
+### agentProxy（Agent 沙箱出站代理）
+
+Agent 沙箱内的出站请求（`web_fetch` 等工具）默认直连；本机直连被重置的站点（如维基百科）可经本机 HTTP 代理访问。经 `GET/POST /api/settings/proxy` 读写（设置页「网络」面板），保存后即时生效，不影响模型上游请求。
+
+| 形态 | 说明 |
+| --- | --- |
+| 空（缺省） | 直连 |
+| `http://127.0.0.1:7890` | 规范形态；常见端口：Clash / mihomo 7890、Surge 6152、V2Ray 10809 |
+| `127.0.0.1:7890` | 裸 `主机:端口`，归一化时补 `http://` |
+
+socks5 等其它协议暂不支持（错误消息会说明）；http 目标走正向代理、https 目标走 CONNECT 隧道，实现见 `util/proxy.mjs`。
 
 ### tui 段（终端偏好）
 

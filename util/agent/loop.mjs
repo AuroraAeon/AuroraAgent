@@ -50,7 +50,7 @@ export async function runAgentTurn(ctx) {
     store, usage, session, input, provider, model, harness, builtinPrice,
     gen = {}, skills = [], extraTools = [], emit, controller, requestPermission, requestPlanDecision,
     permissionMode = 'ask_when_needed', planMode = false, titleMode = DEFAULT_TITLE_MODE, depth = 0,
-    goalStore = null, goalCfg = null, log = () => {},
+    agentProxy = '', goalStore = null, goalCfg = null, log = () => {},
   } = ctx;
   const sessionId = session.id;
   const turnId = randomUUID();
@@ -272,7 +272,7 @@ export async function runAgentTurn(ctx) {
         }
         if (ok) {
           try {
-            const res = await tool.run(safeArgs(call.arguments), { workspace: session.workspace, skills, todoStore, spawn });
+            const res = await tool.run(safeArgs(call.arguments), { workspace: session.workspace, skills, todoStore, spawn, proxy: agentProxy });
             // 工具可返回字符串或 { output, extra }：extra 是结构化负载（diff / todos），
             // 进转录与 tool_event 供两端渲染，但不进模型消息（模型只看 output 文本）
             if (res && typeof res === 'object') { output = String(res.output ?? ''); extra = res.extra; }

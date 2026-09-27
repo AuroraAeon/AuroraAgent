@@ -29,6 +29,7 @@ import { runGuardTests } from './guards.mjs';
 import { runLlmTests } from './llm.mjs';
 import { runHighlightTests } from './highlight.mjs';
 import { runMarkdownTests } from './markdown.mjs';
+import { runProxyTests, startFetchFixtures } from './proxy.mjs';
 import { runConfigTests } from './config.mjs';
 import { runTuiComponentTests } from './tui-components.mjs';
 import { runPickTests } from './pick.mjs';
@@ -91,6 +92,7 @@ await runTuiToolkitTests(test, assert, eq);
 await runLlmTests(test, assert, eq);
 await runHighlightTests(test, assert, eq);
 await runMarkdownTests(test, assert, eq);
+await runProxyTests(test, assert, eq);
 await runConfigTests(test, assert, eq);
 await runTuiComponentTests(test, assert, eq);
   await runPickTests(test, assert, eq);
@@ -956,7 +958,7 @@ const toolFrames = (name, args) => [
 ];
 
 /** 一次性 loop 运行环境：临时数据目录 + stub fetch + 事件收集 */
-async function runLoopOnce({ framesByCall, harness = getHarness('standard'), permission = 'allow', seedRecords = [], providerExtra = {}, input = '开始', planMode = false, planDecision = 'approve', sessionName = '', titleMode = 'local' }) {
+async function runLoopOnce({ framesByCall, harness = getHarness('standard'), permission = 'allow', seedRecords = [], providerExtra = {}, input = '开始', planMode = false, planDecision = 'approve', sessionName = '', titleMode = 'local', agentProxy = '' }) {
   const dir = mkdtempSync(join(tmpdir(), 'mt-loop-'));
   const ws = join(dir, 'workspace');
   mkdirSync(ws, { recursive: true });
@@ -988,10 +990,43 @@ async function runLoopOnce({ framesByCall, harness = getHarness('standard'), per
     requestPermission: async () => { permCalls++; return permission; },
     planMode,
     titleMode,
+    agentProxy,
     requestPlanDecision: async () => planDecision,
     log: () => {},
   }).finally(() => { globalThis.fetch = realFetch; });
   return { dir, ws, store, usage, session, events, requests, result, permCalls };
+}
+
+// ---------- 单元测试: 本机代理经 Loop 出站 ----------
+console.log('\n本机代理 Loop 单测');
+{
+  const fx = await startFetchFixtures();
+  try {
+    await test('Agent turn：web_fetch 经 ctx.agentProxy 走本机代理抓取（工具结果回填）', async () => {
+      const { events, result } = await runLoopOnce({
+        framesByCall: [
+          toolFrames('web_fetch', { url: `http://127.0.0.1:${fx.originPort}/wiki/代理测试` }),
+          textFrames('抓取完成'),
+        ],
+        agentProxy: `http://127.0.0.1:${fx.proxyPort}`,
+      });
+      const done = events.find((e) => e.type === 'tool_event' && e.phase === 'completed');
+      assert(done && done.output.includes('HTTP 200') && done.output.includes('ORIGIN-OK'), `工具应经代理拿到正文，实际：${done && done.output.slice(0, 120)}`);
+      eq(result.text, '抓取完成');
+    });
+    await test('Agent turn：未配置代理时 web_fetch 直连（行为不变）', async () => {
+      const { events } = await runLoopOnce({
+        framesByCall: [
+          toolFrames('web_fetch', { url: `http://127.0.0.1:${fx.originPort}/wiki/直连` }),
+          textFrames('完成'),
+        ],
+      });
+      const done = events.find((e) => e.type === 'tool_event' && e.phase === 'completed');
+      assert(done && done.output.includes('HTTP 200'), '直连路径应照旧');
+    });
+  } finally {
+    fx.close();
+  }
 }
 
 console.log('\n转录投影层单元测试');
@@ -1568,6 +1603,12 @@ try {
     const dlg = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SettingsDialog.tsx'), 'utf8');
     assert(dlg.includes('<TuiPanel />'), '设置弹层应挂载终端偏好面板');
     assert(js.includes('tui-chip'), '构建产物应含终端偏好面板（改了 web-ui 忘了 build:web 会红）');
+    // 网络面板：代理输入、保存接线与产物同步
+    const proxyPanel = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ProxyPanel.tsx'), 'utf8');
+    assert(proxyPanel.includes('validateProxyInput') && proxyPanel.includes('setAgentProxy') && proxyPanel.includes('127.0.0.1:7890') && !hasEmoji(proxyPanel), 'ProxyPanel 应有校验 / 保存接线与端口示例且零 emoji');
+    assert(proxyPanel.includes('/api/settings/proxy') === false, '前端不直连路径，走 api.ts');
+    assert(dlg.includes('<ProxyPanel />'), '设置弹层应挂载网络面板');
+    assert(js.includes('np-input'), '构建产物应含网络面板（改了 web-ui 忘了 build:web 会红）');
   });
   await test('OSC 终端标题接线源码契约：状态词随模式变、挂起清除、退出清空', async () => {
     const term = readFileSync(join(__dirname, '..', 'util', 'agent', 'terminal.mjs'), 'utf8');
@@ -2542,7 +2583,51 @@ await test('GET/POST /api/settings/tui：读生效配置、局部合并更新、
   rmSync(cfgPath, { force: true });
 });
 
-// ---------- Goal REST 面：/api/agent/goal*（用户操作优先级永远高于模型提案） ----------
+// ---------- Agent 沙箱代理：/api/settings/proxy（web_fetch 等出站请求的出路） ----------
+await test('GET/POST /api/settings/proxy：读生效值、归一化落盘、坏值 400 / 405', async () => {
+  const cfgPath = join(tmpDataDir, 'auroraagent.config.json');
+  writeFileSync(cfgPath, JSON.stringify({
+    agentProxy: '127.0.0.1:7890',
+    tui: { terminalTitle: ['state'], notifications: { when: 'always', method: 'osc9', events: ['turn-complete'] } },
+  }));
+  const got = await (await fetch(`${BASE}/api/settings/proxy`)).json();
+  eq(got.ok, true, '应回 ok');
+  eq(got.agentProxy, 'http://127.0.0.1:7890', '裸 host:port 应归一化为 http:// 形态');
+  // 局部保存：其它配置段不被冲掉
+  const p1 = await (await fetch(`${BASE}/api/settings/proxy`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agentProxy: 'http://127.0.0.1:6152' }),
+  })).json();
+  eq(p1.agentProxy, 'http://127.0.0.1:6152', '保存后应回显新值');
+  const back = await (await fetch(`${BASE}/api/settings/proxy`)).json();
+  eq(back.agentProxy, 'http://127.0.0.1:6152', '落盘后应读回');
+  const onDisk = JSON.parse(readFileSync(cfgPath, 'utf8'));
+  eq(onDisk.agentProxy, 'http://127.0.0.1:6152', '配置文件应持久化归一化值');
+  eq(onDisk.tui.notifications.when, 'always', '保存代理不应冲掉其它配置段');
+  // 清空 = 直连
+  const p2 = await (await fetch(`${BASE}/api/settings/proxy`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agentProxy: '' }),
+  })).json();
+  eq(p2.agentProxy, '', '空值 = 直连');
+  const cleared = await (await fetch(`${BASE}/api/settings/proxy`)).json();
+  eq(cleared.agentProxy, '', '清空后应读回直连');
+  // 坏值 400：socks5 / 缺端口 / 端口越界
+  eq((await fetch(`${BASE}/api/settings/proxy`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agentProxy: 'socks5://127.0.0.1:7890' }),
+  })).status, 400, 'socks5 应 400');
+  const noPort = await (await fetch(`${BASE}/api/settings/proxy`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agentProxy: 'http://127.0.0.1' }),
+  })).json();
+  eq(noPort.ok, true, '缺省端口 80 是合法 URL 语义');
+  eq(noPort.agentProxy, 'http://127.0.0.1:80', '缺省端口应补 80');
+  eq((await fetch(`${BASE}/api/settings/proxy`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agentProxy: 'http://127.0.0.1:99999' }),
+  })).status, 400, '端口越界应 400');
+  eq((await fetch(`${BASE}/api/settings/proxy`, { method: 'DELETE' })).status, 405, '其他方法应 405');
+  rmSync(cfgPath, { force: true });
+});
+
+// ---------- Goal REST 面： /api/agent/goal*（用户操作优先级永远高于模型提案） ----------
 await test('GET /api/files/search：会话工作目录内只读搜索，跳过依赖目录，会话不存在 404', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'files-api-'));
   mkdirSync(join(dir, 'sub'), { recursive: true });

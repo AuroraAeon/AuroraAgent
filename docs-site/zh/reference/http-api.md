@@ -41,6 +41,7 @@
 | --- | --- |
 | `GET/POST /api/settings` | 读设置 / 开机自启开关 |
 | `GET/POST /api/settings/tui` | 终端偏好读写（`terminalTitle` 项序 + `notifications` 三档）；坏值 400，其他方法 405 |
+| `GET/POST /api/settings/proxy` | Agent 沙箱出站代理读写（`agentProxy`：`http://主机:端口`，空 = 直连）；socks5 等坏值 400，其他方法 405 |
 
 ## MCP（实验特性，未开启时 404）
 

@@ -117,6 +117,25 @@ export async function runConfigTests(test, assert, eq) {
     }
   });
 
+  await test('config: agentProxy 缺省直连、round-trip 保留、坏值回退', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aurora-cfg-'));
+    const prev = process.env.AURORAAGENT_DATA_DIR;
+    process.env.AURORAAGENT_DATA_DIR = dir;
+    try {
+      eq(loadConfig().agentProxy, '', '缺省直连');
+      saveConfig({ model: 'm', thinking: true, temperature: 0.5, maxTokens: 100, permissionMode: 'never_ask', planMode: false, keyIsOverride: true, agentProxy: '127.0.0.1:7890' });
+      eq(loadConfig().agentProxy, 'http://127.0.0.1:7890', '裸 host:port 应归一化后落盘');
+      // 旧调用方不感知 agentProxy：保留盘上现值，不被整体覆写误清
+      saveConfig({ model: 'm', thinking: true, temperature: 0.5, maxTokens: 100, permissionMode: 'never_ask', planMode: false, keyIsOverride: true });
+      eq(loadConfig().agentProxy, 'http://127.0.0.1:7890', '未传 agentProxy 的保存应保留现值');
+      writeFileSync(join(dir, 'auroraagent.config.json'), JSON.stringify({ agentProxy: 'socks5://127.0.0.1:7890' }));
+      eq(loadConfig().agentProxy, '', '坏值回退直连');
+    } finally {
+      if (prev === undefined) delete process.env.AURORAAGENT_DATA_DIR; else process.env.AURORAAGENT_DATA_DIR = prev;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   await test('config: experimentalEnabled 单开 / 全开 / 缺省关', () => {
     const prevName = process.env.AURORAAGENT_EXPERIMENTAL_MCP;
     const prevAll = process.env.AURORAAGENT_EXPERIMENTAL_FLAG;

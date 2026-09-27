@@ -571,6 +571,15 @@
 .tui-chip.on { background:var(--accent-soft); border-color:var(--accent-line); color:var(--accent-hi); }
 .tui-hint { font-size:12px; color:var(--faint); }
 .tui-foot { display:flex; justify-content:flex-end; padding-top:2px; }
+/* 网络面板（本机代理输入） */
+.np-row { display:flex; gap:8px; align-items:center; }
+.np-input {
+  flex:1; min-width:0; padding:7px 11px; font-size:13px; color:var(--text);
+  background:var(--code-bg); border:1px solid var(--line); border-radius:9px;
+}
+.np-input:focus { outline:none; border-color:var(--accent-line); }
+.np-input::placeholder { color:var(--faint); }
+.np-hint { font-size:12px; color:var(--faint); margin-top:2px; }
 .kv { display:flex; flex-direction:column; gap:6px; }
 .kv > div { display:flex; align-items:center; gap:10px; font-size:12.5px; }
 .kv dt { color:var(--faint); width:64px; flex:none; }

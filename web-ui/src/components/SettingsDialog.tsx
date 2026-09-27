@@ -11,6 +11,7 @@ import { ProviderEditor, draftToPayload, fmtCap, validateDraft, type Candidate, 
 import { McpPanel } from './McpPanel';
 import { SkillsPanel } from './SkillsPanel';
 import { TuiPanel } from './TuiPanel';
+import { ProxyPanel } from './ProxyPanel';
 
 const emptyDraft = (protocol = 'openai'): Draft => ({
   id: '', name: '', protocol, baseUrl: '', pathPrefix: '', apiKey: '',
@@ -243,6 +244,8 @@ export function SettingsDialog({ open, onClose, onProvidersChanged }: Props) {
             <SkillsPanel />
 
             <TuiPanel />
+
+            <ProxyPanel />
 
             <section className="pv-sec">
               <h3 className="pv-sec-t">服务</h3>

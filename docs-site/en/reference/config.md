@@ -8,7 +8,7 @@
 
 ## Config fields
 
-`apiKey` / `model` / `thinking` / `temperature` / `maxTokens` / `permissionMode` / `planMode` / `titleMode` / `goal` / `tui`.
+`apiKey` / `model` / `thinking` / `temperature` / `maxTokens` / `permissionMode` / `planMode` / `titleMode` / `agentProxy` / `goal` / `tui`.
 
 ### goal section (goal mode)
 
@@ -29,6 +29,18 @@ Per-leaf fallback + clamping + startup warning. Full semantics: [Goal Mode guide
 | `evaluatorMaxRetries` | 1 | evaluator retry cap |
 
 ### tui section (terminal preferences)
+
+### agentProxy (outbound proxy for the Agent sandbox)
+
+Outbound requests made by Agent tools (`web_fetch` and friends) connect directly by default; sites whose direct connection is reset (Wikipedia, for example) can be reached through a local HTTP proxy. Read and written via `GET/POST /api/settings/proxy` (Settings dialog, "Network" panel); changes take effect immediately and do not affect model upstream requests.
+
+| Form | Notes |
+| --- | --- |
+| empty (default) | direct connection |
+| `http://127.0.0.1:7890` | canonical form; common ports: Clash / mihomo 7890, Surge 6152, V2Ray 10809 |
+| `127.0.0.1:7890` | bare `host:port`, normalized with an `http://` prefix |
+
+Other protocols such as socks5 are not supported yet (the error message says so); HTTP targets go through a forward proxy and HTTPS targets through a CONNECT tunnel. Implementation lives in `util/proxy.mjs`.
 
 Read and written via `GET/POST /api/settings/tui` (Settings dialog, "Terminal" panel); the terminal reads it once at startup, so changes apply on next launch.
 

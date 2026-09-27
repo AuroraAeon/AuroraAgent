@@ -10,6 +10,7 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { parseGoalConfig } from './agent/goal/config.mjs';
 import { parseTuiConfig } from './tui/config.mjs';
+import { parseAgentProxy } from './proxy.mjs';
 
 /** 限时折扣价: 输入 ¥2 / 输出 ¥8 每百万 tokens */
 export const PRICE = { input: 2, output: 8 };
@@ -88,11 +89,18 @@ export function loadConfig({ warn } = {}) {
     permissionMode: PERMISSION_MODES.includes(saved.permissionMode) ? saved.permissionMode : DEFAULT_PERMISSION_MODE,
     planMode: saved.planMode === true,
     titleMode: TITLE_MODES.includes(saved.titleMode) ? saved.titleMode : DEFAULT_TITLE_MODE,
+    // Agent 沙箱出站代理（web_fetch 等工具用）：空 = 直连；坏值回退直连并告警
+    agentProxy: parseAgentProxy(saved.agentProxy, warn ? { warn } : {}) || '',
     // goal 段解析（单叶容错 + 钳制）落在 goal/config.mjs；启动方传 warn  surfaced 坏值告警
     goal: parseGoalConfig(saved.goal, warn ? { warn } : {}),
     // tui 段解析（终端标题项序 + 通知三档）落在 tui/config.mjs，同样的单叶容错纪律
     tui: parseTuiConfig(saved.tui, warn ? { warn } : {}),
   };
+}
+
+/** 盘上现值（saveConfig 用）：调用方未感知 agentProxy 时保留，防止旧调用方整体覆写误清 */
+function savedAgentProxy() {
+  try { return parseAgentProxy(JSON.parse(readFileSync(join(resolveDataDir(), CONFIG_FILE), 'utf8')).agentProxy) || ''; } catch { return ''; }
 }
 
 /** 只持久化非密钥敏感字段的变更由调用方决定；apiKey 仅在调用方显式要求时写入 */
@@ -107,6 +115,7 @@ export function saveConfig(cfg) {
     titleMode: TITLE_MODES.includes(cfg.titleMode) ? cfg.titleMode : DEFAULT_TITLE_MODE,
     goal: parseGoalConfig(cfg.goal),
     tui: parseTuiConfig(cfg.tui),
+    agentProxy: cfg.agentProxy !== undefined ? (parseAgentProxy(cfg.agentProxy) || '') : savedAgentProxy(),
   };
   if (!cfg.keyIsOverride) out.apiKey = cfg.apiKey;
   writeFileSync(join(resolveDataDir(), CONFIG_FILE), JSON.stringify(out, null, 2) + '\n');

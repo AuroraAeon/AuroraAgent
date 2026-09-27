@@ -200,6 +200,7 @@ export async function runTerminalTurn({ store, usage, session, input, provider, 
       permissionMode: cfg.permissionMode,
       planMode: session.planMode !== undefined ? session.planMode === true : cfg.planMode === true,
       titleMode: TITLE_MODES.includes(session.titleMode) ? session.titleMode : cfg.titleMode,
+      agentProxy: cfg.agentProxy,
       // 权限询问与主输入共用同一条 line 通道（ask()），避免 readline 双消费；
       // 中断（Ctrl+C）时按拒绝放行，让循环收尾成 turn_cancelled
       requestPermission: ({ toolName, params, resource }) => new Promise((resolve) => {

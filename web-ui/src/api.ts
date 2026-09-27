@@ -25,6 +25,9 @@ export const listHarnesses = () => api<{ harnesses: Harness[]; default: string }
 export const listModels = () => api<{ models: ModelInfo[]; status: string }>('/api/models');
 export const getSettings = () => api<SettingsInfo>('/api/settings');
 export const setAutostart = (autostart: boolean) => api<{ ok: boolean }>('/api/settings', { method: 'POST', body: JSON.stringify({ autostart }) });
+export const getAgentProxy = () => api<{ ok: boolean; agentProxy: string }>('/api/settings/proxy');
+export const setAgentProxy = (agentProxy: string) =>
+  api<{ ok: boolean; agentProxy: string }>('/api/settings/proxy', { method: 'POST', body: JSON.stringify({ agentProxy }) });
 export const getTuiSettings = () => api<TuiSettings>('/api/settings/tui');
 export const saveTuiSettings = (body: { terminalTitle?: string[]; notifications?: { when?: string; method?: string; events?: string[] } }) =>
   api<{ ok: boolean; tui: TuiSettings['tui'] }>('/api/settings/tui', { method: 'POST', body: JSON.stringify(body) });

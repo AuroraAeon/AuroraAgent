@@ -41,6 +41,7 @@ Same-origin `/api/*`, all JSON; SSE frames are `event:` + `data:` lines.
 | --- | --- |
 | `GET/POST /api/settings` | read settings / toggle autostart |
 | `GET/POST /api/settings/tui` | read / write terminal preferences (`terminalTitle` order + `notifications` triple); 400 on bad values, 405 for other methods |
+| `GET/POST /api/settings/proxy` | read / write the Agent sandbox outbound proxy (`agentProxy`: `http://host:port`, empty = direct); 400 on bad values such as socks5, 405 for other methods |
 
 ## MCP (experimental; 404 when disabled)
 

@@ -316,6 +316,7 @@ export function createAgentApi(deps) {
           builtinPrice, skills,
           gen: { maxTokens: cfg.maxTokens, temperature: cfg.temperature, thinkingOn: body.thinking !== false },
           emit, controller, permissionMode, planMode, titleMode, extraTools: mcpTools(),
+          agentProxy: cfg.agentProxy,
           goalStore: goals, goalCfg: cfg.goal,
           requestPermission: ({ requestId }) => new Promise((resolve) => {
             pendingPermissions.set(requestId, { resolve, sessionId });

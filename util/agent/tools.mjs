@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'n
 import { spawn } from 'node:child_process';
 import { resolve, sep, dirname, join, relative } from 'node:path';
 import { toOpenAIFunction, toAnthropicTool } from '../llm/tool.mjs';
+import { proxyFetch } from '../proxy.mjs';
 import { findSkill } from './skills.mjs';
 
 const MAX_OUTPUT = 32 * 1024;   // 单次工具回给模型的文本上限
@@ -284,12 +285,16 @@ export const TOOLS = [
       properties: { url: { type: 'string', description: '完整的 http/https 地址' } },
       required: ['url'],
     },
-    async run(args) {
+    async run(args, ctx) {
       const url = String(args.url ?? '');
       if (!/^https?:\/\//i.test(url)) throw new ToolError('只支持 http/https URL', 'bad_args');
+      // 设置了本机代理（ctx.proxy）时经代理出站——本机直连被重置的站点（如维基百科）的出路
+      const proxy = String(ctx?.proxy || '');
       let resp;
       try {
-        resp = await fetch(url, { signal: AbortSignal.timeout(20000), redirect: 'follow' });
+        resp = proxy
+          ? await proxyFetch(url, proxy, { timeoutMs: 20000 })
+          : await fetch(url, { signal: AbortSignal.timeout(20000), redirect: 'follow' });
       } catch (e) { throw new ToolError(`抓取失败：${e.message}`, 'fetch_error'); }
       const text = await resp.text();
       return truncate(`HTTP ${resp.status} ${url}\n${text}`, MAX_FETCH);
