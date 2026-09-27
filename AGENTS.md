@@ -56,7 +56,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 | `util/stream.mjs` | SSE 透传 / 翻译泵（逐帧转发 + 用量累计 + 背压 pause/resume，供 `/api/chat`）；`consumeAgentStream` 增量累积 `tool_calls` delta 供 Loop 使用 |
 | `util/usage.mjs` | 用量账本：逐行追加 + 汇总出口 |
 | `util/service.mjs` | LaunchAgent 生命周期：plist 生成 / 安装 / 卸载 / 状态 |
-| `util/agent/events.mjs` | AgentEvent 协议（OpenBitFun AgenticEvent 精简子集）+ SSE 帧封装；`session_renamed` 供两端实时刷新自动总结出的标题；`goal_created` / `goal_status_changed` / `goal_usage_updated` / `goal_wait_changed` 四类 goal 事件 |
+| `util/agent/events.mjs` | AgentEvent 协议（OpenBitFun AgenticEvent 精简子集）+ SSE 帧封装；`session_renamed` 供两端实时刷新自动总结出的标题；`goal_created` / `goal_status_changed` / `goal_usage_updated` / `goal_wait_changed` / `goal_cleared` 五类 goal 事件 |
 | `util/agent/harness.mjs` | 三档模式契约 minimal / standard / ultimate：系统提示、工具集（goal 三工具仅 standard / ultimate 收录）、轮次上限（1 / 24 / 64）、压缩阈值；Creative 留待后续 |
 | `util/agent/session.mjs` | 会话存储：`sessions/<id>.meta.json` 原子落盘 + `.jsonl` 追加式转录（投影按 mtime+size 失效缓存）；投影重建容错误行；create / list / get / patch / fork / delete |
 | `util/agent/title.mjs` | 会话标题自动总结：首条用户消息本地推导简短标题（零成本纯函数，不调模型）——首行提取 / markdown 噪声剥离 / 技能注入取用户原话 / 斜杠命令取参数 / emoji 与控制符清洗 / CJK 宽度截断（≤24 列）；仅会话仍是 `DEFAULT_SESSION_NAME` 时套用 |
@@ -67,14 +67,14 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 | `util/agent/policy.mjs` | 权限策略：`{action, resource, effect}` 规则集，层内后匹配赢、多层取最严（deny > ask > allow）；`permissionMode` 三档（always_ask / ask_when_needed / never_ask）设定 ask 类动作默认效应，不推翻 deny 与会话级「总是允许」；action 支持 `mcp__*` 前缀通配 |
 | `util/agent/context.mjs` | 上下文组装（系统提示 + 历史 + 工具定义；thinking/usage 不回填、summary 转系统消息）与压缩规划（超窗口 70% 触发，保留最近 4 个用户轮原文） |
 | `util/agent/loop.mjs` | turn 运行器：轮次循环至无 tool_calls 或触顶；计划 / 执行两阶段（`plan.mjs`）；权限经 pending map 挂起等前端决策；`AbortController` 中断保留已生成内容（子代理级联中止）；SSE 断开即中止；MCP 等额外工具经 `extraTools` 进请求；每轮经 `usage.mjs` 记账 |
-| `util/agent/http.mjs` | `/api/agent/*` 与 `/api/mcp/*` HTTP 面（web.mjs 前缀委派）：会话 CRUD + PATCH + fork、turn SSE、abort、permission、harnesses、skills 目录、plan 决策通道、goal REST 四面（查询 / 创建 / pause·resume·stop / budget，纪元与状态冲突 409）、MCP 服务器 CRUD + probe（实验门控）；单活跃 turn（409） |
+| `util/agent/http.mjs` | `/api/agent/*` 与 `/api/mcp/*` HTTP 面（web.mjs 前缀委派）：会话 CRUD + PATCH + fork、turn SSE、abort、permission、harnesses、skills 目录、plan 决策通道、goal REST 四面（查询 / 创建 / pause·resume·stop / budget，纪元与状态冲突 409）、`GET /api/agent/events` 跨客户端 goal 事件流（SSE，经 `util/agent/goal/bus.mjs` 扇出）、MCP 服务器 CRUD + probe（实验门控）；单活跃 turn（409） |
 | `util/agent/terminal.mjs` | 终端 REPL 协调器：readline + 声明式斜杠命令表（`defineCommands`，含 `/goal` 家族与 `/btw`）+ footer 状态条 + 可搜索选择器；OSC 标题实时改写（挂起经不可捕获 SIGSTOP 真正停下）、系统通知接线；`Ctrl+/` 主 / 侧边对话切换；`-p` 单次提问；行数预算内拆出下面两个模块 |
 | `util/agent/terminal-turn.mjs` | 终端 turn 渲染器：AgentEvent → 思考流 / 工具单行 / 权限 y/n/a / 用量脚注；Ctrl+C 经 rl 'SIGINT' 事件中转中断（raw mode 下无真信号） |
 | `util/agent/terminal-format.mjs` | 终端渲染纯助手：工具标签、截断、费用格式化、输出缩进（coordinator 与 turn 渲染器共用；标签与费用已转置到 `transcript.mjs` 同源） |
 | `util/agent/skills.mjs` | 技能系统：frontmatter（name + description）解析、内置 + 用户双目录、目录清单注入系统提示、`/<技能名>` 斜杠命令与 `skill` 工具按需加载正文 |
 | `util/agent/plan.mjs` | 计划模式：计划轮只读 / 检索 / 待办工具白名单（单点定义）、批准后作为既定契约注入执行轮、驳回以 `plan_rejected` 收尾 |
 | `util/agent/swarm.mjs` | 子代理：`task` 工具派发受限子 turn（真实子会话透明可查、嵌套深度封顶 2 层、单次上限 4 个、父中止级联），终稿经工具结果聚合回父模型 |
-| `util/agent/goal/` | Goal 目标模式（语义对齐 MiniMax-code thread-goal，一会话一目标）：`types.mjs` 六态状态机 + statusReason 闭集 + 读路径归一化；`store.mjs` 原子落盘 + CAS 纪元严格推进；`tools.mjs` create_goal / update_goal / get_goal（名字与 schema 对齐 codex，混合模式拒绝）；`budget.mjs` 三维预算（token / 轮次 / 活跃秒数）触顶与收尾轮 + 用量芯片；`breaker.mjs` 回复指纹 + 无工具双熔断；`config.mjs` goal 段解析（单叶容错 + 钳制）；`verification.mjs` evaluator / subagent 验证与结算；`continuation.mjs` 轮内自动续跑；`runtime.mjs` 编排入口；`actions.mjs` 用户面操作单一事实源（REST 与终端共用） |
+| `util/agent/goal/` | Goal 目标模式（语义对齐 MiniMax-code thread-goal，一会话一目标）：`types.mjs` 六态状态机 + statusReason 闭集 + 读路径归一化；`store.mjs` 原子落盘 + CAS 纪元严格推进；`tools.mjs` create_goal / update_goal / get_goal（名字与 schema 对齐 codex，混合模式拒绝）；`budget.mjs` 三维预算（token / 轮次 / 活跃秒数）触顶与收尾轮 + 用量芯片；`breaker.mjs` 回复指纹 + 无工具双熔断；`config.mjs` goal 段解析（单叶容错 + 钳制）；`verification.mjs` evaluator / subagent 验证与结算；`continuation.mjs` 轮内自动续跑；`runtime.mjs` 编排入口；`actions.mjs` 用户面操作单一事实源（REST 与终端共用）；`bus.mjs` 进程内事件总线（REST 变更按 sessionId 扇出给 SSE 订阅方，对齐 MiniMax 全局事件投影） |
 | `util/proxy.mjs` | 本机代理（Agent 沙箱出站请求的出路）：`parseAgentProxy` 地址归一化与校验（`http://host:port` 或裸 `host:port`，空 = 直连，socks5 拒绝）、`proxyFetch` 零依赖抓取（http 目标走正向代理绝对 URI、https 目标走 CONNECT 隧道 + TLS、跟随重定向封顶 5 跳、错误中文化）、`handleAgentProxyApi` 的 `GET/POST /api/settings/proxy` HTTP 面（设置页「网络」面板，web.mjs 一行委派）；Node 内置 fetch 不读 `HTTP_PROXY`，故自行实现隧道 |
 | `util/agent/side-session.mjs` | 侧边对话（`/btw`）：内存门面，继承主会话自洽历史前缀（无悬空工具调用的最后边界），不落盘不进 `/sessions`、不接管 goal、不派发子代理 |
 | `util/agent/files.mjs` | `@` 提及时只读文件搜索：`resolveInside` 路径禁锢仅列会话工作目录，跳过依赖目录（`GET /api/files/search`） |

@@ -36,6 +36,7 @@ Same-origin `/api/*`, all JSON; SSE frames are `event:` + `data:` lines.
 | `POST /api/agent/goal/clear` | idempotent removal, returns `{ cleared }` (200 even with no goal) |
 | `POST /api/agent/goal/pause` · `/resume` · `/stop` | user-side transitions; resuming `complete` / `budget_limited` to active is rejected with 409 |
 | `POST /api/agent/goal/budget` | set the token budget `{ sessionId, tokenBudget, expectedUpdatedAt }`; 409 `GOAL_STALE` on a stale epoch, 400 for an invalid budget |
+| `GET /api/agent/events?sessionId=` | cross-client goal event stream (SSE): pushes `goal_created` / `goal_status_changed` / `goal_cleared` immediately when another client (terminal / another tab) changes the goal via REST (goal events inside a turn still travel on the turn SSE); a comment frame flushes the headers on subscribe, auto-unsubscribe on close; 404 for unknown sessions |
 
 ## Settings
 

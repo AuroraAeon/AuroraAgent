@@ -36,6 +36,7 @@
 | `POST /api/agent/goal/clear` | 幂等移除目标，回 `{ cleared }`（无目标也 200） |
 | `POST /api/agent/goal/pause` · `/resume` · `/stop` | 用户面迁移；对 `complete` / `budget_limited` 恢复 active 拒绝 409 |
 | `POST /api/agent/goal/budget` | 改 token 预算 `{ sessionId, tokenBudget, expectedUpdatedAt }`；纪元不符 409 `GOAL_STALE`，预算非法 400 |
+| `GET /api/agent/events?sessionId=` | 跨客户端 goal 事件流（SSE）：另一客户端（终端 / 另一标签页）经 REST 改动目标时即时推送 `goal_created` / `goal_status_changed` / `goal_cleared`（turn 内的 goal 事件仍走 turn SSE）；订阅即写 SSE 注释帧冲掉响应头，连接关闭自动退订；未知会话 404 |
 
 ## 设置
 
