@@ -10,7 +10,7 @@
  *   /goal <objective> budget=50K  创建并设 token 预算（K / M 后缀）
  *   /goal budget=50K              改当前目标预算（也接受旧式 /goal budget 50K）
  *   /goal budget=clear            清除预算上限（clear / null / none / off / 0 同义）
- *   /goal clear                   移除目标
+ *   /goal clear                   移除目标（cancel / delete 同义别名）
  *   /goal edit                    把当前目标文本填回输入框续编
  *   /goal pause | resume | stop   暂停 / 恢复 / 停止（stop = 标记完成并停止追踪）
  *   /goal help                    命令帮助
@@ -95,7 +95,7 @@ export const GOAL_COMMAND_HELP =
   '/goal <目标内容> budget=50K：设立目标并一并设置 token 预算（K / M 后缀）\n' +
   '/goal budget=50K：修改当前目标的 token 预算；budget=clear 清除上限\n' +
   '/goal budget 50000：旧式写法，与 budget=50000 等价\n' +
-  '/goal clear：移除当前目标\n' +
+  '/goal clear：移除当前目标（cancel / delete 为同义别名）\n' +
   '/goal edit：把当前目标文本填回输入框续编\n' +
   '/goal pause：暂停自动续跑；/goal resume：恢复暂停或受阻的目标\n' +
   '/goal stop：把目标标记为已完成并停止追踪';
@@ -133,6 +133,8 @@ export function parseGoalCommand(rawArgs) {
 
   switch (head) {
     case 'clear':
+    case 'cancel':
+    case 'delete':
       return tail.length > headRaw.length ? { kind: 'error', message: '/goal clear 不接受参数' } : { kind: 'clear' };
     case 'edit':
       return tail.length > headRaw.length ? { kind: 'error', message: '/goal edit 不接受参数' } : { kind: 'edit' };

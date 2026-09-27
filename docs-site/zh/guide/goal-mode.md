@@ -74,7 +74,7 @@ Goal 模式给会话挂一个**跨轮次存续的目标**：模型自主推进�
 /goal budget=50K               # 只改当前目标预算；也接受旧式 /goal budget 50000
 /goal budget=clear             # 清除预算上限（clear / null / none / off / 0 同义）
 /goal edit                     # 把当前目标文本填回输入框续编（终端即行回填，网页回填 Composer）
-/goal clear                    # 移除目标（与 stop 的「标记完成」并存：clear 是彻底移除）
+/goal clear                    # 移除目标（cancel / delete 同义；与 stop 的「标记完成」并存，clear 是彻底移除）
 /goal pause                    # 暂停（active → paused）
 /goal resume                   # 恢复（paused / blocked / usage_limited → active）
 /goal stop                     # 标记完成并停止追踪（complete(user_requested)）

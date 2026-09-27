@@ -580,6 +580,11 @@ export async function runGoalTests(test, assert, eq) {
     eq(parseGoalCommand('stop').kind, 'stop');
     eq(parseGoalCommand('edit').kind, 'edit');
     eq(parseGoalCommand('clear').kind, 'clear');
+    // cancel / delete 为 clear 同义别名（对齐 MiniMax thread-goal-command）
+    eq(parseGoalCommand('cancel').kind, 'clear');
+    eq(parseGoalCommand('delete').kind, 'clear');
+    eq(parseGoalCommand('CANCEL').kind, 'clear', '别名大小写不敏感');
+    eq(parseGoalCommand('cancel x').kind, 'error', '别名同样不接受参数');
     eq(parseGoalCommand('help').kind, 'help');
     // 动作大小写不敏感；目标文本里的动作词不做关键字
     eq(parseGoalCommand('PAUSE').kind, 'pause');
@@ -599,6 +604,7 @@ export async function runGoalTests(test, assert, eq) {
     const receipt = formatGoalReceipt({ ...g, status: 'complete' });
     assert(receipt.includes('2m') && receipt.includes('12500 tokens') && receipt.includes('3 轮'), '回执应含时长 / token / 轮次');
     assert(GOAL_COMMAND_HELP.includes('/goal edit'), '帮助应含 edit');
+    assert(GOAL_COMMAND_HELP.includes('cancel / delete'), '帮助应说明 clear 别名');
   });
 
   await test('goal: setUserGoalObjective 创建 / 改写 / 完成拒绝 / 预算重武装', () => {

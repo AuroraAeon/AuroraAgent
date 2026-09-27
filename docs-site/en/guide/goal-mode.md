@@ -72,7 +72,7 @@ The terminal and the web Composer share one `/goal` parser (`util/agent/goal/com
 /goal budget=50K               # change only the current budget; the legacy /goal budget 50000 also works
 /goal budget=clear             # clear the cap (clear / null / none / off / 0 are synonyms)
 /goal edit                     # fill the current objective back into the input box for another pass
-/goal clear                    # remove the goal (alongside stop's "mark complete": clear removes it outright)
+/goal clear                    # remove the goal (cancel / delete are aliases; alongside stop's "mark complete", clear removes it outright)
 /goal pause                    # pause (active → paused)
 /goal resume                   # resume (paused / blocked / usage_limited → active)
 /goal stop                     # mark complete and stop tracking (complete(user_requested))

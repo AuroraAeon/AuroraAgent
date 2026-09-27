@@ -68,7 +68,7 @@ npm run web       # 网页工作台 http://localhost:8787
 - **对话区**：用户消息、流式回答、可折叠思考块、工具卡片（状态 / 参数 / 结果 / 差异）、内联权限卡、每轮用量脚注（tokens + 费用）；正文支持 LaTeX 公式渲染与 Markdown 表格；回答与工具调用按发生顺序交错呈现，不被每次工具调用切断
 - **输入区**：自适应文本框、`@` 文件 / 技能提及（只读搜索会话工作目录，调色板键盘可选）、模型选择器（按提供方分组）、思考开关、模式切换、标题生成方式（本地总结 / 模型总结，会话级）、发送 / 停止
 - **目标横幅**：有 Goal 时显示在对话区顶部——状态芯片、目标内容、tokens / 轮次 / live 时长、预算上限、最近验证结论、随状态裁剪的动作提示，暂停 / 恢复 / 停止一键操作，等待授权 / 验证时显示「等待中」，目标完成贴同源回执
-- **`/goal` 命令**：聊天框直接输入即走目标命令（整段 `/goal` 开头不当作普通消息）——`/goal <目标内容>` 设立或改写、`budget=50K` 一并设预算、`/goal edit` 回填续编、`/goal clear` 移除、`pause/resume/stop`，与终端同一份解析器
+- **`/goal` 命令**：聊天框直接输入即走目标命令（整段 `/goal` 开头不当作普通消息）——`/goal <目标内容>` 设立或改写、`budget=50K` 一并设预算、`/goal edit` 回填续编、`/goal clear` 移除（`cancel` / `delete` 同义）、`pause/resume/stop`，与终端同一份解析器
 - **会话派生**：侧栏每会话可复制历史到新会话（新 id，原会话不动）
 - **设置弹层**：提供方管理（自定义上游）、开机自启开关、终端偏好（OSC 标题项序、系统通知时机 / 通道 / 事件；浏览器通知 opt-in 开关，默认关）、网络（Agent 沙箱出站代理：本机直连被重置的站点（如维基百科）可经 `http://127.0.0.1:7890` 这类本机 HTTP 代理抓取，留空直连，保存即时生效）、数据目录与版本
 - 设计令牌自原版迁移（暗色、强调蓝 `#4d8df6`）；零 emoji，图标一律内联 SVG；Markdown 为手写子集渲染器（标题 / 列表 / 代码高亮 / 表格 / 公式），不引第三方库
@@ -103,7 +103,7 @@ npm run web       # 网页工作台 http://localhost:8787
 | `/harness <minimal\|standard\|ultimate>` | 切换模式（无参数弹出选择器） |
 | `/theme <dark\|light\|auto>` | 切换终端主题（无参数弹出选择器） |
 | `/title <local\|model>` | 标题生成方式：local 本地推导零成本 / model 调模型总结（每个新会话多一次小额请求，失败自动回退；无参数查看当前值） |
-| `/goal` | 目标模式（终端与网页 Composer 同解析）：无参看状态；`/goal <目标内容>` 设立（有未完成目标时改写文本，可带 `budget=50K`）；`/goal budget=50K\|clear` 改 token 预算（旧式 `budget 50000` 等价；纪元不符 409，可重新武装预算耗尽的目标）；`/goal edit` 目标文本回填续编；`/goal clear` 移除；`/goal pause\|resume\|stop`；`/goal help` |
+| `/goal` | 目标模式（终端与网页 Composer 同解析）：无参看状态；`/goal <目标内容>` 设立（有未完成目标时改写文本，可带 `budget=50K`）；`/goal budget=50K\|clear` 改 token 预算（旧式 `budget 50000` 等价；纪元不符 409，可重新武装预算耗尽的目标）；`/goal edit` 目标文本回填续编；`/goal clear` 移除（`cancel` / `delete` 同义）；`/goal pause\|resume\|stop`；`/goal help` |
 | `/btw <问题>` | 侧边对话：继承当前会话历史开聊，不落盘不进 `/sessions`；`Ctrl+/` 切换、空提示符 `Ctrl+C` 丢弃 |
 | `/plan on\|off` | 计划模式开关（默认关；开启后下一轮先出计划，批准才执行） |
 | `/mcp` | MCP 服务器与工具状态（实验特性，需 `AURORAAGENT_EXPERIMENTAL_MCP=1`） |
