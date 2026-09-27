@@ -18,7 +18,7 @@
 | `GET /api/agent/harnesses` | 三档模式清单 |
 | `GET/POST /api/agent/sessions` | 会话列表 / 新建 |
 | `GET/PATCH/DELETE /api/agent/sessions/:id` | 详情（`{ meta, records }`）/ 改名换模型换模式 / 删除 |
-| `POST /api/agent/turn` | 跑一个 turn（SSE 事件流）；单活跃 turn（409） |
+| `POST /api/agent/turn` | 跑一个 turn（SSE 事件流）；单活跃 turn（409）；会话仍是默认名时，首轮按输入总结标题并推送 `session_renamed` |
 | `POST /api/agent/abort` | 中止 turn（保留已生成内容） |
 | `POST /api/agent/permission` | 权限决策 `{ requestId, decision: allow/deny/always }` |
 | `POST /api/agent/plan` | 计划决策 `{ sessionId, decision: approve/reject }` |

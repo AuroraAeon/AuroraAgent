@@ -60,7 +60,7 @@ npm run web       # 网页工作台 http://localhost:8787
 
 `npm run web` 后访问 <http://localhost:8787>（React + Vite + TypeScript，源码在 `web-ui/`，构建产物随仓库提交在 `public/app/`，运行时零构建）：
 
-- **侧栏**：AuroraAgent 品牌、新建会话、会话列表（相对时间 + 模式 + 轮次）、当前模式
+- **侧栏**：AuroraAgent 品牌、新建会话、会话列表（相对时间 + 模式 + 轮次）、当前模式；新会话的首条消息发出后，侧栏标题会按消息内容自动总结更新（本地推导，不调模型、不花额度；你手动改过名的会话不被覆盖）
 - **对话区**：用户消息、流式回答、可折叠思考块、工具卡片（状态 / 参数 / 结果 / 差异）、内联权限卡、每轮用量脚注（tokens + 费用）；正文支持 LaTeX 公式渲染
 - **输入区**：自适应文本框、模型选择器（按提供方分组）、思考开关、模式切换、发送 / 停止
 - **设置弹层**：提供方管理（自定义上游）、开机自启开关、数据目录与版本
@@ -116,7 +116,7 @@ Agent 运行时（`/api/agent/*`，单活跃 turn：已有 turn 在跑时返回 
 | `GET /api/agent/sessions/:id` | 会话详情（meta + 记录投影） |
 | `PATCH /api/agent/sessions/:id` | 热切换 harness / 改名 / 换模型（下一轮生效；未知模式与非法模型 ID 返回 400 且不改动会话） |
 | `DELETE /api/agent/sessions/:id` | 删除会话 |
-| `POST /api/agent/turn` | 发起一轮对话，SSE 事件流（事件协议见上） |
+| `POST /api/agent/turn` | 发起一轮对话，SSE 事件流（事件协议见上）；会话仍是默认名时，首轮按输入总结出标题并推送 `session_renamed` |
 | `POST /api/agent/abort` | 中止当前 turn，保留已生成内容 |
 | `POST /api/agent/permission` | 权限决策回传：`{requestId, decision: 'allow'\|'deny'\|'always'}` |
 | `POST /api/agent/plan` | 计划决策回传：`{sessionId, requestId, approve: true\|false}` |
@@ -229,8 +229,8 @@ npm run docs:dev    # 本地起文档站
 
 ## 当前状态（实测打通）
 
-- `npm test` 192/192 通过（mock 上游，不花额度，含仓库守卫：零 emoji / TUI 颜色单一真值源 / 对比度 / 行数预算 / 文档站结构）；`npm run check` 真实 API 连通（Key 有效 + 模型目录 + 测试请求）
-- Agent e2e 覆盖：会话 CRUD；完整 turn（工具调用 → 权限允许 → workspace 落盘 → 二轮出终稿）；权限拒绝后循环继续；路径穿越拒绝；shell 执行与超时；turn 中途 abort；harness 列表；上下文压缩触发；每轮用量记账；技能斜杠注入与 skill 工具加载；todo 维护；edit_file diff 回传；计划批准 / 驳回两阶段；task 派发子代理并汇总（子会话可查）；MCP 注册与工具调用（实验）
+- `npm test` 206/206 通过（mock 上游，不花额度，含仓库守卫：零 emoji / TUI 颜色单一真值源 / 对比度 / 行数预算 / 文档站结构）；`npm run check` 真实 API 连通（Key 有效 + 模型目录 + 测试请求）
+- Agent e2e 覆盖：会话 CRUD；完整 turn（工具调用 → 权限允许 → workspace 落盘 → 二轮出终稿）；权限拒绝后循环继续；路径穿越拒绝；shell 执行与超时；turn 中途 abort；harness 列表；上下文压缩触发；每轮用量记账；技能斜杠注入与 skill 工具加载；todo 维护；edit_file diff 回传；计划批准 / 驳回两阶段；首条消息自动总结会话标题（默认名才套用、事件推送、落元信息）；task 派发子代理并汇总（子会话可查）；MCP 注册与工具调用（实验）
 - 网页工作台经浏览器实测完整 turn：权限卡允许 → 写文件 → 二轮终稿 → 按轮分组的思考 / 工具 / 用量脚注
 - 终端实测：权限 y/n 两条路径、`/help` `/sessions` `/new` `/model` `/harness`、拒绝后续跑均正常
 - 自定义提供方：设置页可接任意 OpenAI 兼容网关或 Anthropic Messages 上游；账本按提供方单价计价（只填一侧时另一侧回退内置价）；内置 LongCat 请求载荷与接入前逐字节一致（有专门测试守着）

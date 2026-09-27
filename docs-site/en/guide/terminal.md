@@ -12,4 +12,5 @@
 - Type to search; `Backspace clear`; two-stage Esc (clear query first, then cancel)
 - Dim streaming thoughts, single-line tool status, permission prompts `y` / `n` / `a`
 - Footer status bar: model · mode · thinking · cwd · tokens / cost
+- After the first message of a new session, a line notes the auto-summarized session title (local derivation, no model call; manually renamed sessions are kept)
 - Character comparison always goes through `printableChar()` (Kitty CSI-u decoding)
