@@ -20,6 +20,22 @@ function abortRaceFor(controller) {
   return race;
 }
 
+/** 客户端消费不动（写缓冲满）时暂停上游读取，等 drain 或中止；中止即让外层循环收尾 */
+function pauseForDrain(res, controller) {
+  return new Promise((resolve) => {
+    if (res.writableEnded || res.destroyed) return resolve();
+    const finish = () => {
+      res.removeListener('drain', finish);
+      controller?.signal.removeEventListener('abort', onAbort);
+      resolve();
+    };
+    const onAbort = () => finish();
+    res.once('drain', finish);
+    if (controller?.signal.aborted) return finish();
+    controller?.signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 /** 从 SSE 事件里提取 usage 记账（OpenAI 兼容帧形状） */
 function harvest(events, entry) {
   for (const ev of events) {
@@ -36,7 +52,7 @@ export async function pumpSse(reader, res, entry) {
   for (;;) {
     const { done, value } = await Promise.race([reader.read(), abortRace]);
     if (done) break;
-    res.write(Buffer.from(value));
+    if (!res.write(Buffer.from(value))) await pauseForDrain(res, entry.controller);
     harvest(parser.feed(decoder.decode(value, { stream: true })), entry);
   }
   harvest(parser.end(), entry);
@@ -51,25 +67,28 @@ export async function pumpTranslated(reader, res, entry, translate) {
   const decoder = new TextDecoder();
   const parser = new SseParser();
   const abortRace = abortRaceFor(entry.controller);
-  const emit = (events) => {
+  const writeFrame = async (frame) => {
+    if (!res.write(frame)) await pauseForDrain(res, entry.controller);
+  };
+  const emit = async (events) => {
     for (const ev of events) {
       const out = translate(ev);
       if (!out) continue;
       if (out.usage) entry.usage = { ...entry.usage, ...out.usage };
-      if (out.chunk) res.write(`data: ${JSON.stringify(out.chunk)}\n\n`);
+      if (out.chunk) await writeFrame(`data: ${JSON.stringify(out.chunk)}\n\n`);
     }
   };
   for (;;) {
     const { done, value } = await Promise.race([reader.read(), abortRace]);
     if (done) break;
-    emit(parser.feed(decoder.decode(value, { stream: true })));
+    await emit(parser.feed(decoder.decode(value, { stream: true })));
   }
-  emit(parser.end());
+  await emit(parser.end());
   // Anthropic 把用量拆在 message_start / message_delta 里，汇总后补一帧给前端与账本
   if (entry.usage && (entry.usage.prompt_tokens || entry.usage.completion_tokens)) {
-    res.write(`data: ${JSON.stringify({ choices: [], usage: entry.usage })}\n\n`);
+    await writeFrame(`data: ${JSON.stringify({ choices: [], usage: entry.usage })}\n\n`);
   }
-  res.write('data: [DONE]\n\n');
+  await writeFrame('data: [DONE]\n\n');
   res.end();
 }
 
