@@ -2320,6 +2320,18 @@ await test('/app 服务 React 构建产物（HTML / 哈希资产 / SPA 回退）
   eq(missing.status, 404, '不存在的资产应 404');
 });
 
+await test('静态资源 ETag 协商：If-None-Match 命中回 304 且校验器在场', async () => {
+  const first = await fetch(`${BASE}/app/`);
+  const etag = first.headers.get('etag');
+  assert(etag, 'index.html 应带 ETag');
+  assert((first.headers.get('cache-control') || '').includes('no-cache'), 'SPA 外壳应可重验证（no-cache）');
+  const again = await fetch(`${BASE}/app/`, { headers: { 'If-None-Match': etag } });
+  eq(again.status, 304, '命中 If-None-Match 应回 304');
+  eq(again.headers.get('etag'), etag, '304 应带回同一 ETag');
+  const stale = await fetch(`${BASE}/app/`, { headers: { 'If-None-Match': '"stale-value"' } });
+  eq(stale.status, 200, 'ETag 不匹配应回 200 全量');
+});
+
 await test('/app 防目录穿越（原始 socket 不过滤 ..）', async () => {
   const net = await import('node:net');
   const raw = await new Promise((done) => {

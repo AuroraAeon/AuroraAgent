@@ -130,10 +130,28 @@ const STATIC_ASSETS = {
   '/util/sse.mjs': join(__dirname, 'util', 'sse.mjs'),
 };
 const MIME = { '.html': 'text/html; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml; charset=utf-8', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
-function serveStatic(res, filePath, { cache = 'no-store' } = {}) {
+function serveStatic(res, filePath, { cache = 'no-store', req } = {}) {
   if (!existsSync(filePath)) { res.writeHead(404); res.end('not found'); return; }
   const ext = filePath.slice(filePath.lastIndexOf('.'));
-  res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': cache });
+  // ETag（size + mtimeMs 派生）+ Last-Modified：重复访问命中 If-None-Match 回 304，
+  // 省掉整个产物的重复传输；SPA 外壳因此可以安全地走 no-cache（每次重验证）而非 no-store（每次全量下载）
+  let etag = '';
+  let lastModified = '';
+  try {
+    const st = statSync(filePath);
+    etag = `"${st.size.toString(36)}-${Math.floor(st.mtimeMs).toString(36)}"`;
+    lastModified = new Date(st.mtimeMs).toUTCString();
+  } catch { /* 取不到元数据就不做协商，按 200 全量发 */ }
+  const headers = { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': cache };
+  if (etag) {
+    headers.ETag = etag;
+    headers['Last-Modified'] = lastModified;
+    const inm = req?.headers['if-none-match'];
+    const ims = req?.headers['if-modified-since'];
+    const notModified = (inm && inm === etag) || (!inm && ims && ims === lastModified);
+    if (notModified) { res.writeHead(304, headers); res.end(); return; }
+  }
+  res.writeHead(200, headers);
   res.end(readFileSync(filePath));
 }
 
@@ -192,15 +210,15 @@ const server = createServer(async (req, res) => {
     const isAsset = /\.[a-z0-9]+$/i.test(rel);
     const file = isAsset ? target : join(base, 'index.html');
     if (isAsset && !existsSync(target)) { res.writeHead(404); res.end('not found'); return; }
-    return serveStatic(res, file, { cache: isAsset ? 'public, max-age=31536000, immutable' : 'no-store' });
+    return serveStatic(res, file, { cache: isAsset ? 'public, max-age=31536000, immutable' : 'no-cache', req });
   }
   // 前端模块与样式：白名单映射（而非目录通配），任意路径都不 serveStatic 出去
   const asset = STATIC_ASSETS[url];
-  if (req.method === 'GET' && asset) return serveStatic(res, asset);
-  if (req.method === 'GET' && url === '/icon.svg') return serveStatic(res, join(__dirname, 'public', 'icon.svg'));
+  if (req.method === 'GET' && asset) return serveStatic(res, asset, { req });
+  if (req.method === 'GET' && url === '/icon.svg') return serveStatic(res, join(__dirname, 'public', 'icon.svg'), { req });
   // 厂商标识：/vendor/<name>.svg（正则白名单防目录穿越），接入新厂商把 svg 放进 public/vendors/ 即可
   if (req.method === 'GET' && /^\/vendor\/[a-z0-9-]+\.svg$/.test(url)) {
-    return serveStatic(res, join(__dirname, 'public', 'vendors', url.slice('/vendor/'.length)));
+    return serveStatic(res, join(__dirname, 'public', 'vendors', url.slice('/vendor/'.length)), { req });
   }
   if (req.method === 'GET' && url === '/api/status') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
