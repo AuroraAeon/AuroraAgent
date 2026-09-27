@@ -9,7 +9,8 @@ import { SessionStore } from './session.mjs';
 import { GoalStore } from './goal/store.mjs';
 import { GOAL_STATUS_LABELS, GOAL_WAIT_LABELS } from './goal/types.mjs';
 import { goalUsageChip } from './goal/budget.mjs';
-import { applyUserGoalAction } from './goal/actions.mjs';
+import { applyUserGoalAction, setUserGoalObjective, clearUserGoal } from './goal/actions.mjs';
+import { parseGoalCommand, formatGoalSummary, GOAL_COMMAND_HELP } from './goal/command.mjs';
 import { UsageLedger } from '../usage.mjs';
 import { ProviderStore } from '../providers.mjs';
 import { HARNESSES, getHarness } from './harness.mjs';
@@ -243,47 +244,65 @@ export async function runTerminal({ argv = [] } = {}) {
     console.log(painter().dim(`✓ 主题 = ${chosen.label}`));
   };
 
-  /** /goal：一会话一目标的用户面管理（与 REST 面共用 applyUserGoalAction 单一事实源） */
+  /** /goal：一会话一目标的用户面管理（解析与文案和网页 Composer 共用 command.mjs 单一事实源） */
   const cmdGoal = (arg) => {
     const p = painter();
-    const sub = String(arg || '').trim();
+    const intent = parseGoalCommand(arg);
     const cur = goals.get(meta.id);
-    if (!sub) {
-      if (!cur) { console.log(p.dim('当前会话没有目标：让模型调用 create_goal，或稍后在网页端创建')); return; }
-      const reason = cur.statusReason ? p.dim(`（${cur.statusReason}）`) : '';
-      console.log(`  ${p.text('目标')} ${p.dim(cur.goalId)} ${cur.objective}`);
-      console.log(`  ${p.dim('状态')} ${p.accent(GOAL_STATUS_LABELS[cur.status])}${reason} ${p.dim('·')} ${goalUsageChip(cur)}`);
-      if (cur.executionWait) console.log(p.dim(`  当前${GOAL_WAIT_LABELS[cur.executionWait.reason] || '等待中'}`));
-      if (cur.lastVerification) {
-        console.log(p.dim(`  最近验证：${cur.lastVerification.verdict}${cur.lastVerification.evidence ? ` · ${truncate(cur.lastVerification.evidence, 120)}` : ''}`));
+    switch (intent.kind) {
+      case 'view': {
+        if (!cur) { console.log(p.dim('当前会话没有目标：/goal <你想达成的目标> 设立，或让模型调用 create_goal')); return; }
+        console.log(`  ${p.text('目标')} ${p.dim(cur.goalId)}`);
+        for (const line of formatGoalSummary(cur).split('\n')) console.log(`  ${line}`);
+        if (cur.executionWait) console.log(p.dim(`  当前${GOAL_WAIT_LABELS[cur.executionWait.reason] || '等待中'}`));
+        return;
       }
-      return;
-    }
-    if (!cur) { console.log(p.warning('当前会话没有目标')); return; }
-    if (sub === 'pause' || sub === 'resume' || sub === 'stop') {
-      try {
-        const g = applyUserGoalAction(goals, meta.id, sub);
-        const label = { pause: '已暂停', resume: '已恢复', stop: '已停止' }[sub];
-        console.log(p.dim(`✓ 目标${label}：${GOAL_STATUS_LABELS[g.status]}`));
-      } catch (e) { console.log(p.warning(e.message)); }
-      return;
-    }
-    const bm = /^budget(?:[ \t]+(\S+))?$/.exec(sub);
-    if (bm) {
-      const v = bm[1];
-      let tb = null;
-      if (v && v !== 'clear') {
-        tb = Number(v);
-        if (!Number.isInteger(tb) || tb <= 0) { console.log(p.warning('用法: /goal budget <正整数>|clear')); return; }
+      case 'help':
+        for (const line of GOAL_COMMAND_HELP.split('\n')) console.log(p.dim(`  ${line}`));
+        return;
+      case 'error':
+        console.log(p.warning(intent.message));
+        return;
+      case 'edit': {
+        if (!cur) { console.log(p.warning('当前会话没有目标')); return; }
+        // 回填输入框续编（readline 写入即插入当前行；换字符归一防提前提交）
+        rl.write(`/goal ${String(cur.objective || '').replace(/\s+/g, ' ')}`);
+        return;
       }
-      try {
-        const g = applyUserGoalAction(goals, meta.id, 'budget', { tokenBudget: tb, expectedUpdatedAt: cur.updatedAt });
-        const rearmed = cur.status === 'budget_limited' && g.status === 'active';
-        console.log(p.dim(`✓ 预算已${tb == null ? '清除' : `设为 ${tb}`}${rearmed ? '，目标已重新武装' : ''}`));
-      } catch (e) { console.log(p.warning(e.message)); }
-      return;
+      case 'clear': {
+        const { cleared } = clearUserGoal(goals, meta.id);
+        console.log(p.dim(cleared ? '✓ 目标已移除' : '当前会话没有目标'));
+        return;
+      }
+      case 'create': {
+        try {
+          const existed = Boolean(cur) && cur.status !== 'complete';
+          const g = setUserGoalObjective(goals, meta.id, intent.objective, intent.tokenBudget);
+          const budgetNote = intent.tokenBudget != null ? ` · 预算 ${intent.tokenBudget} tokens` : '';
+          console.log(p.dim(`✓ ${existed ? '目标文本已更新' : '新目标已设立'}${budgetNote}：${truncate(g.objective, 60)}`));
+        } catch (e) { console.log(p.warning(e.message)); }
+        return;
+      }
+      case 'budget': {
+        if (!cur) { console.log(p.warning('当前会话没有目标')); return; }
+        try {
+          const g = applyUserGoalAction(goals, meta.id, 'budget', { tokenBudget: intent.tokenBudget, expectedUpdatedAt: cur.updatedAt });
+          const rearmed = cur.status === 'budget_limited' && g.status === 'active';
+          console.log(p.dim(`✓ 预算已${intent.tokenBudget == null ? '清除' : `设为 ${intent.tokenBudget}`}${rearmed ? '，目标已重新武装' : ''}`));
+        } catch (e) { console.log(p.warning(e.message)); }
+        return;
+      }
+      default: {
+        // pause / resume / stop：状态迁移（拒绝信息由 applyUserGoalAction 说清原因）
+        if (!cur) { console.log(p.warning('当前会话没有目标')); return; }
+        try {
+          const g = applyUserGoalAction(goals, meta.id, intent.kind);
+          const label = { pause: '已暂停', resume: '已恢复', stop: '已停止' }[intent.kind];
+          console.log(p.dim(`✓ 目标${label}：${GOAL_STATUS_LABELS[g.status]}`));
+        } catch (e) { console.log(p.warning(e.message)); }
+        return;
+      }
     }
-    console.log(p.warning('用法: /goal [pause|resume|stop|budget <正整数>|clear]（无参查看状态）'));
   };
 
   /** 声明式斜杠命令表：/help 与分发同源；技能派生命令追加进同一张表（/<技能名> 直接调用） */
@@ -328,7 +347,7 @@ export async function runTerminal({ argv = [] } = {}) {
       meta = store.patch(meta.id, { titleMode: want }) || meta;
       console.log(painter().dim(`✓ 标题生成方式已切换为${want === 'model' ? '模型总结（每个新会话多一次小额请求）' : '本地推导（零成本）'}`));
     } },
-    { name: 'goal', argHint: '[pause|resume|stop|budget <n>|clear]', summary: '会话目标（无参查看状态；模型经 create_goal 创建后在此管理）', run: cmdGoal },
+    { name: 'goal', argHint: '<目标内容>|[pause|resume|stop|budget <n>|clear|edit|help]', summary: '会话目标（无参查看；/<目标内容> 设立或改写；edit 回填续编）', run: cmdGoal },
     { name: 'btw', argHint: '<问题>', summary: '侧边对话：继承当前会话历史开聊，不落盘不进会话列表；Ctrl+/ 切换、Ctrl+C 丢弃', run: async (arg) => {
       const q = String(arg || '').trim();
       if (!q) { console.log(painter().warning('用法: /btw <问题>（侧边对话，继承当前会话历史，不落盘）')); return; }

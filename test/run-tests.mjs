@@ -1547,8 +1547,10 @@ try {
   });
   await test('Goal 终端接线源码契约：/goal 命令、状态栏芯片与三类事件呈现', async () => {
     const term = readFileSync(join(__dirname, '..', 'util', 'agent', 'terminal.mjs'), 'utf8');
-    assert(term.includes("name: 'goal'") && term.includes("argHint: '[pause|resume|stop|budget <n>|clear]'"), '终端应有 /goal 家族命令');
-    assert(term.includes('applyUserGoalAction(goals, meta.id, sub)'), '/goal 动作应走用户面单一事实源');
+    assert(term.includes("name: 'goal'") && term.includes('parseGoalCommand(arg)'), '终端 /goal 应走共享解析器');
+    assert(term.includes('setUserGoalObjective(goals, meta.id, intent.objective'), '终端应支持 /goal <目标内容> 设立或改写');
+    assert(term.includes('clearUserGoal(goals, meta.id)'), '终端应支持 /goal clear 移除');
+    assert(term.includes("rl.write(`/goal ") && term.includes('GOAL_COMMAND_HELP'), '终端应支持 edit 回填与帮助输出');
     assert(term.includes("goalUsageChip(g) : null") && term.includes("g.status === 'active'"), '状态栏仅对进行中目标显示芯片');
     const turn = readFileSync(join(__dirname, '..', 'util', 'agent', 'terminal-turn.mjs'), 'utf8');
     assert(turn.includes("case 'goal_created':"), '终端应呈现目标创建');
@@ -2719,6 +2721,64 @@ await test('Goal REST：pause / resume / stop 语义与 409 边界', async () =>
     body: JSON.stringify({ sessionId: (await createAgentSession()).id }),
   });
   eq(noGoal.status, 404, '无目标时操作 404');
+});
+
+await test('Goal REST：edit 改写目标文本（空白 400 / 已完成 409），clear 幂等移除', async () => {
+  const s = await createAgentSession();
+  const created = (await (await fetch(`${AGENT}/goal`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, objective: '初版目标' }),
+  })).json()).goal;
+  const edited = await (await fetch(`${AGENT}/goal/edit`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, objective: '  改写后的目标文本  ' }),
+  })).json();
+  eq(edited.goal.objective, '改写后的目标文本', 'edit 应 trim 后改写');
+  eq(edited.goal.goalId, created.goalId, 'edit 应保留同一 goalId');
+  const blank = await fetch(`${AGENT}/goal/edit`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, objective: '   ' }),
+  });
+  eq(blank.status, 400, '空白目标文本 400');
+  eq((await blank.json()).error.code, 'GOAL_BAD_OBJECTIVE');
+  const noGoalEdit = await fetch(`${AGENT}/goal/edit`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: (await createAgentSession()).id, objective: 'x' }),
+  });
+  eq(noGoalEdit.status, 404, '无目标时 edit 404');
+  // clear 幂等：没有目标也回 200 cleared=false，不抛错
+  const emptyClear = await (await fetch(`${AGENT}/goal/clear`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id }),
+  })).json();
+  eq(emptyClear.cleared, true, '有目标时 clear 应移除');
+  const again = await (await fetch(`${AGENT}/goal/clear`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id }),
+  })).json();
+  eq(again.cleared, false, '再次 clear 幂等');
+  const miss = await (await fetch(`${AGENT}/goal/${s.id}`)).json();
+  eq(miss.goal, null, '移除后查询为 null');
+  // 已完成目标不能 edit（409），但可 clear 后重新创建
+  const s2 = await createAgentSession();
+  await fetch(`${AGENT}/goal`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s2.id, objective: '会被完成' }),
+  });
+  await fetch(`${AGENT}/goal/stop`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s2.id }),
+  });
+  const editDone = await fetch(`${AGENT}/goal/edit`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s2.id, objective: '想改写' }),
+  });
+  eq(editDone.status, 409, '已完成目标 edit 409');
+  const clearDone = await (await fetch(`${AGENT}/goal/clear`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s2.id }),
+  })).json();
+  eq(clearDone.cleared, true, '已完成目标可 clear');
 });
 
 await test('Goal REST：budget 纪元不符 409 GOAL_STALE，抬高预算重新武装 budget_limited(token)', async () => {

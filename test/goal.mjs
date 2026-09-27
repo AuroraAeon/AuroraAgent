@@ -11,7 +11,8 @@ import {
   createGoalState, normalizeGoalState, canTransition, GOAL_STATUS_LABELS,
 } from '../util/agent/goal/types.mjs';
 import { GoalStore, GoalConflictError } from '../util/agent/goal/store.mjs';
-import { applyUserGoalAction, GOAL_BAD_INPUT_CODES } from '../util/agent/goal/actions.mjs';
+import { applyUserGoalAction, setUserGoalObjective, clearUserGoal, GOAL_BAD_INPUT_CODES } from '../util/agent/goal/actions.mjs';
+import { parseGoalCommand, parseGoalBudgetValue, goalActionHint, formatGoalSummary, formatGoalReceipt, GOAL_COMMAND_HELP } from '../util/agent/goal/command.mjs';
 import { resolveUpdateGoalMode, hasUpdateGoalTokenBudgetIntent } from '../util/agent/goal/tools.mjs';
 import { parseGoalConfig, GOAL_CONFIG_DEFAULTS, goalLimits } from '../util/agent/goal/config.mjs';
 import { applyUsage, budgetBreach, rearmAfterBudgetRaise, goalUsageChip } from '../util/agent/goal/budget.mjs';
@@ -534,4 +535,111 @@ export async function runGoalTests(test, assert, eq) {
     // harness 未收录时工具拒绝执行
     eq(String(rt.tools[0].run({ objective: 'x' })), '当前模式不提供 create_goal 工具。');
   });
+
+  await test('goal: /goal 命令解析（查看 / 创建 / 预算形态 / 旧式空格 / 动作 / 帮助 / 错误）', () => {
+    // 查看与创建
+    eq(parseGoalCommand('').kind, 'view');
+    eq(parseGoalCommand('   ').kind, 'view');
+    eq(parseGoalCommand('把 README 改写').kind, 'create');
+    eq(parseGoalCommand('把 README 改写').objective, '把 README 改写');
+    // 预算后缀与首部指令
+    const trailing = parseGoalCommand('修复登录 bug budget=50K');
+    eq(trailing.kind, 'create');
+    eq(trailing.objective, '修复登录 bug');
+    eq(trailing.tokenBudget, 50000);
+    const leading = parseGoalCommand('budget=1.5M 压测大上下文');
+    eq(leading.kind, 'create');
+    eq(leading.objective, '压测大上下文');
+    eq(leading.tokenBudget, 1500000);
+    // 单独出现时只改预算（= 形态与旧式空格形态并存）
+    eq(parseGoalCommand('budget=50K').kind, 'budget');
+    eq(parseGoalCommand('budget=50K').tokenBudget, 50000);
+    eq(parseGoalCommand('budget 50000').kind, 'budget');
+    eq(parseGoalCommand('budget 50000').tokenBudget, 50000);
+    // 清除同义词
+    for (const raw of ['budget=clear', 'budget=null', 'budget=none', 'budget=off', 'budget=0', 'budget clear', 'budget']) {
+      eq(parseGoalCommand(raw).kind, 'budget', `${raw} 应解析为预算清除`);
+      eq(parseGoalCommand(raw).tokenBudget, null, `${raw} 应清除上限`);
+    }
+    // 错误分支
+    eq(parseGoalCommand('budget=abc').kind, 'error');
+    eq(parseGoalCommand('budget -5').kind, 'error');
+    eq(parseGoalCommand('budget=50K 修复 bug budget=1M').kind, 'error', '首尾各一个 budget= 应报错');
+    const leftover = parseGoalCommand('修复 bug budget=50K budget=1M');
+    eq(leftover.kind, 'create', '尾随之后的残留 budget= 属目标文本（与 MiniMax 一致）');
+    eq(leftover.objective, '修复 bug budget=50K');
+    eq(parseGoalCommand('pause 现在').kind, 'error');
+    eq(parseGoalCommand('clear x').kind, 'error');
+    // 动作与帮助
+    eq(parseGoalCommand('pause').kind, 'pause');
+    eq(parseGoalCommand('resume').kind, 'resume');
+    eq(parseGoalCommand('stop').kind, 'stop');
+    eq(parseGoalCommand('edit').kind, 'edit');
+    eq(parseGoalCommand('clear').kind, 'clear');
+    eq(parseGoalCommand('help').kind, 'help');
+    // 动作大小写不敏感；目标文本里的动作词不做关键字
+    eq(parseGoalCommand('PAUSE').kind, 'pause');
+    eq(parseGoalCommand('暂停自动续跑').kind, 'create');
+  });
+
+  await test('goal: /goal 文案助手（提示 / 摘要 / 完成回执）', () => {
+    assert(goalActionHint('active').includes('/goal pause'), '进行中应提示暂停');
+    assert(goalActionHint('budget_limited').includes('抬高预算'), '预算耗尽应提示抬高预算');
+    assert(goalActionHint('complete').includes('新目标'), '已完成应提示开新目标');
+    const g = { status: 'active', objective: '改写 README', tokensUsed: 12500, turnsUsed: 3, timeUsedSeconds: 120, tokenBudget: 50000, lastVerification: null };
+    const summary = formatGoalSummary(g);
+    assert(summary.includes('改写 README') && summary.includes('12.5K') && summary.includes('2m'), '摘要应含目标 / 用量 / 时长');
+    assert(summary.includes('预算：50000 tokens'), '摘要应含预算');
+    const withV = formatGoalSummary({ ...g, lastVerification: { verdict: 'not_met', notMetStreak: 2 } });
+    assert(withV.includes('未达到') && withV.includes('连续 2 次'), '摘要应带验证结论与连击');
+    const receipt = formatGoalReceipt({ ...g, status: 'complete' });
+    assert(receipt.includes('2m') && receipt.includes('12500 tokens') && receipt.includes('3 轮'), '回执应含时长 / token / 轮次');
+    assert(GOAL_COMMAND_HELP.includes('/goal edit'), '帮助应含 edit');
+  });
+
+  await test('goal: setUserGoalObjective 创建 / 改写 / 完成拒绝 / 预算重武装', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'goal-obj-'));
+    const store = new GoalStore(dir);
+    const created = setUserGoalObjective(store, 'obj1', '  第一个目标  ');
+    eq(created.objective, '第一个目标');
+    eq(created.status, 'active');
+    eq(store.get('obj1').objective, '第一个目标');
+    const edited = setUserGoalObjective(store, 'obj1', '改写后的目标');
+    eq(edited.objective, '改写后的目标');
+    eq(edited.goalId, created.goalId, '改写应保留同一 goalId');
+    // 压低预算后用尽 → budget_limited；随文携带更大预算应重新武装
+    const lowered = applyUserGoalAction(store, 'obj1', 'budget', { tokenBudget: 10, expectedUpdatedAt: edited.updatedAt });
+    eq(lowered.tokenBudget, 10);
+    store.update('obj1', (g) => {
+      const n = applyUsage(g, { tokens: 18 });
+      const br = budgetBreach(n);
+      return br ? { ...n, status: 'budget_limited', statusReason: br.reason } : n;
+    });
+    eq(store.get('obj1').status, 'budget_limited', '用量超过新预算应触顶');
+    const rearmed = setUserGoalObjective(store, 'obj1', '继续推进', 100);
+    eq(rearmed.status, 'active', '抬高预算应重新武装');
+    eq(rearmed.tokenBudget, 100);
+    // 空白拒绝与已完成拒绝
+    let blankErr = null;
+    try { setUserGoalObjective(store, 'obj2', '  '); } catch (e) { blankErr = e; }
+    assert(blankErr && blankErr.code === 'GOAL_BAD_OBJECTIVE', '空白目标应拒绝');
+    applyUserGoalAction(store, 'obj1', 'stop');
+    let editErr = null;
+    try { applyUserGoalAction(store, 'obj1', 'edit', { objective: '又改' }); } catch (e) { editErr = e; }
+    assert(editErr && editErr.code === 'GOAL_STATUS_CONFLICT', '已完成目标不能经 edit 改写');
+    const fresh = setUserGoalObjective(store, 'obj1', '全新目标');
+    eq(fresh.status, 'active', '已完成目标后 setUserGoalObjective 应创建新目标');
+    assert(fresh.goalId !== created.goalId, '新目标应是新 goalId');
+  });
+
+  await test('goal: clearUserGoal 幂等移除', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'goal-clear-'));
+    const store = new GoalStore(dir);
+    eq(clearUserGoal(store, 'c1').cleared, false, '无目标时 cleared=false');
+    store.create('c1', { objective: 'x' });
+    eq(clearUserGoal(store, 'c1').cleared, true);
+    eq(store.get('c1'), null, '移除后查询为 null');
+    eq(clearUserGoal(store, 'c1').cleared, false, '再次移除幂等');
+  });
+
 }

@@ -9,7 +9,7 @@ import { runAgentTurn } from './loop.mjs';
 import { getHarness, harnessSummaries } from './harness.mjs';
 import { sseFrame } from './events.mjs';
 import { GoalStore, GoalConflictError } from './goal/store.mjs';
-import { applyUserGoalAction, GOAL_BAD_INPUT_CODES } from './goal/actions.mjs';
+import { applyUserGoalAction, setUserGoalObjective, clearUserGoal, GOAL_BAD_INPUT_CODES } from './goal/actions.mjs';
 import { loadSkills, findSkill, skillInvocationText } from './skills.mjs';
 import { searchWorkspaceFiles } from './files.mjs';
 import { PERMISSION_MODES, TITLE_MODES, experimentalEnabled } from '../config.mjs';
@@ -18,7 +18,7 @@ import { McpRegistry } from '../mcp/registry.mjs';
 const SESSION_RE = /^\/api\/agent\/sessions\/([0-9a-f-]{36})$/;
 const SESSION_FORK_RE = /^\/api\/agent\/sessions\/([0-9a-f-]{36})\/fork$/;
 const GOAL_GET_RE = /^\/api\/agent\/goal\/([0-9a-f-]{36})$/;
-const GOAL_ACTION_RE = /^\/api\/agent\/goal\/(pause|resume|stop|budget)$/;
+const GOAL_ACTION_RE = /^\/api\/agent\/goal\/(pause|resume|stop|budget|edit|clear)$/;
 
 function readBody(req, limit) {
   return new Promise((resolve) => {
@@ -242,9 +242,15 @@ export function createAgentApi(deps) {
       const body = await readBody(req, 64 * 1024);
       const sessionId = String(body.sessionId || '');
       if (!sessions.get(sessionId)) return json(res, 404, { error: { message: '会话不存在或已删除' } });
+      const action = goalActionMatch[1];
+      // clear 是幂等移除（没有目标时 cleared=false），不走状态迁移、不受无目标 404 门限制
+      if (action === 'clear') {
+        const { cleared } = clearUserGoal(goals, sessionId);
+        log('info', 'Goal 已移除', { sessionId, cleared });
+        return json(res, 200, { cleared });
+      }
       const cur = goals.get(sessionId);
       if (!cur) return json(res, 404, { error: { message: '当前会话没有目标', code: 'GOAL_NOT_FOUND' } });
-      const action = goalActionMatch[1];
       // budget 的纪元门在 HTTP 层：goalId 与 updatedAt 都必须来自一次新鲜的 get_goal 快照
       if (action === 'budget') {
         const tb = body.tokenBudget === null ? null : body.tokenBudget;
@@ -254,7 +260,7 @@ export function createAgentApi(deps) {
         }
       }
       try {
-        const goal = applyUserGoalAction(goals, sessionId, action, { tokenBudget: body.tokenBudget, expectedUpdatedAt: body.expectedUpdatedAt });
+        const goal = applyUserGoalAction(goals, sessionId, action, { tokenBudget: body.tokenBudget, expectedUpdatedAt: body.expectedUpdatedAt, objective: body.objective });
         log('info', `Goal 操作 ${action}`, { sessionId });
         return json(res, 200, { goal });
       } catch (e) {
