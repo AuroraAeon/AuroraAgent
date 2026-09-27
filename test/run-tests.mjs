@@ -34,6 +34,7 @@ import { runPickTests } from './pick.mjs';
 import { runSkillsTests } from './skills.mjs';
 import { runTitleTests } from './title.mjs';
 import { runGoalTests } from './goal.mjs';
+import { completePrefix, SideSession } from '../util/agent/side-session.mjs';
 import { TITLE_MAX_TOKENS } from '../util/agent/title-model.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -90,6 +91,64 @@ await runTuiComponentTests(test, assert, eq);
 await runTitleTests(test, assert, eq);
 await runGoalTests(test, assert, eq);
 await runGuardTests(test, assert);
+
+// ---------- 单元测试: 侧边对话（/btw） ----------
+console.log('\n侧边对话单测');
+await test('btw: completePrefix 截到最后一个无悬空工具调用的自洽点', () => {
+  const full = [
+    { t: 'user', text: '你好' },
+    { t: 'assistant', text: '在的' },
+    { t: 'tool_call', id: 'a', name: 'read_file', args: {} },
+    { t: 'tool_result', id: 'a', ok: true, output: 'x' },
+    { t: 'user', text: '继续' },
+  ];
+  eq(completePrefix(full).length, 5, '完整历史不截断');
+  const cut = [
+    { t: 'user', text: '跑个任务' },
+    { t: 'tool_call', id: 'a', name: 'shell', args: {} },
+    { t: 'tool_result', id: 'a', ok: true, output: 'ok' },
+    { t: 'tool_call', id: 'b', name: 'shell', args: {} }, // 中断：没有结果
+    { t: 'assistant', text: '半句话' },
+  ];
+  const kept = completePrefix(cut);
+  eq(kept.length, 3, '未完成工具组及其后残骸整组剔除');
+  eq(kept.at(-1).t, 'tool_result', '保留到最后一个完整结果');
+  // 并行调用只完成其一：整轮不自洽（b 悬空），从前序边界截成空前缀——不以残缺形态进请求
+  const par = [
+    { t: 'tool_call', id: 'a', name: 'shell', args: {} },
+    { t: 'tool_call', id: 'b', name: 'shell', args: {} },
+    { t: 'tool_result', id: 'a', ok: true, output: 'ok' },
+  ];
+  eq(completePrefix(par).length, 0, '未全部完成的并行轮整轮剔除');
+  // 正常收尾的轮次：工具结果之后的助手终稿也是自洽历史
+  const tidy = [
+    { t: 'user', text: '跑任务' },
+    { t: 'tool_call', id: 'a', name: 'shell', args: {} },
+    { t: 'tool_result', id: 'a', ok: true, output: 'ok' },
+    { t: 'assistant', text: '完成了' },
+  ];
+  eq(completePrefix(tidy).length, 4, '正常收尾的轮次全文保留');
+  eq(completePrefix([]).length, 0);
+  eq(completePrefix(null).length, 0, '坏输入不炸');
+});
+
+await test('btw: SideSession 内存门面——继承快照、不进列表、不派发子代理', () => {
+  const main = { id: 's1', name: '主会话', model: 'm', provider: 'p', harness: 'standard', workspace: '/tmp', turns: 7, inputTokens: 100, rules: [] };
+  const side = new SideSession(main, { prefix: [{ t: 'user', text: '历史' }] });
+  assert(side.id.startsWith('btw-'), '侧边 id 带 btw_ 前缀');
+  eq(side.meta.name, '侧边对话');
+  eq(side.meta.turns, 0, '轮次计数不继承');
+  eq(side.meta.inputTokens, 0, '用量汇总不继承');
+  eq(side.meta.workspace, '/tmp', '工作目录继承');
+  eq(side.records(side.id).length, 1, '历史前缀在场');
+  side.append(side.id, { t: 'user', text: '新问题' });
+  eq(side.records(side.id).length, 2, 'append 进内存');
+  eq(side.records(side.id).length, 2, 'records 返回浅拷贝（loop 会 push）');
+  eq(side.list().length, 0, '不进会话列表');
+  let err = null;
+  try { side.create({ name: 'x' }); } catch (e) { err = e; }
+  assert(err && err.message.includes('不派发子代理'), '侧边对话禁派子代理');
+});
 
 // ---------- 单元测试: SseParser ----------
 console.log('\nSseParser 单元测试');
@@ -1457,6 +1516,19 @@ try {
     const notify = readFileSync(join(__dirname, '..', 'util', 'tui', 'notify.mjs'), 'utf8');
     assert(notify.includes('probeFocused') && notify.includes('timeout: timeoutMs'), '焦点探测应带超时');
     assert(notify.includes('resolve(false)') || notify.includes('done(false)'), '探测失败应按未聚焦处理');
+  });
+  await test('侧边对话接线源码契约：/btw 命令、Ctrl+/ 切换、丢弃与侧边路由', async () => {
+    const term = readFileSync(join(__dirname, '..', 'util', 'agent', 'terminal.mjs'), 'utf8');
+    assert(term.includes("name: 'btw'") && term.includes('argHint: \'<问题>\''), '终端应有 /btw 命令');
+    assert(term.includes('new SideSession(meta, { prefix: store.records(meta.id) })'), '/btw 应带主会话历史前缀开侧边会话');
+    assert(term.includes('goalStore: side ? null : goals'), '侧边对话不接管 goal');
+    // Ctrl+/ 监听必须先于 createInterface（data 监听按注册序触发，先摘 keypress 防缓冲污染）
+    assert(term.indexOf("process.stdin.on('data'") < term.indexOf('const rl = createInterface'), 'Ctrl+/ 监听必须早于 readline 创建');
+    assert(term.includes("String(d) !== '\\x1f'") && term.includes("removeListener('keypress'"), 'Ctrl+/ 应先摘 keypress 监听再处理');
+    assert(term.includes('ctrlSlash.handler = () => {') && term.includes('btwMode = !btwMode'), 'Ctrl+/ 应切换主/侧边模式');
+    assert(term.includes("else if (btwMode) discardBtw();"), '侧边模式 Ctrl+C 应丢弃侧边对话');
+    assert(term.includes('await runTurn(line, btwMode && Boolean(btw))'), '普通输入应按模式路由');
+    assert(term.includes('redrawPrompt') && term.includes('rl.prompt(true)'), '异步输出后应重绘提示符');
   });
   await test('流式活动状态行源码契约：轮次 / 工具数 / 计时与费用行统一', () => {
     const cv = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ChatView.tsx'), 'utf8');

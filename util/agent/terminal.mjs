@@ -24,6 +24,7 @@ import { SearchableList } from '../tui/searchable-list.mjs';
 import { pick } from '../tui/pick.mjs';
 import { runTerminalTurn } from './terminal-turn.mjs';
 import { loadSkills, skillInvocationText } from './skills.mjs';
+import { SideSession } from './side-session.mjs';
 import { join } from 'node:path';
 import { truncate, toolLabel } from './terminal-format.mjs';
 
@@ -83,6 +84,20 @@ export async function runTerminal({ argv = [] } = {}) {
   // 系统通知器：按 tui.notifications 配置（when/method/events）发 OSC9 / OSC777 / bel
   const notifier = createNotifier({ notifications: cfg.tui.notifications });
 
+  // Ctrl+/（\x1f）切换主 / 侧边对话。监听必须在 createInterface 之前挂上：data 监听按注册
+  // 顺序触发，先摘掉 readline 的 keypress 监听，本 chunk 的控制符就不会进输入缓冲
+  // （emitKeypressEvents 的 keypress 事件随后空转），下一 tick 恢复（与 pick.mjs 拾矿同源）。
+  const ctrlSlash = { handler: () => {} };
+  if (process.stdin.isTTY) {
+    process.stdin.on('data', (d) => {
+      if (String(d) !== '\x1f') return;
+      const saved = process.stdin.rawListeners('keypress').slice();
+      for (const l of saved) process.stdin.removeListener('keypress', l);
+      setImmediate(() => { for (const l of saved) process.stdin.on('keypress', l); });
+      ctrlSlash.handler();
+    });
+  }
+
   const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: process.stdin.isTTY === true });
   // OSC 终端标题：状态词随 mode/busy 变；退出与挂起清空、恢复重设
   const applyTitle = () => {
@@ -106,9 +121,11 @@ export async function runTerminal({ argv = [] } = {}) {
   const hooks = {}; // turn 运行期挂 abort；rl 的 SIGINT 事件中转进来（raw mode 下无真信号）
   rl.on('SIGINT', () => {
     if (hooks.abort) hooks.abort(); // 生成中：中断并保留已生成内容
-    else rl.close(); // 空提示符：退出（与无监听时的 readline 默认行为一致）
+    else if (btwMode) discardBtw(); // 侧边对话空提示符：丢弃侧边对话，回到主对话
+    else rl.close(); // 主对话空提示符：退出（与无监听时的 readline 默认行为一致）
   });
   let busy = false;
+  let btw = null; // 侧边对话实例（SideSession；null = 未开）
   let btwMode = false; // 侧边对话模式（/btw 进入，Ctrl+/ 切换）
   let wantExit = false;
   let quitting = false;
@@ -312,6 +329,17 @@ export async function runTerminal({ argv = [] } = {}) {
       console.log(painter().dim(`✓ 标题生成方式已切换为${want === 'model' ? '模型总结（每个新会话多一次小额请求）' : '本地推导（零成本）'}`));
     } },
     { name: 'goal', argHint: '[pause|resume|stop|budget <n>|clear]', summary: '会话目标（无参查看状态；模型经 create_goal 创建后在此管理）', run: cmdGoal },
+    { name: 'btw', argHint: '<问题>', summary: '侧边对话：继承当前会话历史开聊，不落盘不进会话列表；Ctrl+/ 切换、Ctrl+C 丢弃', run: async (arg) => {
+      const q = String(arg || '').trim();
+      if (!q) { console.log(painter().warning('用法: /btw <问题>（侧边对话，继承当前会话历史，不落盘）')); return; }
+      if (!btw) btw = new SideSession(meta, { prefix: store.records(meta.id) });
+      btwMode = true;
+      busy = true;
+      applyTitle();
+      await runTurn(q, true); // await：busy 期间 Ctrl+C 走中断而非丢弃
+      busy = false;
+      applyTitle();
+    } },
     { name: 'plan', argHint: 'on|off', summary: '计划模式开关（默认关；开启后下一轮先出计划，批准才执行）', run: (arg) => {
       const on = arg !== 'off';
       meta = store.patch(meta.id, { planMode: on }) || meta;
@@ -360,18 +388,51 @@ export async function runTerminal({ argv = [] } = {}) {
     goal: (() => { const g = goals.get(meta.id); return g && g.status === 'active' ? goalUsageChip(g) : null; })(),
   });
 
-  const runTurn = (input) => runTerminalTurn({
-    extraTools: mcp ? mcp.tools : [],
-    goalStore: goals,
-    store, usage, session: meta, input, skills,
-    provider: providers.get(meta.provider) || providers.providerForModel(meta.model || cfg.model),
-    model: meta.model || cfg.model,
-    harness: getHarness(meta.harness),
-    cfg, painter: painter(), ask, hooks,
-    onUsage: (u) => { foot.tokens = (u.inputTokens || 0) + (u.outputTokens || 0); foot.cost = u.cost; },
-    onSession: (m) => { meta = m; },
-    notifier,
-  });
+  // side=true 跑侧边对话：内存门面 store、不接管 goal、用量仍记真实账本
+  const runTurn = (input, side = false) => {
+    const target = side ? btw.meta : meta;
+    return runTerminalTurn({
+      extraTools: mcp ? mcp.tools : [],
+      goalStore: side ? null : goals,
+      store: side ? btw : store,
+      usage, session: target, input, skills,
+      provider: providers.get(target.provider) || providers.providerForModel(target.model || cfg.model),
+      model: target.model || cfg.model,
+      harness: getHarness(target.harness),
+      cfg, painter: painter(), ask, hooks, notifier,
+      onUsage: (u) => { foot.tokens = (u.inputTokens || 0) + (u.outputTokens || 0); foot.cost = u.cost; },
+      onSession: (m) => { if (side) btw.meta = m; else meta = m; },
+    });
+  };
+
+  /** 提示符重绘：异步输出（Ctrl+/ 切换等）后把提示符与已键入内容拉回新行 */
+  const redrawPrompt = () => {
+    if (!process.stdin.isTTY) return;
+    rl.setPrompt(painter().roleUser(btwMode ? '侧 › ' : '你 › '));
+    rl.prompt(true);
+  };
+
+  /** 丢弃侧边对话回到主对话（Ctrl+C 空输入触发） */
+  const discardBtw = () => {
+    btw = null;
+    btwMode = false;
+    console.log(painter().dim('  (侧边对话已丢弃，回到主对话)'));
+    applyTitle();
+    redrawPrompt();
+  };
+
+  // Ctrl+/ 切换：没有侧边对话时给提示不开切换
+  ctrlSlash.handler = () => {
+    if (!btw) {
+      console.log(painter().dim('  (还没有侧边对话：/btw <问题> 开一个，继承当前会话历史，不落盘)'));
+      redrawPrompt();
+      return;
+    }
+    btwMode = !btwMode;
+    applyTitle();
+    console.log(painter().dim(`  (切换到${btwMode ? '侧边' : '主'}对话${btwMode ? `，已继承 ${btw.items.length} 条历史前缀` : ''})`));
+    redrawPrompt();
+  };
 
   if (oneShot) {
     busy = true;
@@ -387,7 +448,7 @@ export async function runTerminal({ argv = [] } = {}) {
   for (;;) {
     const p = painter();
     process.stdout.write(renderFooter(footerState(), p, process.stdout.columns || 80) + '\n');
-    if (process.stdin.isTTY) { rl.setPrompt(p.roleUser('你 › ')); rl.prompt(); }
+    if (process.stdin.isTTY) { rl.setPrompt(p.roleUser(btwMode ? '侧 › ' : '你 › ')); rl.prompt(); }
     const line = (await ask()).trim();
     if (!line) continue;
     const parsed = parseCommand(line);
@@ -401,7 +462,7 @@ export async function runTerminal({ argv = [] } = {}) {
     }
     busy = true;
     applyTitle();
-    await runTurn(line);
+    await runTurn(line, btwMode && Boolean(btw));
     busy = false;
     applyTitle();
     if (wantExit && !lineQueue.length) cleanExit();
