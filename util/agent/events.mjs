@@ -24,6 +24,7 @@ export const EVENT_TYPES = [
   'goal_status_changed',
   'goal_usage_updated',
   'goal_wait_changed',
+  'goal_cleared',
   'turn_completed',
   'turn_cancelled',
   'turn_failed',

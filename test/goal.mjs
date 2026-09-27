@@ -20,6 +20,8 @@ import { replyFingerprint, advanceBreakers } from '../util/agent/goal/breaker.mj
 import { createGoalRuntime } from '../util/agent/goal/runtime.mjs';
 import { parseVerdict } from '../util/agent/goal/verification.mjs';
 import { GOAL_AUDIT_INTERVAL, GOAL_CONTINUATION_NOTE, GOAL_WRAPUP_NOTE, goalContinuationNote, goalObjectiveUpdatedNote, goalTurnStartNote, goalVerifierFeedbackNote } from '../util/agent/goal/continuation.mjs';
+import { subscribeGoalEvents, publishGoalEvent, goalEventSubscriberCount } from '../util/agent/goal/bus.mjs';
+import { EVENT_TYPES, sseFrame } from '../util/agent/events.mjs';
 
 export async function runGoalTests(test, assert, eq) {
   console.log('\nGoal 模式单测');
@@ -998,6 +1000,38 @@ export async function runGoalTests(test, assert, eq) {
     eq(clearUserGoal(store, 'c1').cleared, true);
     eq(store.get('c1'), null, '移除后查询为 null');
     eq(clearUserGoal(store, 'c1').cleared, false, '再次移除幂等');
+  });
+
+  await test('goal: 事件总线扇出 / 会话过滤 / 退订 / 容错', () => {
+    assert(EVENT_TYPES.includes('goal_cleared'), 'goal_cleared 应登记进事件类型白名单');
+    assert(sseFrame('goal_cleared', { sessionId: 's' }).startsWith('event: goal_cleared\n'), 'goal_cleared 应可序列化为 SSE 帧');
+    const sid = 'bus-1';
+    const other = 'bus-2';
+    const got = [];
+    const off = subscribeGoalEvents(sid, (frame) => got.push(frame));
+    eq(goalEventSubscriberCount(sid), 1, '订阅后计数为 1');
+    publishGoalEvent(sid, 'goal_created', { goal: { goalId: 'g1' } });
+    eq(got.length, 1, '订阅方应收到发布帧');
+    assert(got[0].includes('"type":"goal_created"') && got[0].includes('"sessionId":"bus-1"') && got[0].includes('"goalId":"g1"'), '帧应带事件类型 / 会话 / 负载');
+    publishGoalEvent(other, 'goal_status_changed', { goal: { goalId: 'g2' } });
+    eq(got.length, 1, '另一会话的发布不得串到本会话订阅');
+    publishGoalEvent(sid, 'goal_cleared', {});
+    eq(got.length, 2, 'goal_cleared 应可达订阅方');
+    // 单个订阅写失败不影响其他订阅
+    const got2 = [];
+    const off2 = subscribeGoalEvents(sid, () => { throw new Error('连接已断'); });
+    const before = got.length;
+    publishGoalEvent(sid, 'goal_cleared', {});
+    eq(got.length, before + 1, '坏订阅不得拖垮好订阅');
+    off2();
+    eq(goalEventSubscriberCount(sid), 1, '退订后计数回落');
+    off();
+    eq(goalEventSubscriberCount(sid), 0, '全部退订后信道回收');
+    publishGoalEvent(sid, 'goal_cleared', {});
+    eq(got.length, before + 1, '退订后不再收到帧');
+    // 未知事件类型不得拖垮调用方（REST 路由）
+    publishGoalEvent(sid, 'not_a_real_event', {});
+    eq(got.length, before + 1, '未知事件类型静默丢弃');
   });
 
 }

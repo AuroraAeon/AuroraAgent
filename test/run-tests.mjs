@@ -3002,6 +3002,50 @@ await test('Goal REST：budget 纪元不符 409 GOAL_STALE，抬高预算重新�
   eq(cleared.goal.status, 'active');
 });
 
+await test('Goal 事件流：REST 改动目标扇出给同会话 SSE 订阅方（goal_cleared 跨客户端可见）', async () => {
+  const s = await createAgentSession();
+  const stream = openAgentStream(await fetch(`${AGENT}/events?sessionId=${s.id}`));
+  // 订阅建立后再发起 REST 变更：发布发生在 POST 响应之前，帧必然先于下一步到达
+  const created = await (await fetch(`${AGENT}/goal`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, objective: '跨客户端同步' }),
+  })).json();
+  const evCreated = await stream.next();
+  eq(evCreated.type, 'goal_created', 'create 应扇出 goal_created');
+  eq(evCreated.sessionId, s.id, '帧应带会话归属');
+  eq(evCreated.goal.objective, '跨客户端同步');
+  await fetch(`${AGENT}/goal/pause`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id }),
+  });
+  const evPaused = await stream.next();
+  eq(evPaused.type, 'goal_status_changed', 'pause 应扇出 goal_status_changed');
+  eq(evPaused.goal.status, 'paused');
+  eq(evPaused.statusReason, 'paused(user_requested)', '载荷与 runtime.emitStatus 同形状');
+  await fetch(`${AGENT}/goal/clear`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id }),
+  });
+  const evCleared = await stream.next();
+  eq(evCleared.type, 'goal_cleared', 'clear 应扇出 goal_cleared（另一客户端据此清横幅）');
+  eq(evCleared.sessionId, s.id);
+  // 幂等 clear（无目标）不发布事件：订阅方不应再收到帧
+  await fetch(`${AGENT}/goal/clear`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id }),
+  });
+  const created2 = await (await fetch(`${AGENT}/goal`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, objective: '再次创建' }),
+  })).json();
+  eq(created2.goal.objective, '再次创建');
+  const evRecreated = await stream.next();
+  eq(evRecreated.type, 'goal_created', '再次 create 仍应扇出（幂等 clear 未产生多余帧）');
+  stream.cancel();
+  const missing = await fetch(`${AGENT}/events?sessionId=不存在`);
+  eq(missing.status, 404, '未知会话的事件流订阅应 404');
+});
+
 await test('Agent turn：计划模式驳回后不执行', async () => {
   const s = await createAgentSession();
   const resp = await fetch(`${AGENT}/turn`, {

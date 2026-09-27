@@ -10,6 +10,7 @@ import { getHarness, harnessSummaries } from './harness.mjs';
 import { sseFrame } from './events.mjs';
 import { GoalStore, GoalConflictError } from './goal/store.mjs';
 import { applyUserGoalAction, setUserGoalObjective, clearUserGoal, GOAL_BAD_INPUT_CODES } from './goal/actions.mjs';
+import { subscribeGoalEvents, publishGoalEvent } from './goal/bus.mjs';
 import { loadSkills, findSkill, skillInvocationText } from './skills.mjs';
 import { searchWorkspaceFiles } from './files.mjs';
 import { PERMISSION_MODES, TITLE_MODES, experimentalEnabled } from '../config.mjs';
@@ -19,6 +20,7 @@ const SESSION_RE = /^\/api\/agent\/sessions\/([0-9a-f-]{36})$/;
 const SESSION_FORK_RE = /^\/api\/agent\/sessions\/([0-9a-f-]{36})\/fork$/;
 const GOAL_GET_RE = /^\/api\/agent\/goal\/([0-9a-f-]{36})$/;
 const GOAL_ACTION_RE = /^\/api\/agent\/goal\/(pause|resume|stop|budget|edit|clear)$/;
+const GOAL_EVENTS_RE = /^\/api\/agent\/events$/;
 
 function readBody(req, limit) {
   return new Promise((resolve) => {
@@ -214,6 +216,20 @@ export function createAgentApi(deps) {
       if (!got) return json(res, 404, { error: { message: '会话不存在或已删除' } });
       return json(res, 200, { files: searchWorkspaceFiles(got.meta.workspace, qs.get('q') || '') });
     }
+    // 跨客户端 goal 事件流：另一客户端经 REST 改动目标时，订阅方即时收到同一批事件
+    // （对齐 MiniMax 全局事件投影；turn 内的 goal 事件仍走 turn SSE，不经此处）
+    if (GOAL_EVENTS_RE.test(url) && req.method === 'GET') {
+      const qs = new URL(req.url, 'http://localhost').searchParams;
+      const sessionId = String(qs.get('sessionId') || '');
+      if (!sessions.get(sessionId)) return json(res, 404, { error: { message: '会话不存在或已删除' } });
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' });
+      // 订阅即写一条 SSE 注释冲掉响应头：否则无事件时头部滞留，客户端 fetch 永远等不到 headers
+      res.write(': goal-event-stream connected\n\n');
+      const unsubscribe = subscribeGoalEvents(sessionId, (frame) => { if (!res.writableEnded) res.write(frame); });
+      // 连接关闭必须无条件退订：SSE 流本就不主动 end，泄漏的订阅会随会话累积
+      res.on('close', () => unsubscribe());
+      return;
+    }
     const goalGetMatch = GOAL_GET_RE.exec(url);
     if (goalGetMatch && req.method === 'GET') {
       if (!sessions.get(goalGetMatch[1])) return json(res, 404, { error: { message: '会话不存在或已删除' } });
@@ -231,6 +247,7 @@ export function createAgentApi(deps) {
           tokenBudget: Number.isInteger(body.tokenBudget) && body.tokenBudget > 0 ? body.tokenBudget : null,
         });
         log('info', 'Goal 已创建', { sessionId, goalId: goal.goalId });
+        publishGoalEvent(sessionId, 'goal_created', { goal });
         return json(res, 200, { goal });
       } catch (e) {
         if (e instanceof GoalConflictError) return json(res, 409, { error: { message: e.message, code: e.code } });
@@ -247,6 +264,7 @@ export function createAgentApi(deps) {
       if (action === 'clear') {
         const { cleared } = clearUserGoal(goals, sessionId);
         log('info', 'Goal 已移除', { sessionId, cleared });
+        if (cleared) publishGoalEvent(sessionId, 'goal_cleared', {});
         return json(res, 200, { cleared });
       }
       const cur = goals.get(sessionId);
@@ -264,6 +282,8 @@ export function createAgentApi(deps) {
       try {
         const goal = applyUserGoalAction(goals, sessionId, action, { tokenBudget: body.tokenBudget, expectedUpdatedAt: body.expectedUpdatedAt, objective: body.objective });
         log('info', `Goal 操作 ${action}`, { sessionId });
+        // 与 runtime.emitStatus 同载荷形状：订阅方按 goal 快照整体校正（含 edit 的文本变更）
+        publishGoalEvent(sessionId, 'goal_status_changed', { goal, statusReason: goal.statusReason, lastVerification: goal.lastVerification });
         return json(res, 200, { goal });
       } catch (e) {
         // 坏入参（预算非法 / 未知操作）映射 400；状态冲突与纪元不符映射 409
