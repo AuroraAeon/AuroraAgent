@@ -29,16 +29,18 @@ function useElapsed(startedAt: number): string {
 }
 
 function LiveRow({ live, onDecide, onDecidePlan }: { live: LiveTurn; onDecide?: (requestId: string, decision: 'allow' | 'deny' | 'always') => void; onDecidePlan?: (decision: 'approve' | 'reject') => void }) {
-  const empty = !live.text && !live.thinking && live.tools.length === 0;
+  const empty = !live.parts.length && !live.thinking && !live.plan;
   const elapsed = useElapsed(live.startedAt);
   return (
     <div className="row row-ai">
       <div className="avatar avatar-ai" title="AuroraAgent"><IconSpark size={15} /></div>
       <div className="col-ai">
         {live.thinking ? <ThinkingBlock text={live.thinking} defaultOpen streaming /> : null}
-        {live.text ? <Markdown text={live.text} /> : null}
         {live.plan ? <PlanCard plan={live.plan} onDecide={onDecidePlan} /> : null}
-        {live.tools.map((t) => <ToolCard key={t.id} tool={t} onDecide={onDecide} />)}
+        {/* parts 时间线与历史投影同形态：流式期间即按「文字 → 工具 → 文字」落位，结束后不重排版 */}
+        {live.parts.map((p, pi) => (p.kind === 'text'
+          ? <Markdown key={`t${pi}`} text={p.text} />
+          : <ToolCard key={p.id} tool={p} onDecide={onDecide} />))}
         {live.compression ? <div className="row-system">{live.compression}</div> : null}
         {live.usage ? (
           <div className="usage-foot">
@@ -49,7 +51,7 @@ function LiveRow({ live, onDecide, onDecidePlan }: { live: LiveTurn; onDecide?: 
         {!empty ? (
           <div className="live-status" aria-hidden="true">
             <span className="dots"><i /><i /><i /></span>
-            第 {live.round || 1} 轮 · {live.tools.length} 个工具 · {elapsed}
+            第 {live.round || 1} 轮 · {live.parts.filter((p) => p.kind === 'tool').length} 个工具 · {elapsed}
           </div>
         ) : null}
       </div>

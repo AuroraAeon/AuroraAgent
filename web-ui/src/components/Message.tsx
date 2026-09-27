@@ -51,8 +51,10 @@ export function Message({ msg, onDecide }: Props) {
       <div className="avatar avatar-ai" title="AuroraAgent"><IconSpark size={15} /></div>
       <div className="col-ai">
         {msg.thinking ? <ThinkingBlock text={msg.thinking} /> : null}
-        {msg.text ? <Markdown text={msg.text} /> : null}
-        {msg.tools.map((t) => <ToolCard key={t.id} tool={t} onDecide={onDecide} />)}
+        {/* parts 时间线：文本段与工具卡片按发生顺序交错，回答不被工具调用切断 */}
+        {msg.parts.map((p, pi) => (p.kind === 'text'
+          ? <Markdown key={`t${pi}`} text={p.text} />
+          : <ToolCard key={p.id} tool={p} onDecide={onDecide} />))}
         {msg.usage ? (
           <div className="usage-foot">
             tokens 输入 {msg.usage.inputTokens} · 输出 {msg.usage.outputTokens} · 费用 {fmtCostYen(msg.usage.cost)}

@@ -1,8 +1,8 @@
 /**
  * 转录投影层：会话记录 → 终端与 Web 共用的中性投影 + 工具词表（单一真值源）。
  *   - 工具标签 / 图标键 / 资源摘要：终端单行状态与 Web 工具卡共用，杜绝两端漂移
- *   - projectTurns：把 .jsonl 记录按「用户消息 / 模型轮」分组成中性结构，
- *     Web 的 projection.ts 与终端历史渲染都从这份分组规则取数
+ *   - projectTurns：把 .jsonl 记录按「用户消息 / 用户轮」分组成中性结构（用户轮内文本与工具
+ *     按时间线交错存 parts，回答不被工具调用切断），Web 的 projection.ts 从这份分组规则取数
  * 纯函数、零依赖；Web 侧经相对路径 import 同一份（Vite 打包进 Bundle，不触 node_modules）。
  */
 
@@ -54,23 +54,29 @@ export function fmtCost(cost) {
 
 /**
  * 记录 → 中性轮次投影。分组规则（与 Web 历史渲染契约一致）：
- *   user / summary 开启新段；assistant / thinking 归属当前轮；
- *   tool_call 之后再来 assistant / thinking 即开启新轮（一个模型轮一组）。
- * @returns {{ turns: Array<{ kind:'user'|'system'|'round', text, thinking, tools, usage, at }> }}
- *   round.tools: [{ id, name, args, ok, output, extra }]
+ *   user / summary 开启新段；同一用户轮内（直到下一条 user / summary）的全部记录归属同一个 round，
+ *   文本与工具调用按时间线交错存于 round.parts——回答不被每次工具调用切断成多条消息；
+ *   工具记录永远归属当前轮（并行调用不拆散）。
+ * @returns {{ turns: Array<{ kind:'user'|'system'|'round', ... }> }}
+ *   round.parts: [{ kind:'text', text } | { kind:'tool', id, name, args, ok, output, extra }]
+ *   round.text / round.tools / round.thinking / round.usage：parts 汇总出的兼容视图（旧消费者与终端）
  */
 export function projectTurns(records) {
   const turns = [];
   let cur = null;
   const flush = () => { cur = null; };
   const ensureRound = (at) => {
-    if (!cur || cur.kind !== 'round') { cur = { kind: 'round', text: '', thinking: '', tools: [], usage: null, at }; turns.push(cur); }
+    if (!cur || cur.kind !== 'round') { cur = { kind: 'round', thinking: '', parts: [], usage: null, at }; turns.push(cur); }
     return cur;
   };
-  // 新文本 / 思考：若当前轮已有工具调用则开新轮（一个模型轮一组）；工具记录永远归属当前轮（并行调用不拆散）
-  const round = (at) => {
-    if (cur && cur.kind === 'round' && cur.tools.length > 0) cur = null;
-    return ensureRound(at);
+  // 同一轮内的文本追到最后文本片段（转录里 assistant 按模型轮整段写入，片段间以换行相接）；
+  // 工具之后的新文本开新片段，保住「文字 → 工具 → 文字」的时间线，但不拆轮
+  const appendText = (at, text) => {
+    const rr = ensureRound(at);
+    const t = String(text || '');
+    const last = rr.parts[rr.parts.length - 1];
+    if (last && last.kind === 'text') last.text += (last.text ? '\n' : '') + t;
+    else if (t) rr.parts.push({ kind: 'text', text: t });
   };
   (records || []).forEach((r, idx) => {
     const at = r.at;
@@ -84,19 +90,19 @@ export function projectTurns(records) {
         turns.push({ kind: 'system', text: String(r.text || ''), at });
         break;
       case 'assistant':
-        round(at).text += (cur.text ? '\n' : '') + String(r.text || '');
+        appendText(at, r.text);
         break;
       case 'thinking':
-        round(at).thinking += String(r.text || '');
+        ensureRound(at).thinking += String(r.text || '');
         break;
       case 'tool_call':
-        ensureRound(at).tools.push({ id: String(r.id || `t${idx}`), name: String(r.name || ''), args: r.args ?? null, ok: null, output: '', extra: null });
+        ensureRound(at).parts.push({ kind: 'tool', id: String(r.id || `t${idx}`), name: String(r.name || ''), args: r.args ?? null, ok: null, output: '', extra: null });
         break;
       case 'tool_result': {
         const rr = ensureRound(at);
-        const hit = rr.tools.find((t) => t.id === String(r.id || ''));
-        const row = hit || { id: String(r.id || `t${idx}`), name: String(r.name || ''), args: null, ok: null, output: '', extra: null };
-        if (!hit) rr.tools.push(row);
+        const hit = rr.parts.find((p) => p.kind === 'tool' && p.id === String(r.id || ''));
+        const row = hit || { kind: 'tool', id: String(r.id || `t${idx}`), name: String(r.name || ''), args: null, ok: null, output: '', extra: null };
+        if (!hit) rr.parts.push(row);
         row.ok = r.ok !== false;
         row.output = String(r.output || '');
         if (r.extra) row.extra = r.extra;
@@ -114,5 +120,11 @@ export function projectTurns(records) {
     }
   });
   flush();
+  // 兼容视图：text = 各文本片段按序汇总；tools = 工具片段数组（顺序即调用序）
+  for (const t of turns) {
+    if (t.kind !== 'round') continue;
+    t.text = t.parts.filter((p) => p.kind === 'text').map((p) => p.text).join('\n');
+    t.tools = t.parts.filter((p) => p.kind === 'tool');
+  }
   return { turns };
 }

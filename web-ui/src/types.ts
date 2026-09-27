@@ -105,21 +105,23 @@ export type TuiSettings = {
   };
 };
 
-/** 历史投影：一条 assistant 视图可带思考、工具列表与用量脚注 */
+/** 历史投影：一条 assistant 视图 = 一个用户轮的产出，parts 按时间线交错文本与工具 */
 export type TodoItem = { text: string; done: boolean };
 export type DiffLine = { type: 'context' | 'add' | 'del' | 'meta'; lineNo: number; text: string };
 export type SubAgentResult = { task: string; ok: boolean; text: string; sessionId: string; rounds: number; tools: number };
 export type ToolExtra = { diff?: DiffLine[]; todos?: TodoItem[]; path?: string; children?: SubAgentResult[] };
 export type ToolView = { id: string; name: string; params: unknown; phase: 'running' | 'ask' | 'rejected' | 'done' | 'failed'; output: string; requestId?: string; extra?: ToolExtra; subAgent?: boolean; subTask?: string };
+/** 时间线片段：文本段与工具卡交错（历史投影与流式 turn 同形态，切齐两端渲染） */
+export type MsgPart = { kind: 'text'; text: string } | ({ kind: 'tool' } & ToolView);
 export type MsgView =
   | { kind: 'user'; key: string; text: string; at?: string }
-  | { kind: 'assistant'; key: string; text: string; thinking: string; tools: ToolView[]; usage: { inputTokens: number; outputTokens: number; cost: number } | null; at?: string }
+  | { kind: 'assistant'; key: string; parts: MsgPart[]; thinking: string; usage: { inputTokens: number; outputTokens: number; cost: number } | null; at?: string }
   | { kind: 'system'; key: string; text: string };
 
-/** 进行中的 turn（流式渲染，与历史投影共用 ToolCard） */
+/** 进行中的 turn（流式渲染，与历史投影共用 parts 时间线与 ToolCard） */
 export type PlanView = { text: string; decided: 'pending' | 'approved' | 'rejected' };
 export type LiveTurn = {
-  turnId: string; text: string; thinking: string; tools: ToolView[];
+  turnId: string; parts: MsgPart[]; thinking: string;
   usage: { inputTokens: number; outputTokens: number; cost: number } | null;
   compression: string | null;
   plan: PlanView | null;

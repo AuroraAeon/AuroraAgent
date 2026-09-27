@@ -1,22 +1,24 @@
 /** 会话转录 → 可见历史投影（纯函数，测试与组件共用）。
- *  一条 assistant 视图 = 一个模型轮的产出：文本 + 思考 + 工具卡片 + 用量脚注；
- *  出现新工具调用即开启新视图，保证多轮 turn 的历史按轮次分组。 */
+ *  一条 assistant 视图 = 一个用户轮的产出：parts 时间线（文本段与工具卡片交错）+
+ *  思考 + 用量脚注；回答不被每次工具调用切断，与流式 turn 的 parts 同形态。 */
 import { fmtCost, projectTurns } from '../../util/agent/transcript.mjs';
-import type { MsgView, SessionRecord, ToolView } from './types';
+import type { MsgPart, MsgView, SessionRecord } from './types';
 
 export function projectRecords(records: SessionRecord[]): MsgView[] {
-  // 分组规则（用户消息 / 模型轮切分）的单一真值源在 util/agent/transcript.mjs，终端同源
+  // 分组规则（用户消息 / 用户轮切分、时间线交错）的单一真值源在 util/agent/transcript.mjs
   const { turns } = projectTurns(records as unknown[]);
   return turns.map((t, idx) => {
     if (t.kind === 'user') return { kind: 'user', key: `u${idx}`, text: t.text, at: t.at };
     if (t.kind === 'system') return { kind: 'system', key: `s${idx}`, text: t.text };
     return {
-      kind: 'assistant', key: `a${idx}`, text: t.text, thinking: t.thinking, at: t.at,
-      tools: t.tools.map((tl) => ({
-        id: tl.id, name: tl.name, params: tl.args,
-        phase: tl.ok === null ? 'running' : tl.ok ? 'done' : 'failed',
-        output: tl.output, ...(tl.extra ? { extra: tl.extra as ToolView['extra'] } : {}),
-      })),
+      kind: 'assistant', key: `a${idx}`, at: t.at, thinking: t.thinking,
+      parts: t.parts.map((p): MsgPart => (p.kind === 'text'
+        ? { kind: 'text', text: p.text }
+        : {
+          kind: 'tool', id: p.id, name: p.name, params: p.args,
+          phase: p.ok === null ? 'running' : p.ok ? 'done' : 'failed',
+          output: p.output, ...(p.extra ? { extra: p.extra as Extract<MsgPart, { kind: 'tool' }>['extra'] } : {}),
+        })),
       usage: t.usage,
     };
   });

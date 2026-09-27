@@ -13,11 +13,23 @@ export declare function toolResourceOf(name: string, args: unknown): string;
 /** 费用格式化：小额 6 位、常规 4 位 */
 export declare function fmtCost(cost: number): string;
 
-export type ProjectedTool = { id: string; name: string; args: unknown; ok: boolean | null; output: string; extra: unknown };
+export type ProjectedText = { kind: 'text'; text: string };
+export type ProjectedTool = { kind: 'tool'; id: string; name: string; args: unknown; ok: boolean | null; output: string; extra: unknown };
+export type ProjectedPart = ProjectedText | ProjectedTool;
 export type ProjectedTurn =
   | { kind: 'user'; text: string; at?: string }
   | { kind: 'system'; text: string; at?: string }
-  | { kind: 'round'; text: string; thinking: string; tools: ProjectedTool[]; usage: { inputTokens: number; outputTokens: number; cost: number } | null; at?: string };
+  | {
+      kind: 'round';
+      /** 时间线片段：文本与工具调用交错（回答不被工具调用切断） */
+      parts: ProjectedPart[];
+      /** 兼容视图：parts 汇总（text = 文本片段按序汇总，tools = 工具片段数组） */
+      text: string;
+      tools: ProjectedTool[];
+      thinking: string;
+      usage: { inputTokens: number; outputTokens: number; cost: number } | null;
+      at?: string;
+    };
 
-/** 记录 → 中性轮次投影（分组规则与 Web 历史渲染契约一致） */
+/** 记录 → 中性轮次投影（分组规则与 Web 历史渲染契约一致：用户轮内时间线交错） */
 export declare function projectTurns(records: unknown[]): { turns: ProjectedTurn[] };

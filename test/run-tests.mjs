@@ -1017,7 +1017,7 @@ await test('transcript: fmtCost 小额六位常规四位', () => {
   eq(fmtCost(0.001234), '0.001234');
   eq(fmtCost(1.5), '1.5000');
 });
-await test('transcript: projectTurns 按模型轮分组并回填工具结果', () => {
+await test('transcript: projectTurns 按用户轮分组并回填工具结果', () => {
   const { turns } = projectTurns([
     { t: 'user', text: '问题一' },
     { t: 'thinking', text: '想想' },
@@ -1029,33 +1029,55 @@ await test('transcript: projectTurns 按模型轮分组并回填工具结果', (
     { t: 'user', text: '问题二' },
     { t: 'summary', text: '压缩摘要' },
   ]);
-  eq(turns.length, 5);
+  eq(turns.length, 4, '同一用户轮内的多个模型轮只算一条 assistant 视图');
   eq(turns[0].kind, 'user');
   eq(turns[1].kind, 'round');
-  eq(turns[1].text, '好的');
   eq(turns[1].thinking, '想想');
+  eq(turns[1].text, '好的\n第二轮答复', '兼容视图 text 为文本片段汇总');
   eq(turns[1].tools.length, 1);
   eq(turns[1].tools[0].ok, true);
   eq(turns[1].tools[0].output, '内容');
   eq(turns[1].usage.cost, 0.001);
-  eq(turns[2].text, '第二轮答复');
-  eq(turns[2].tools.length, 0);
-  eq(turns[3].kind, 'user');
-  eq(turns[3].text, '问题二');
-  eq(turns[4].kind, 'system');
+  eq(turns[2].kind, 'user');
+  eq(turns[2].text, '问题二');
+  eq(turns[3].kind, 'system');
 });
-await test('transcript: projectTurns 工具后新文本开新轮（与 Web 契约一致）', () => {
+await test('transcript: projectTurns 用户轮内文本与工具按时间线交错（回答不被工具切断）', () => {
   const { turns } = projectTurns([
-    { t: 'assistant', text: '第一轮' },
-    { t: 'tool_call', id: 'c1', name: 'shell', args: { command: 'ls' } },
-    { t: 'tool_result', id: 'c1', name: 'shell', ok: false, output: '失败' },
-    { t: 'assistant', text: '工具之后' },
+    { t: 'assistant', text: '先看目录' },
+    { t: 'tool_call', id: 'c1', name: 'list_dir', args: { dir: '.' } },
+    { t: 'tool_result', id: 'c1', name: 'list_dir', ok: false, output: '失败' },
+    { t: 'assistant', text: '再读文件' },
+    { t: 'tool_call', id: 'c2', name: 'read_file', args: { path: 'a' } },
+    { t: 'tool_result', id: 'c2', name: 'read_file', ok: true, output: '内容' },
+    { t: 'assistant', text: '收尾总结' },
+    { t: 'user', text: '下一个问题' },
+    { t: 'assistant', text: '新轮答复' },
   ]);
-  eq(turns.length, 2);
-  eq(turns[0].text, '第一轮');
+  eq(turns.length, 3, 'round / user / round 共三段');
+  eq(turns[0].kind, 'round', '首条 assistant 前无 user 也自成一轮');
+  const kinds = turns[0].parts.map((p) => p.kind);
+  eq(kinds.join(','), 'text,tool,text,tool,text', '片段顺序即时间线');
+  eq(turns[0].text, '先看目录\n再读文件\n收尾总结');
+  eq(turns[0].tools.length, 2);
   eq(turns[0].tools[0].ok, false);
-  eq(turns[1].text, '工具之后');
-  eq(turns[1].tools.length, 0);
+  eq(turns[0].tools[1].ok, true);
+  eq(turns[1].kind, 'user');
+  eq(turns[1].text, '下一个问题');
+  eq(turns[2].parts.length, 1);
+  eq(turns[2].text, '新轮答复');
+});
+await test('transcript: projectTurns 并行工具调用不拆散且按序回填', () => {
+  const { turns } = projectTurns([
+    { t: 'assistant', text: '并行查两个文件' },
+    { t: 'tool_call', id: 'c1', name: 'read_file', args: { path: 'a' } },
+    { t: 'tool_call', id: 'c2', name: 'read_file', args: { path: 'b' } },
+    { t: 'tool_result', id: 'c2', name: 'read_file', ok: true, output: '乙' },
+    { t: 'tool_result', id: 'c1', name: 'read_file', ok: true, output: '甲' },
+  ]);
+  eq(turns.length, 1);
+  eq(turns[0].tools.map((t) => t.output).join(','), '甲,乙', '结果按调用序回填到对应卡片');
+  eq(turns[0].parts.filter((p) => p.kind === 'tool').length, 2);
 });
 
 await test('Loop：无工具轮直接出终稿并记账', async () => {
@@ -1589,7 +1611,22 @@ try {
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
     assert(css.includes('.live-status'), 'app.css 应有状态行样式');
   });
-  await test('代码高亮源码契约：Markdown 代码块接入零依赖高亮器', () => {
+  await test('turn 级时间线源码契约：历史与流式同形态 parts，回答不被工具调用切断', () => {
+  const types = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'types.ts'), 'utf8');
+  assert(types.includes('export type MsgPart') && types.includes("kind: 'text'") && types.includes("kind: 'tool'"), 'types 应声明 parts 时间线类型');
+  assert(!types.includes('tools: ToolView[]'), 'assistant 视图不应再平铺 tools 列表（按时间线交错渲染）');
+  const proj = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'projection.ts'), 'utf8');
+  assert(proj.includes('parts: t.parts.map'), '历史投影应按 parts 映射');
+  const msg = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Message.tsx'), 'utf8');
+  assert(msg.includes('msg.parts.map') && msg.includes("p.kind === 'text'"), '历史消息应按 parts 顺序渲染文本与工具卡');
+  const cv = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ChatView.tsx'), 'utf8');
+  assert(cv.includes('live.parts.map') && cv.includes("p.kind === 'text'"), '流式行应按 parts 顺序渲染');
+  const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
+  assert(app.includes('appendTextPart'), '文本增量应追到最后文本片段（工具后的新文本开新片段）');
+  const tr = readFileSync(join(__dirname, '..', 'util', 'agent', 'transcript.mjs'), 'utf8');
+  assert(tr.includes("parts.push({ kind: 'tool'") && tr.includes('t.text = t.parts.filter'), '后端投影应产出 parts 时间线与兼容视图');
+});
+await test('代码高亮源码契约：Markdown 代码块接入零依赖高亮器', () => {
     const md = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'markdown.tsx'), 'utf8');
     assert(md.includes("from './highlight'") && md.includes('highlightCode(buf.join'), '代码块应走高亮器');
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');

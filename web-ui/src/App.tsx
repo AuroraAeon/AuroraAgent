@@ -13,46 +13,57 @@ import {
   abortTurn, createSession, deleteSession, forkSession, getGoal, getSession, getSettings, goalAction, listHarnesses, listModels, listSkills,
   listProviders, listSessions, patchSession, respondPermission, respondPlan, runTurn,
 } from './api';
-import type { AgentEvent, GoalState, Harness, LiveTurn, ModelInfo, MsgView, PlanView, ProviderRow, SessionMeta, SettingsInfo, TodoItem, ToolView, SkillRow } from './types';
+import type { AgentEvent, GoalState, Harness, LiveTurn, ModelInfo, MsgPart, MsgView, PlanView, ProviderRow, SessionMeta, SettingsInfo, TodoItem, ToolView, SkillRow } from './types';
 
 const planView = (text: string, decided: PlanView['decided']): PlanView => ({ text, decided });
 import { IconAlert, IconClose } from './icons';
 
-/** 工具事件 → live turn 的工具卡片状态机 */
+/** 文本增量 → 追加到 parts 的最后一个文本片段（工具之后的新文本开新片段，保住时间线） */
+function appendTextPart(live: LiveTurn, text: string): LiveTurn {
+  const parts = live.parts.slice();
+  const last = parts[parts.length - 1];
+  if (last && last.kind === 'text') parts[parts.length - 1] = { kind: 'text', text: last.text + text };
+  else parts.push({ kind: 'text', text });
+  return { ...live, parts };
+}
+
+/** 工具事件 → live turn parts 里的工具卡片状态机（工具片段保持在时间线原位置） */
 function applyToolEvent(live: LiveTurn, ev: Extract<AgentEvent, { type: 'tool_event' }>): LiveTurn {
-  const tools = live.tools.slice();
-  const idx = tools.findIndex((t) => t.id === ev.toolId);
+  const parts = live.parts.slice();
+  const idx = parts.findIndex((p) => p.kind === 'tool' && p.id === ev.toolId);
+  const cur: Extract<MsgPart, { kind: 'tool' }> | null = idx >= 0 && parts[idx].kind === 'tool' ? parts[idx] : null;
   // loop 对「拒绝」会补发 failed：保留拒绝态，不被失败态覆盖
-  if ((ev.phase === 'failed' || ev.phase === 'completed') && tools[idx]?.phase === 'rejected') return live;
-  const upsert = (view: LiveTurn['tools'][number]) => {
-    if (idx >= 0) tools[idx] = view;
-    else tools.push(view);
+  if ((ev.phase === 'failed' || ev.phase === 'completed') && cur?.phase === 'rejected') return live;
+  const upsert = (view: Extract<MsgPart, { kind: 'tool' }>) => {
+    if (idx >= 0) parts[idx] = view;
+    else parts.push(view);
   };
+  const sub = ev.subAgent ? { subAgent: true, subTask: ev.subTask } : {};
   switch (ev.phase) {
     case 'started':
-      upsert({ id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'running', output: '', ...(ev.subAgent ? { subAgent: true, subTask: ev.subTask } : {}) });
+      upsert({ kind: 'tool', id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'running', output: '', ...sub });
       break;
     case 'params_partial':
-      if (idx >= 0) tools[idx] = { ...tools[idx], params: ev.params };
-      else upsert({ id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'running', output: '', ...(ev.subAgent ? { subAgent: true, subTask: ev.subTask } : {}) });
+      if (cur) parts[idx] = { ...cur, params: ev.params };
+      else upsert({ kind: 'tool', id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'running', output: '', ...sub });
       break;
     case 'confirmation_needed':
-      upsert({ id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'ask', output: '', requestId: ev.requestId });
+      upsert({ kind: 'tool', id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'ask', output: '', requestId: ev.requestId });
       break;
     case 'confirmed':
-      if (idx >= 0) tools[idx] = { ...tools[idx], phase: 'running' };
+      if (cur) parts[idx] = { ...cur, phase: 'running' };
       break;
     case 'rejected':
-      if (idx >= 0) tools[idx] = { ...tools[idx], phase: 'rejected' };
+      if (cur) parts[idx] = { ...cur, phase: 'rejected' };
       break;
     case 'completed':
-      if (idx >= 0) tools[idx] = { ...tools[idx], phase: 'done', output: ev.output || '', ...(ev.extra ? { extra: ev.extra as ToolView['extra'] } : {}) };
+      if (cur) parts[idx] = { ...cur, phase: 'done', output: ev.output || '', ...(ev.extra ? { extra: ev.extra as ToolView['extra'] } : {}) };
       break;
     case 'failed':
-      if (idx >= 0) tools[idx] = { ...tools[idx], phase: 'failed', output: ev.output || '', ...(ev.extra ? { extra: ev.extra as ToolView['extra'] } : {}) };
+      if (cur) parts[idx] = { ...cur, phase: 'failed', output: ev.output || '', ...(ev.extra ? { extra: ev.extra as ToolView['extra'] } : {}) };
       break;
   }
-  return { ...live, tools };
+  return { ...live, parts };
 }
 
 export default function App() {
@@ -141,7 +152,7 @@ export default function App() {
     setBusy(true);
     setError('');
     setMessages((prev) => [...prev, { kind: 'user', key: `opt-${Date.now()}`, text }]);
-    setLive({ turnId: '', text: '', thinking: '', tools: [], usage: null, compression: null, plan: null, round: 0, startedAt: Date.now() });
+    setLive({ turnId: '', parts: [], thinking: '', usage: null, compression: null, plan: null, round: 0, startedAt: Date.now() });
     try {
       await runTurn(
         { sessionId: cur.id, input: text, thinking, model: cur.model, provider: cur.provider },
@@ -149,7 +160,7 @@ export default function App() {
           if (ev.type === 'session_renamed') setSessions((prev) => prev.map((s) => (s.id === ev.sessionId ? { ...s, name: ev.name } : s)));
           else if (ev.type === 'turn_started') setLive((l) => (l ? { ...l, startedAt: Date.now() } : l));
           else if (ev.type === 'model_round_started') setLive((l) => (l ? { ...l, round: ev.round } : l));
-          else if (ev.type === 'text_chunk') setLive((l) => (l ? { ...l, text: l.text + ev.text } : l));
+          else if (ev.type === 'text_chunk') setLive((l) => (l ? appendTextPart(l, ev.text) : l));
           else if (ev.type === 'thinking_chunk') setLive((l) => (l ? { ...l, thinking: l.thinking + ev.text } : l));
           else if (ev.type === 'tool_event') {
             setLive((l) => (l ? applyToolEvent(l, ev) : l));
@@ -206,7 +217,9 @@ export default function App() {
     // 乐观更新：服务端会随即推进并推送后续 tool_event 校正
     setLive((l) => (l ? {
       ...l,
-      tools: l.tools.map((t) => (t.requestId === requestId ? { ...t, phase: decision === 'deny' ? 'rejected' : 'running' } : t)),
+      parts: l.parts.map((p) => (p.kind === 'tool' && p.requestId === requestId
+        ? { ...p, phase: decision === 'deny' ? 'rejected' as const : 'running' as const }
+        : p)),
     } : l));
   };
 
