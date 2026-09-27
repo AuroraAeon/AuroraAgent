@@ -79,11 +79,13 @@ export async function runGoalTests(test, assert, eq) {
     eq(resolveUpdateGoalMode({ status: 'complete', token_budget: 100 }), 'mixed', '数字预算与 status 同现是真实混合模式');
     eq(resolveUpdateGoalMode({ status: 'complete', token_budget: null }), 'status', '省略字段被物化成 null 不能把提案变成预算变更');
     eq(resolveUpdateGoalMode({ token_budget: 100 }), 'token_budget');
-    eq(resolveUpdateGoalMode({ token_budget: null }), 'none', '单纯 null 填充不构成预算意图');
+    eq(resolveUpdateGoalMode({ token_budget: null }), 'token_budget', '孤立 null（无 status 在场）是明确的清预算意图——对齐 MiniMax，缺纪元快照时由运行时返回纠正性错误');
     eq(resolveUpdateGoalMode({}), 'none');
     eq(resolveUpdateGoalMode({ mode: 'status', token_budget: 100 }), 'status', '显式 mode 优先，另一模式字段被忽略');
-    eq(hasUpdateGoalTokenBudgetIntent({ token_budget: null }), false);
+    eq(hasUpdateGoalTokenBudgetIntent({ token_budget: null }), true, '孤立 null 即清预算意图（对齐 MiniMax）');
     eq(hasUpdateGoalTokenBudgetIntent({ token_budget: 50 }), true);
+    eq(hasUpdateGoalTokenBudgetIntent({ status: 'complete', token_budget: null }), false, '提案在场的 null 只是兼容填充，不构成预算意图');
+    eq(hasUpdateGoalTokenBudgetIntent({ status: 'complete', token_budget: 50 }), true, '数字预算与 status 同现是真实混合模式');
     eq(hasUpdateGoalTokenBudgetIntent({}), false);
   });
 
@@ -337,6 +339,8 @@ export async function runGoalTests(test, assert, eq) {
     assert(ignored.includes('已记录完成提案'), '显式 mode 优先，另一模式字段被忽略');
     const mixed = String(update.run({ status: 'complete', token_budget: 100 }));
     assert(mixed.includes('一次只能做一个操作'), '无 mode 时双意图同现应判混合模式并拒绝');
+    const loneNull = String(update.run({ token_budget: null }));
+    assert(loneNull.includes('get_goal'), '孤立 null（无 mode / 无 status）应判清预算意图并要求新鲜快照（对齐 MiniMax tool-defs）');
     const noGoal = String(update.run({ mode: 'status', status: 'complete' }));
     assert(noGoal.includes('提案'), '提案应被记录');
     const snap = JSON.parse(get.run({}));
@@ -501,21 +505,35 @@ export async function runGoalTests(test, assert, eq) {
 
   await test('goal: parseVerdict 只认 JSON 裁决，失败按 inconclusive', () => {
     eq(parseVerdict('{"verdict":"met","evidence":"ok"}').verdict, 'met');
-    eq(parseVerdict('{"verdict":"not_met","evidence":"缺口"}').verdict, 'not_met');
+    eq(parseVerdict('{"verdict":"not_met","evidence":"缺口","missing":["缺口一"]}').verdict, 'not_met');
     eq(parseVerdict('前缀 {"verdict":"impossible","evidence":"x"} 后缀').verdict, 'impossible');
     eq(parseVerdict('我觉得大概完成了').verdict, 'inconclusive', '非 JSON 不能悄悄放行');
     eq(parseVerdict('{"verdict":"maybe"}').verdict, 'inconclusive', '非法裁决值按 inconclusive');
     eq(parseVerdict('').verdict, 'inconclusive');
     // missing 缺口清单解析（对齐 MiniMax evaluator schema：not_met 逐条缺口）
     const nm = parseVerdict('{"verdict":"not_met","evidence":"e","missing":["缺 A","缺 B","缺 C"]}');
-    assert(Array.isArray(nm.missing) && nm.missing.length === 3 && nm.missing[0] === '缺 A', 'not_met 应解析出 missing 数组');
+    assert(Array.isArray(nm.missing) && nm.missing.length === 3 && nm.missing.includes('缺 A') && nm.missing.includes('缺 C'), 'not_met 应解析出 missing 数组');
     eq(parseVerdict('{"verdict":"met","evidence":"ok"}').missing.length, 0, 'met 无 missing 时回退空数组');
     const trunc = parseVerdict(`{"verdict":"not_met","evidence":"e","missing":["${'x'.repeat(1200)}","  ","ok"]}`);
     eq(trunc.missing.length, 2, '空串项被剔除、非字符串项被过滤');
-    eq(trunc.missing[0].length, 1000, '单条缺口截断到 1000 字符');
+    assert(trunc.missing.some((m) => m.length === 1000) && trunc.missing.includes('ok'), '单条缺口截断到 1000 字符（归一化排序后位置不固定）');
     const capped = parseVerdict(`{"verdict":"not_met","evidence":"e","missing":${JSON.stringify(Array.from({ length: 60 }, (_, i) => `g${i}`))}}`);
     eq(capped.missing.length, 50, 'missing 上限 50 条');
-    eq(parseVerdict('{"verdict":"not_met","evidence":"e"}').missing.length, 0, '缺 missing 字段也接受 verdict（保守不降级）');
+  });
+
+  await test('goal: parseVerdict 结构性校验——载荷不完整降级 inconclusive(schema_error)（对齐 MiniMax）', () => {
+    const noMissing = parseVerdict('{"verdict":"not_met","evidence":"e"}');
+    eq(noMissing.verdict, 'inconclusive', 'not_met 缺 missing 不能算数：降级而非放行');
+    eq(noMissing.code, 'schema_error', '降级应带协议层归因');
+    const noEvidence = parseVerdict('{"verdict":"met"}');
+    eq(noEvidence.verdict, 'inconclusive', 'met 无依据不能放行');
+    eq(noEvidence.code, 'schema_error');
+    eq(parseVerdict('{"verdict":"impossible"}').verdict, 'inconclusive', 'impossible 无依据同样降级');
+    const withCode = parseVerdict('{"verdict":"inconclusive","evidence":"证据不足","code":"timeout"}');
+    eq(withCode.verdict, 'inconclusive');
+    eq(withCode.code, 'timeout', '模型自带 code 原样透出供宿主归因');
+    const deduped = parseVerdict('{"verdict":"not_met","evidence":"e","missing":["a  b","a b","c","c"]}');
+    eq(deduped.missing.join('|'), 'a b|c', 'missing 归一化：空白折叠 + 去重 + 排序（对齐 MiniMax normalizeMissing）');
   });
 
   await test('goal: 续跑/收尾/验证反馈提醒文案单一事实源', () => {
