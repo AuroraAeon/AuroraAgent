@@ -103,6 +103,11 @@ export default function App() {
   const booted = useRef(false);
 
   const current = sessions.find((s) => s.id === currentId) || null;
+  // 最新会话 id 与目标视图纪元：异步回调（goal REST / getGoal / SSE goal 事件）凭此防串会话
+  // （对齐 MiniMax goal-flow 的 canProjectOperation：sequence 最新且会话未变才投影）
+  const currentIdRef = useRef<string | null>(currentId);
+  const goalViewEpochRef = useRef(0);
+  useEffect(() => { currentIdRef.current = currentId; }, [currentId]);
 
   const refreshModels = useCallback(async () => {
     setModelStatus('loading');
@@ -119,11 +124,13 @@ export default function App() {
     setCurrentId(id);
     setError('');
     setLive(null);
+    const epoch = ++goalViewEpochRef.current; // 慢响应迟到时凭纪元丢弃，不投影到已切走的会话
     try {
       const got = await getSession(id);
+      if (goalViewEpochRef.current !== epoch) return;
       setMessages(projectRecords(got.records));
       setTodos(Array.isArray(got.meta.todos) ? got.meta.todos : []);
-      getGoal(id).then((r) => setGoal(r.goal)).catch(() => setGoal(null));
+      getGoal(id).then((r) => { if (goalViewEpochRef.current === epoch) setGoal(r.goal); }).catch(() => { if (goalViewEpochRef.current === epoch) setGoal(null); });
       setPermMode(got.meta.permissionMode || 'ask_when_needed');
       setTitleMode(got.meta.titleMode || 'local');
       setPlanOn(got.meta.planMode === true);
@@ -196,7 +203,9 @@ export default function App() {
           } else if (ev.type === 'context_compression_started') setLive((l) => (l ? { ...l, compression: '正在折叠早期对话…' } : l));
           else if (ev.type === 'context_compression_completed') setLive((l) => (l ? { ...l, compression: `已折叠早期对话，保留近期 ${ev.keptRecords} 条记录` } : l));
           else if (ev.type === 'context_compression_failed') setLive((l) => (l ? { ...l, compression: null } : l));
-          else if (ev.type === 'goal_created' || ev.type === 'goal_status_changed' || ev.type === 'goal_usage_updated' || ev.type === 'goal_wait_changed') setGoal(ev.goal);
+          // goal 事件仅投影到当前会话（对齐 MiniMax goal-flow.project 的 sessionId 首行校验：
+          // 运行中切换 / 新建会话后，旧会话 turn 流仍在推送，不能污染新会话的横幅）
+          else if (ev.type === 'goal_created' || ev.type === 'goal_status_changed' || ev.type === 'goal_usage_updated' || ev.type === 'goal_wait_changed') { if (ev.sessionId === currentIdRef.current) setGoal(ev.goal); }
           else if (ev.type === 'turn_failed') setError(ev.error || '任务失败');
           // 浏览器通知（opt-in，默认关；未授权时静默跳过）
           if ((ev.type === 'turn_completed' || ev.type === 'turn_failed') && browserNotifyEnabled() && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
@@ -262,7 +271,17 @@ export default function App() {
   /** /goal 斜杠命令：解析与终端 REPL 共用 command.mjs 单一事实源；执行走 /api/agent/goal* REST 面 */
   const handleGoalCommand = (rawArgs: string) => {
     const push = (text: string) => setMessages((m) => [...m, { kind: 'notice', key: `g${Date.now()}`, text }]);
-    if (!currentId) { push('当前没有会话：请先新建或切换会话，再管理目标'); return; }
+    if (!currentId) {
+      push('当前没有会话：请先新建或切换会话，再管理目标');
+      // 对齐 MiniMax retained 语义：无会话也原样回填，会话就绪后可直接重发
+      setGoalPrefill({ text: `/goal ${rawArgs}`, nonce: Date.now() });
+      return;
+    }
+    // 命令发起时的会话与纪元：回调迟到（用户已切换 / 新建会话）时不投影，避免旧会话的
+    // 目标状态与通知落到新会话界面（对齐 MiniMax canProjectOperation）
+    const sid = currentId;
+    const epoch = goalViewEpochRef.current;
+    const stale = () => goalViewEpochRef.current !== epoch || currentIdRef.current !== sid;
     const fail = (e: unknown) => {
       // 对齐 MiniMax goal-flow 的 retained 语义：操作失败不清空用户输入，原样回填便于就地修改重发
       // onlyIfEmpty：仅当用户尚未输入新内容时恢复，避免覆盖失败等待期间新敲的文本
@@ -291,22 +310,24 @@ export default function App() {
         push('编辑目标文本后按 Enter 提交（budget=50K 可随文调整预算）');
         return;
       case 'clear':
-        clearGoal(currentId).then((r) => { setGoal(null); push(r.cleared ? '目标已移除' : '当前会话没有目标'); }).catch(fail);
+        clearGoal(sid).then((r) => { if (stale()) return; setGoal(null); push(r.cleared ? '目标已移除' : '当前会话没有目标'); }).catch(fail);
         return;
       case 'create':
         // 改写路径同样携带 budget= 与纪元快照（/goal <目标> budget=50K 对已有目标也生效）
         (unfinished
-          ? editGoal(currentId, intent.objective, intent.tokenBudget, goal ? { expectedGoalId: goal.goalId, expectedUpdatedAt: goal.updatedAt } : undefined)
-          : createGoal(currentId, intent.objective, intent.tokenBudget))
+          ? editGoal(sid, intent.objective, intent.tokenBudget, goal ? { expectedGoalId: goal.goalId, expectedUpdatedAt: goal.updatedAt } : undefined)
+          : createGoal(sid, intent.objective, intent.tokenBudget))
           .then((r) => {
+            if (stale()) return;
             setGoal(r.goal);
             push(`${unfinished ? '目标文本已更新' : '新目标已设立'}：${intent.objective}${intent.tokenBudget != null ? ` · 预算 ${intent.tokenBudget} tokens` : ''}`);
           }).catch(fail);
         return;
       case 'budget':
         if (!goal) { push('当前会话没有目标'); return; }
-        goalAction(currentId, 'budget', { tokenBudget: intent.tokenBudget, expectedGoalId: goal.goalId, expectedUpdatedAt: goal.updatedAt })
+        goalAction(sid, 'budget', { tokenBudget: intent.tokenBudget, expectedGoalId: goal.goalId, expectedUpdatedAt: goal.updatedAt })
           .then((r) => {
+            if (stale()) return;
             setGoal(r.goal);
             push(`预算已${intent.tokenBudget == null ? '清除' : `设为 ${intent.tokenBudget}`}`);
           }).catch(fail);
@@ -314,8 +335,8 @@ export default function App() {
       default: {
         // pause / resume / stop：状态迁移（回执与终端 REPL 同源；拒绝信息由服务端说清原因）
         const label = { pause: '已暂停', resume: '已恢复', stop: '已停止' }[intent.kind] || '已更新';
-        goalAction(currentId, intent.kind)
-          .then((r) => { setGoal(r.goal); push(`目标${label}：${GOAL_STATUS_LABELS[r.goal.status] || r.goal.status}`); })
+        goalAction(sid, intent.kind)
+          .then((r) => { if (stale()) return; setGoal(r.goal); push(`目标${label}：${GOAL_STATUS_LABELS[r.goal.status] || r.goal.status}`); })
           .catch(fail);
         return;
       }

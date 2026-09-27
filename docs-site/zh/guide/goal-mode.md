@@ -85,7 +85,7 @@ Goal 模式给会话挂一个**跨轮次存续的目标**：模型自主推进�
 /goal help                     # 命令帮助
 ```
 
-网页：聊天框直接输入上述命令（整段以 `/goal` 开头即被拦截，不当作普通消息发送）；view / help / 错误以系统消息回复，create 在已有未完成目标时自动转为「改写目标文本」，budget 变更携带 `expectedGoalId` + `expectedUpdatedAt` 新鲜快照。会话顶部 GoalBanner 展示状态芯片、目标内容、tokens / 轮次 / live 时长、预算上限、最近验证结论（`not_met` 附前 2 条 `missing` 缺口，超出记 `+N`）与随状态裁剪的操作提示；`active` 且等待授权 / 验证时芯片改用等待标签（对齐 MiniMax goalPresentation），目标转 `complete` 时横幅隐藏、消息流贴一条同源完成回执。暂停 / 恢复 / 停止即点即走。
+网页：聊天框直接输入上述命令（整段以 `/goal` 开头即被拦截，不当作普通消息发送）；**生成中（模型仍在输出）同样可以输入**——`/goal` 家族命令不经普通消息通道，直走 goal REST（与 turn 单活门控互不阻塞），运行中抬高预算防触顶、暂停自动续跑、改写目标文本都是在飞场景的对齐能力（对齐 MiniMax command-flow：catalog 命令在 turn 运行中直接 dispatch）；命令操作的异步回调带会话归属校验，运行中切换 / 新建会话不会把旧会话的目标状态带到新会话界面；view / help / 错误以系统消息回复，create 在已有未完成目标时自动转为「改写目标文本」，budget 变更携带 `expectedGoalId` + `expectedUpdatedAt` 新鲜快照。会话顶部 GoalBanner 展示状态芯片、目标内容、tokens / 轮次 / live 时长、预算上限、最近验证结论（`not_met` 附前 2 条 `missing` 缺口，超出记 `+N`）与随状态裁剪的操作提示；`active` 且等待授权 / 验证时芯片改用等待标签（对齐 MiniMax goalPresentation），目标转 `complete` 时横幅隐藏、消息流贴一条同源完成回执。暂停 / 恢复 / 停止即点即走。
 
 REST 面对应 `GET /api/agent/goal/:id`、`POST /api/agent/goal`（创建，未完成目标存在时 409 `GOAL_STATUS_CONFLICT`）、`POST /api/agent/goal/edit`（改写，空白 400 `GOAL_BAD_OBJECTIVE`，已完成 409）、`POST /api/agent/goal/clear`（幂等移除，回 `{cleared}`）与 `POST /api/agent/goal/{pause,resume,stop,budget}`。
 

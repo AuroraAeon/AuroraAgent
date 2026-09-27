@@ -361,13 +361,17 @@ export function Composer({
 
   const submit = () => {
     const t = text.trim();
-    if (!t || busy || disabled) return;
-    // /goal 家族命令走共享解析器（与终端 REPL 同一份 command.mjs 语义），不进普通消息通道
+    if (!t || disabled) return;
+    // /goal 家族命令走共享解析器（与终端 REPL 同一份 command.mjs 语义），不进普通消息通道。
+    // busy 放行（对齐 MiniMax command-flow：catalog 命令在 turn 运行中直接 dispatch）——目标管理
+    // 本就是运行中场景：抬高预算防触顶、暂停自动续跑、改写目标文本（服务端 goal REST 与
+    // turn 单活门控互不阻塞，在飞模型下一轮即收到【目标已更新】/ 预算快照）
     if (/^\/goal(\s|$)/.test(t) && onGoalCommand) {
       onGoalCommand(t.slice('/goal'.length).trim());
       setText('');
       return;
     }
+    if (busy) return;
     onSend(t);
     setText('');
   };
@@ -507,7 +511,7 @@ export function Composer({
         </div>
       </div>
       <p className="composer-hint">
-        Enter 发送，Shift+Enter 换行 · 生成中可按 Esc 或点停止中断，已生成内容会保留 · 文件与命令工具经授权后在工作目录内执行
+        Enter 发送，Shift+Enter 换行 · 生成中可按 Esc 或点停止中断，已生成内容会保留 · 生成中可输入 /goal 管理目标（改预算 / 暂停 / 改写目标文本）· 文件与命令工具经授权后在工作目录内执行
       </p>
     </div>
   );

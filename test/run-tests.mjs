@@ -1595,7 +1595,7 @@ try {
     assert(app.includes("ev.type === 'goal_created'") && app.includes('setGoal(ev.goal)'), 'App 应处理四类 goal 事件');
     assert(app.includes('goalAction(currentId, action)') && app.includes('onGoalAction={decideGoal}'), 'App 应接线目标动作回传');
     assert(app.includes('handleGoalCommand') && app.includes('onGoalCommand={handleGoalCommand}'), 'App 应接线 /goal 命令处理');
-    assert(app.includes('parseGoalCommand(rawArgs)') && app.includes('createGoal(currentId'), 'App 应走共享解析器并区分创建与改写');
+    assert(app.includes('parseGoalCommand(rawArgs)') && app.includes('createGoal(sid') && app.includes('editGoal(sid'), 'App 应走共享解析器并区分创建与改写');
     assert(app.includes("kind: 'notice'") && !app.includes("kind: 'system', key: `g"), 'goal 命令输出应走 notice 消息（不套压缩摘要前缀）');
     assert(app.includes('onlyIfEmpty: true') && app.includes('输入已保留'), 'goal 命令失败应原样回填用户输入（对齐 MiniMax goal-flow 的 retained 语义）');
     assert(app.includes('当前没有会话'), '无会话时 goal 命令应给出提示而非静默（对齐 MiniMax 的 session 缺失告警）');
@@ -1603,6 +1603,11 @@ try {
     assert(app.includes('编辑目标文本后按 Enter 提交'), '/goal edit 回填后应给出操作提示（对齐 MiniMax setHint）');
     assert(/open = parts\.findIndex\(\(p\) => p\.kind === 'tool' && p\.id === ev\.toolId && p\.phase !== 'done'/.test(app), '流式 tool_event 同 id 多调用应优先更新未完结卡片（上游复用 id 不顶掉已完结调用）');
     assert(app.includes('else if (idx < 0) parts.push(view)'), '重复完成事件不得重复补卡（同 id 前一个调用已完结时忽略）');
+    assert(app.includes('ev.sessionId === currentIdRef.current') && app.includes('if (ev.sessionId === currentIdRef.current) setGoal(ev.goal)'), 'SSE goal 事件应校验会话归属（对齐 MiniMax goal-flow.project 首行 sessionId 校验）');
+    assert(app.includes('const stale = () => goalViewEpochRef.current !== epoch || currentIdRef.current !== sid;'), 'goal 命令回调应捕获发起时会话与纪元（对齐 MiniMax canProjectOperation）');
+    assert(app.split('if (stale()) return;').length - 1 >= 4, 'goal 命令四类异步回调（clear / create / budget / pause·resume·stop）应依次防串会话');
+    assert(app.includes('const epoch = ++goalViewEpochRef.current;') && app.includes('if (goalViewEpochRef.current !== epoch) return;'), 'openSession 迟到响应应凭纪元丢弃（快切会话不投影旧会话内容）');
+    assert(/当前没有会话[\s\S]{0,240}setGoalPrefill/.test(app), '无会话时 goal 命令应原样回填草稿（对齐 MiniMax retained 语义）');
     const msg = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Message.tsx'), 'utf8');
     assert(msg.includes("msg.kind === 'notice'") && msg.includes('row-notice'), 'Message 应渲染 notice 行');
     assert(/msg\.kind === 'notice'[\s\S]{0,200}\{msg\.text\}/.test(msg), 'notice 行应直出文本（不套压缩摘要前缀）');
@@ -1613,6 +1618,10 @@ try {
     assert(composerSrc.includes('goalPrefill') && composerSrc.includes('lastPrefillNonce'), 'Composer 应支持 edit 回填（nonce 去重）');
     assert(composerSrc.includes('Enter 不拦截，落到下方统一提交'), '技能调色板无匹配时不应吞掉 /goal 命令的 Enter');
     assert(composerSrc.includes('onlyIfEmpty'), 'Composer 回填应支持 onlyIfEmpty（失败保留不覆盖新输入）');
+    const goalCmdIdx = composerSrc.indexOf('/^\\/goal(\\s|$)/.test(t) && onGoalCommand');
+    const busyGuardIdx = composerSrc.indexOf('if (busy) return;');
+    assert(goalCmdIdx >= 0 && busyGuardIdx > goalCmdIdx, 'Composer 应放行 /goal 命令穿越 busy（对齐 MiniMax：catalog 命令在 turn 运行中直接 dispatch）');
+    assert(composerSrc.includes('生成中可输入 /goal 管理目标'), 'Composer 提示应告知生成中可管理目标');
     const api = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'api.ts'), 'utf8');
     assert(api.includes('/api/agent/goal/${sessionId}') && api.includes('/api/agent/goal/${action}'), 'api 客户端应覆盖 goal 读与动作');
     assert(api.includes('createGoal') && api.includes('editGoal') && api.includes('clearGoal'), 'api 客户端应覆盖设立 / 改写 / 移除');
