@@ -74,7 +74,7 @@ export default function App() {
   const [live, setLive] = useState<LiveTurn | null>(null);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [goal, setGoal] = useState<GoalState | null>(null);
-  const [goalPrefill, setGoalPrefill] = useState({ text: '', nonce: 0 });
+  const [goalPrefill, setGoalPrefill] = useState<{ text: string; nonce: number; onlyIfEmpty?: boolean }>({ text: '', nonce: 0 });
   const [permMode, setPermMode] = useState('ask_when_needed');
   const [titleMode, setTitleMode] = useState('local');
   const [planOn, setPlanOn] = useState(false);
@@ -249,9 +249,14 @@ export default function App() {
 
   /** /goal 斜杠命令：解析与终端 REPL 共用 command.mjs 单一事实源；执行走 /api/agent/goal* REST 面 */
   const handleGoalCommand = (rawArgs: string) => {
-    if (!currentId) return;
     const push = (text: string) => setMessages((m) => [...m, { kind: 'notice', key: `g${Date.now()}`, text }]);
-    const fail = (e: unknown) => setError(`目标操作失败：${e instanceof Error ? e.message : String(e)}`);
+    if (!currentId) { push('当前没有会话：请先新建或切换会话，再管理目标'); return; }
+    const fail = (e: unknown) => {
+      // 对齐 MiniMax goal-flow 的 retained 语义：操作失败不清空用户输入，原样回填便于就地修改重发
+      // onlyIfEmpty：仅当用户尚未输入新内容时恢复，避免覆盖失败等待期间新敲的文本
+      setGoalPrefill({ text: `/goal ${rawArgs}`, nonce: Date.now(), onlyIfEmpty: true });
+      setError(`目标操作失败：${e instanceof Error ? e.message : String(e)}（输入已保留，可修改后重发）`);
+    };
     const intent = parseGoalCommand(rawArgs);
     // 有未完成目标时「设立」语义变为「改写目标文本」（与 MiniMax 客户端 setObjective 一致；创建的严格 409 由服务端守）
     const unfinished = goal !== null && goal.status !== 'complete';
@@ -271,6 +276,7 @@ export default function App() {
       case 'edit':
         if (!goal) { push('当前会话没有目标'); return; }
         setGoalPrefill({ text: `/goal ${goal.objective}`, nonce: Date.now() });
+        push('编辑目标文本后按 Enter 提交（budget=50K 可随文调整预算）');
         return;
       case 'clear':
         clearGoal(currentId).then((r) => { setGoal(null); push(r.cleared ? '目标已移除' : '当前会话没有目标'); }).catch(fail);

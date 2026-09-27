@@ -293,8 +293,8 @@ type Props = {
   onSend: (text: string) => void;
   /** /goal 斜杠命令：整段以 /goal 开头时拦截，交 App 走共享解析器（不当作普通消息发送） */
   onGoalCommand?: (rawArgs: string) => void;
-  /** /goal edit 回填：nonce 变化即写入输入框并聚焦（续编目标文本） */
-  goalPrefill?: { text: string; nonce: number };
+  /** /goal edit 回填：nonce 变化即写入输入框并聚焦（续编目标文本）；onlyIfEmpty 仅空输入框时恢复（失败保留语义） */
+  goalPrefill?: { text: string; nonce: number; onlyIfEmpty?: boolean };
   onStop: () => void;
   models: ModelInfo[];
   modelStatus: string;
@@ -373,11 +373,12 @@ export function Composer({
   };
 
   // /goal edit 回填：nonce 是每次回填的递增令牌，重复渲染不会覆盖用户正在输入的内容
+  // onlyIfEmpty（失败保留）：仅当输入框已清空时恢复原命令，不覆盖失败等待期间新敲的内容
   const lastPrefillNonce = useRef(0);
   useEffect(() => {
     if (goalPrefill && goalPrefill.nonce !== lastPrefillNonce.current) {
       lastPrefillNonce.current = goalPrefill.nonce;
-      setText(goalPrefill.text);
+      setText((prev) => (goalPrefill.onlyIfEmpty && prev.trim() ? prev : goalPrefill.text));
       taRef.current?.focus();
     }
   }, [goalPrefill]);
