@@ -15,11 +15,43 @@ export type AgentEvent =
   | { type: 'context_compression_started'; sessionId: string; turnId: string; headRecords: number }
   | { type: 'context_compression_completed'; sessionId: string; turnId: string; keptRecords: number }
   | { type: 'context_compression_failed'; sessionId: string; turnId: string; error: string }
+  | { type: 'goal_created'; sessionId: string; goal: GoalState }
+  | { type: 'goal_status_changed'; sessionId: string; goal: GoalState; statusReason: string | null; lastVerification: GoalVerification | null }
+  | { type: 'goal_usage_updated'; sessionId: string; goal: GoalState }
+  | { type: 'goal_wait_changed'; sessionId: string; goal: GoalState; reason: string | null }
   | { type: 'turn_completed'; sessionId: string; turnId: string; totalRounds: number; totalTools: number; durationMs: number; finishReason: string }
   | { type: 'turn_cancelled'; sessionId: string; turnId: string }
   | { type: 'turn_failed'; sessionId: string; turnId: string; error: string; round?: number };
 
 export type Harness = { id: string; label: string; summary: string; tools: string[]; maxRounds: number };
+
+
+/** 会话目标（与 util/agent/goal/types.mjs 六态状态机一一对应） */
+export type GoalStatus = 'active' | 'paused' | 'blocked' | 'complete' | 'budget_limited' | 'usage_limited';
+export type GoalVerification = { verdict: 'met' | 'not_met' | 'impossible' | 'unavailable' | 'inconclusive'; at: number; evidence: string; notMetStreak?: number };
+export type GoalState = {
+  goalId: string; sessionId: string; objective: string; status: GoalStatus;
+  createdAt: number; updatedAt: number;
+  tokensUsed: number; turnsUsed: number; timeUsedSeconds: number; tokenBudget: number | null;
+  noProgressStreak: number; noToolStreak: number; replyFingerprint: string | null;
+  lastVerification: GoalVerification | null; lastWorkerProposal: { status?: string; summary?: string; at?: number } | null;
+  statusReason: string | null;
+  executionWait: { reason: 'permission' | 'plan' | 'verification' | 'unknown'; sinceMs: number } | null;
+};
+
+/** 状态 / 等待中文文案（后端单一事实源的前端镜像，用于展示） */
+export const GOAL_STATUS_LABELS: Record<GoalStatus, string> = {
+  active: '进行中', paused: '已暂停', blocked: '受阻', complete: '已完成', budget_limited: '预算耗尽', usage_limited: '用量受限',
+};
+export const GOAL_WAIT_LABELS: Record<string, string> = {
+  permission: '等待授权', plan: '等待计划批准', verification: '独立验证中', unknown: '等待中',
+};
+/** 与后端 canTransition 同语义的用户面可用动作（complete / budget_limited 不给恢复入口） */
+export function goalActionsFor(status: GoalStatus): ('pause' | 'resume' | 'stop')[] {
+  if (status === 'active') return ['pause', 'stop'];
+  if (status === 'paused' || status === 'blocked' || status === 'usage_limited') return ['resume', 'stop'];
+  return [];
+}
 
 export type SessionMeta = {
   id: string; name: string; model: string; provider: string; harness: string; workspace: string;

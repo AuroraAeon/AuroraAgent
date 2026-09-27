@@ -1,5 +1,5 @@
 /** API 客户端：全部走 web.mjs 的同源 /api/*；turn 用 fetch 读 SSE（EventSource 不支持 POST） */
-import type { AgentEvent, Harness, McpServerRow, ModelInfo, ProviderRow, SessionMeta, SessionRecord, SettingsInfo, SkillRow } from './types';
+import type { AgentEvent, GoalState, Harness, McpServerRow, ModelInfo, ProviderRow, SessionMeta, SessionRecord, SettingsInfo, SkillRow } from './types';
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(path, {
@@ -39,6 +39,9 @@ export const respondPermission = (requestId: string, decision: 'allow' | 'deny' 
 export const respondPlan = (sessionId: string, decision: 'approve' | 'reject') =>
   api<{ ok: boolean }>('/api/agent/plan', { method: 'POST', body: JSON.stringify({ sessionId, decision }) });
 export const abortTurn = (sessionId: string) => api<{ aborted: boolean }>('/api/agent/abort', { method: 'POST', body: JSON.stringify({ sessionId }) });
+export const getGoal = (sessionId: string) => api<{ goal: GoalState | null }>(`/api/agent/goal/${sessionId}`);
+export const goalAction = (sessionId: string, action: 'pause' | 'resume' | 'stop') =>
+  api<{ goal: GoalState }>(`/api/agent/goal/${action}`, { method: 'POST', body: JSON.stringify({ sessionId }) });
 
 /** 跑一个 turn：逐事件回调，流结束即 resolve */
 export async function runTurn(body: { sessionId: string; input: string; thinking?: boolean; model?: string; provider?: string }, onEvent: (ev: AgentEvent) => void): Promise<void> {

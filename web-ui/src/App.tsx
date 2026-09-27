@@ -9,10 +9,10 @@ import { Composer } from './components/Composer';
 import { SettingsDialog } from './components/SettingsDialog';
 import { projectRecords } from './projection';
 import {
-  abortTurn, createSession, deleteSession, getSession, getSettings, listHarnesses, listModels, listSkills,
+  abortTurn, createSession, deleteSession, getGoal, getSession, getSettings, goalAction, listHarnesses, listModels, listSkills,
   listProviders, listSessions, patchSession, respondPermission, respondPlan, runTurn,
 } from './api';
-import type { AgentEvent, Harness, LiveTurn, ModelInfo, MsgView, PlanView, ProviderRow, SessionMeta, SettingsInfo, TodoItem, ToolView, SkillRow } from './types';
+import type { AgentEvent, GoalState, Harness, LiveTurn, ModelInfo, MsgView, PlanView, ProviderRow, SessionMeta, SettingsInfo, TodoItem, ToolView, SkillRow } from './types';
 
 const planView = (text: string, decided: PlanView['decided']): PlanView => ({ text, decided });
 import { IconAlert, IconClose } from './icons';
@@ -60,6 +60,7 @@ export default function App() {
   const [messages, setMessages] = useState<MsgView[]>([]);
   const [live, setLive] = useState<LiveTurn | null>(null);
   const [todos, setTodos] = useState<TodoItem[]>([]);
+  const [goal, setGoal] = useState<GoalState | null>(null);
   const [permMode, setPermMode] = useState('ask_when_needed');
   const [titleMode, setTitleMode] = useState('local');
   const [planOn, setPlanOn] = useState(false);
@@ -96,6 +97,7 @@ export default function App() {
       const got = await getSession(id);
       setMessages(projectRecords(got.records));
       setTodos(Array.isArray(got.meta.todos) ? got.meta.todos : []);
+      getGoal(id).then((r) => setGoal(r.goal)).catch(() => setGoal(null));
       setPermMode(got.meta.permissionMode || 'ask_when_needed');
       setTitleMode(got.meta.titleMode || 'local');
       setPlanOn(got.meta.planMode === true);
@@ -168,6 +170,7 @@ export default function App() {
           } else if (ev.type === 'context_compression_started') setLive((l) => (l ? { ...l, compression: '正在折叠早期对话…' } : l));
           else if (ev.type === 'context_compression_completed') setLive((l) => (l ? { ...l, compression: `已折叠早期对话，保留近期 ${ev.keptRecords} 条记录` } : l));
           else if (ev.type === 'context_compression_failed') setLive((l) => (l ? { ...l, compression: null } : l));
+          else if (ev.type === 'goal_created' || ev.type === 'goal_status_changed' || ev.type === 'goal_usage_updated' || ev.type === 'goal_wait_changed') setGoal(ev.goal);
           else if (ev.type === 'turn_failed') setError(ev.error || '任务失败');
         },
       );
@@ -208,6 +211,16 @@ export default function App() {
     }
     // 乐观更新：服务端会随即推进并推送 plan_approved / plan_rejected 校正
     setLive((l) => (l && l.plan ? { ...l, plan: { ...l.plan, decided: decision === 'approve' ? 'approved' : 'rejected' } } : l));
+  };
+
+  const decideGoal = async (action: 'pause' | 'resume' | 'stop') => {
+    if (!currentId) return;
+    try {
+      const r = await goalAction(currentId, action);
+      setGoal(r.goal); // 以服务端结算为准（含纪元与状态校验的拒绝信息）
+    } catch (e) {
+      setError(`目标操作失败：${e instanceof Error ? e.message : String(e)}`);
+    }
   };
 
   const changePermMode = async (mode: string) => {
@@ -327,6 +340,8 @@ export default function App() {
           onDecidePlan={decidePlan}
           onPick={send}
           todos={todos}
+          goal={goal}
+          onGoalAction={decideGoal}
         />
         <Composer
           busy={busy}

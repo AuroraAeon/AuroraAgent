@@ -4,10 +4,11 @@ import { Message, ThinkingBlock } from './Message';
 import { Markdown } from '../markdown';
 import { ToolCard } from './ToolCard';
 import { TodoPanel } from './Todo';
+import { GoalBanner } from './GoalBanner';
 import { PlanCard } from './PlanCard';
 import { fmtCostYen } from '../projection';
 import { IconSpark } from '../icons';
-import type { LiveTurn, MsgView, TodoItem } from '../types';
+import type { GoalState, LiveTurn, MsgView, TodoItem } from '../types';
 
 const SUGGESTIONS = [
   '看看工作目录里有什么文件',
@@ -64,9 +65,11 @@ type Props = {
   onPick: (text: string) => void;
   todos: TodoItem[];
   onDecidePlan?: (decision: 'approve' | 'reject') => void;
+  goal?: GoalState | null;
+  onGoalAction?: (action: 'pause' | 'resume' | 'stop') => void;
 };
 
-export function ChatView({ messages, live, hasSession, onDecide, onPick, todos, onDecidePlan }: Props) {
+export function ChatView({ messages, live, hasSession, onDecide, onPick, todos, onDecidePlan, goal, onGoalAction }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' });
@@ -85,6 +88,7 @@ export function ChatView({ messages, live, hasSession, onDecide, onPick, todos, 
   if (!messages.length && !live) {
     return (
       <div className="chat-scroll">
+        {goal && onGoalAction ? <GoalBanner goal={goal} onAction={onGoalAction} /> : null}
         <div className="chat-empty">
           <div className="empty-mark"><IconSpark size={26} /></div>
           <h1>这个会话还是空的</h1>
@@ -102,6 +106,7 @@ export function ChatView({ messages, live, hasSession, onDecide, onPick, todos, 
   return (
     <div className="chat-scroll" id="chatScroll">
       <div className="chat-inner">
+        {goal && onGoalAction ? <GoalBanner goal={goal} onAction={onGoalAction} /> : null}
         <TodoPanel todos={todos} />
         {messages.map((m) => <Message key={m.key} msg={m} onDecide={onDecide} />)}
         {live ? <LiveRow live={live} onDecide={onDecide} onDecidePlan={onDecidePlan} /> : null}

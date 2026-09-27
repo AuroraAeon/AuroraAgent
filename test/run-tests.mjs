@@ -1418,6 +1418,28 @@ try {
     const types = readFileSync(join(__dirname, '..', 'util', 'agent', 'goal', 'types.mjs'), 'utf8');
     assert(types.includes('GOAL_WAIT_LABELS'), 'goal 类型模块应有等待原因文案表');
   });
+  await test('Goal 前端接线源码契约：GoalBanner、四类事件联合类型与产物同步', async () => {
+    const types = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'types.ts'), 'utf8');
+    for (const t of ["type: 'goal_created'", "type: 'goal_status_changed'", "type: 'goal_usage_updated'", "type: 'goal_wait_changed'"]) {
+      assert(types.includes(t), `前端事件类型应声明 ${t}`);
+    }
+    assert(types.includes('GoalStatus') && types.includes('goalActionsFor'), '前端应有 Goal 状态类型与动作裁剪函数');
+    const banner = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'GoalBanner.tsx'), 'utf8');
+    assert(banner.includes('goalbanner-chip') && banner.includes('GOAL_STATUS_LABELS[goal.status]'), '横幅应有状态芯片');
+    assert(banner.includes('goalActionsFor(goal.status)'), '横幅动作应按状态裁剪');
+    assert(banner.includes('tokenBudget != null'), '横幅应展示预算上限');
+    assert(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(banner), 'GoalBanner 零 emoji 铁律');
+    const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
+    assert(app.includes("ev.type === 'goal_created'") && app.includes('setGoal(ev.goal)'), 'App 应处理四类 goal 事件');
+    assert(app.includes('goalAction(currentId, action)') && app.includes('onGoalAction={decideGoal}'), 'App 应接线目标动作回传');
+    const cv = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ChatView.tsx'), 'utf8');
+    assert(cv.includes('<GoalBanner goal={goal}'), 'ChatView 应挂载目标横幅');
+    const api = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'api.ts'), 'utf8');
+    assert(api.includes('/api/agent/goal/${sessionId}') && api.includes('/api/agent/goal/${action}'), 'api 客户端应覆盖 goal 读与三个动作');
+    const html = await (await fetch(`${BASE}/`)).text();
+    const js = await (await fetch(`${BASE}${/\/app\/assets\/[A-Za-z0-9._-]+\.js/.exec(html)[0]}`)).text();
+    assert(js.includes('goalbanner'), '构建产物应含目标横幅（改了 web-ui 忘了 build:web 会红）');
+  });
   await test('流式活动状态行源码契约：轮次 / 工具数 / 计时与费用行统一', () => {
     const cv = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ChatView.tsx'), 'utf8');
     assert(cv.includes('live-status') && cv.includes('useElapsed') && cv.includes('第 {live.round || 1} 轮'), '流式行应有活动状态（轮次 / 工具 / 计时）');
