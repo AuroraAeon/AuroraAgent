@@ -1622,6 +1622,9 @@ try {
     const busyGuardIdx = composerSrc.indexOf('if (busy) return;');
     assert(goalCmdIdx >= 0 && busyGuardIdx > goalCmdIdx, 'Composer 应放行 /goal 命令穿越 busy（对齐 MiniMax：catalog 命令在 turn 运行中直接 dispatch）');
     assert(composerSrc.includes('生成中可输入 /goal 管理目标'), 'Composer 提示应告知生成中可管理目标');
+    // turn 收尾刷新：notice（/goal 命令回执）只存在于本地、不在服务端转录里，整体替换会把它冲掉，
+    // 「生成中可管理目标」就收不到任何反馈；同时按会话守卫，避免旧 turn 投影写进已切走的会话
+    assert(app.includes('currentIdRef.current === cur.id') && app.includes("prev.filter((m) => m.kind === 'notice')"), 'turn 收尾刷新应保留本地 notice 并按会话守卫');
     const api = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'api.ts'), 'utf8');
     assert(api.includes('/api/agent/goal/${sessionId}') && api.includes('/api/agent/goal/${action}'), 'api 客户端应覆盖 goal 读与动作');
     assert(api.includes('createGoal') && api.includes('editGoal') && api.includes('clearGoal'), 'api 客户端应覆盖设立 / 改写 / 移除');

@@ -221,8 +221,14 @@ export default function App() {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       try {
-        const got = await getSession(cur.id);
-        setMessages(projectRecords(got.records));
+        // 运行中切换 / 新建会话后，旧 turn 的收尾刷新不得把旧会话投影写进新会话界面
+        // （与 SSE goal 事件的 sessionId 校验同一道防线，对齐 MiniMax canProjectOperation）
+        if (currentIdRef.current === cur.id) {
+          const got = await getSession(cur.id);
+          // notice（/goal 命令回执、goal 事件凭据）只存在于本地、不在服务端转录里：
+          // 整体替换会把它们冲掉，「生成中可管理目标」于是收不到任何反馈。保留 notice 追加在投影之后
+          setMessages((prev) => [...projectRecords(got.records), ...prev.filter((m) => m.kind === 'notice')]);
+        }
         setSessions(await listSessions());
       } catch { /* 刷新失败保留当前界面 */ }
       setBusy(false);
