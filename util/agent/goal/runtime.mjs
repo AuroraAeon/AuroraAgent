@@ -17,7 +17,7 @@ import { CREATE_GOAL_DEF, UPDATE_GOAL_DEF, GET_GOAL_DEF, resolveUpdateGoalMode }
 import { applyUsage, budgetBreach, rearmAfterBudgetRaise } from './budget.mjs';
 import { advanceBreakers } from './breaker.mjs';
 import { goalLimits, parseGoalConfig } from './config.mjs';
-import { GOAL_WRAPUP_NOTE, goalContinuationNote, goalObjectiveUpdatedNote, goalVerifierFeedbackNote } from './continuation.mjs';
+import { GOAL_WRAPUP_NOTE, goalContinuationNote, goalObjectiveUpdatedNote, goalTurnStartNote, goalVerifierFeedbackNote } from './continuation.mjs';
 import { verifyGoalProposal, sameMissingSet } from './verification.mjs';
 
 export { GOAL_WRAPUP_NOTE };
@@ -141,6 +141,9 @@ export function createGoalRuntime({
     createdThisTurn = false;
     pendingProposal = null;
     seenObjective = goalActiveAtStart ? cur.objective : null;
+    // 活跃目标在新用户轮首轮即重述（跨轮压缩失忆防护 + 每 5 轮状态审计）；
+    // 无目标 / 非 active 返回 null，正常 turn 行为不变
+    return goalActiveAtStart ? goalTurnStartNote(cur) : null;
   };
 
   /**

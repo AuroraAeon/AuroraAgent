@@ -69,6 +69,10 @@ export function startMock(port = 18901) {
         // USE_GOAL_EDIT：用户在 turn 进行中经网页改写目标文本——mock 同步代打 REST edit
         // （落盘必须早于宿主对下一轮的结算，在飞模型才能收到【目标已更新】）；只改写一次
         const isGoalEditRound = body.includes('USE_GOAL_EDIT') && lastToolText.includes('目标已创建') && !state.goalEditDone;
+        // GOAL_TURN2：上一轮遗留的 active 目标，新用户轮首轮必须重述（【进行中的目标】）——
+        // mock 只见到重述才调 read_file 佐证；续跑轮（【目标续跑】在场）才提案完成
+        const isGoalTurn2Read = body.includes('GOAL_TURN2') && !hasToolResult && body.includes('【进行中的目标】');
+        const isGoalTurn2Proposal = body.includes('GOAL_TURN2') && body.includes('【目标续跑】');
         if (isGoalEditRound) {
           state.goalEditDone = true;
           const editSid = /USE_GOAL_EDIT:([0-9a-f-]{36})/.exec(body)?.[1];
@@ -88,8 +92,9 @@ export function startMock(port = 18901) {
         const isGoalProposalRound = !isGoalWrapUp && !isGoalIdleRound && !isGoalEditRound && (
           lastToolText.includes('目标已创建')
           || (body.includes('【目标验证未通过') && lastToolText.includes('已记录'))
+          || isGoalTurn2Proposal
         );
-        const isToolRound = (((lastText.includes('USE_TOOL') || isSkillRound || isTodoRound || isEditRound || isSwarmRound || isMcpRound) && !hasToolResult) || isGoalCreateRound || isGoalProposalRound);
+        const isToolRound = (((lastText.includes('USE_TOOL') || isSkillRound || isTodoRound || isEditRound || isSwarmRound || isMcpRound) && !hasToolResult) || isGoalCreateRound || isGoalTurn2Read || isGoalProposalRound);
         // 会话标题生成请求（titleMode=model）：系统提示带【会话标题生成】标记，回一个固定标题供断言
         const isTitleRound = body.includes('【会话标题生成】');
         const toolName = isGoalCreateRound ? 'create_goal' : isGoalProposalRound ? 'update_goal' : isSkillRound ? 'skill' : isTodoRound ? 'todo' : isEditRound ? 'edit_file' : isSwarmRound ? 'task' : isMcpRound ? 'mcp__mock__echo' : lastText.includes('USE_TOOL_WRITE') ? 'write_file' : 'read_file';

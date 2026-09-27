@@ -2541,6 +2541,34 @@ await test('Agent turn：USE_GOAL_EDIT turn 内改写目标——在飞模型下
   assert(all.at(-1).type === 'turn_completed', '应以 turn_completed 收尾');
 });
 
+await test('Agent turn：GOAL_TURN2 新用户轮首轮重述进行中目标（跨轮压缩失忆防护）', async () => {
+  const s = await createAgentSession();
+  const created = await (await fetch(`${AGENT}/goal`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, objective: 'GOAL_TURN2 把 README 安装章节改写并通过自检' }),
+  })).json();
+  eq(created.goal.status, 'active');
+  const ws = join(tmpDataDir, 'workspace');
+  mkdirSync(ws, { recursive: true });
+  writeFileSync(join(ws, 'mock.txt'), 'MOCK_FILE_OK');
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'GOAL_TURN2 请继续推进目标' }),
+  });
+  const all = await drainAgentStream(openAgentStream(resp));
+  const startReq = mock.state.requests.find((r) => r.body.includes('GOAL_TURN2') && r.body.includes('【进行中的目标】'));
+  assert(startReq, '新用户轮首轮应重述进行中目标');
+  assert(startReq.body.includes('GOAL_TURN2 把 README 安装章节改写并通过自检') && startReq.body.includes('<objective>'), '重述应带目标文本并按 XML 包裹');
+  assert(all.find((e) => e.type === 'tool_event' && e.toolName === 'read_file' && e.phase === 'completed'), '见到重述后模型才调工具（mock 脚本佐证）');
+  assert(mock.state.requests.some((r) => r.body.includes('GOAL_TURN2') && r.body.includes('【目标续跑】')), '空转后应注入续跑提醒');
+  const changed = all.find((e) => e.type === 'goal_status_changed' && e.goal.status === 'complete');
+  assert(changed, '续跑后应结算完成');
+  eq(changed.statusReason, 'complete(worker_proposal)');
+  const goalFile = JSON.parse(readFileSync(join(tmpDataDir, 'goals', `${s.id}.json`), 'utf8'));
+  eq(goalFile.status, 'complete');
+  assert(all.at(-1).type === 'turn_completed', '应以 turn_completed 收尾');
+});
+
 await test('Agent turn：USE_GOAL_VERIFY_MET 经 evaluator 裁决 met → complete(verifier_met)', async () => {
   // goal 验证档配置落临时数据目录（evaluator 同路由小快模型）
   writeFileSync(join(tmpDataDir, 'auroraagent.config.json'), JSON.stringify({ goal: { verification: 'evaluator', evaluatorModel: 'LongCat-2.0' } }));

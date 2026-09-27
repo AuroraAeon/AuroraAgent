@@ -63,6 +63,8 @@ Adapted to the single-SSE-turn model with no queue subsystem: within a turn, whe
 
 Rewriting the objective mid-turn (web `/goal edit` / Composer or REST) does not leave the in-flight model in the dark: its next round receives a "Goal updated" reminder — the new objective is wrapped as untrusted data (`<untrusted_objective>`) with a budget snapshot (used / cap / remaining, `unlimited` when uncapped) — so it adjusts course instead of continuing work that only served the old objective. A pending terminal proposal for the old objective is discarded at the same time (mirrors MiniMax `renderObjectiveUpdatedPrompt` and binding-staleness cancellation).
 
+An active goal is also re-stated in the first round of every user turn (mirrors MiniMax admitting each turn with `continuationBody`): after context compaction evicts the `create_goal` tool call, the model still knows what it is pursuing in a fresh user turn. Every five goal rounds carry a scheduled status audit (mirrors MiniMax `reminder-policy` terminal-audit) that re-evaluates completion / blocked against current evidence, so the goal cannot drift forever without a proposal.
+
 ## User-side operations
 
 The terminal and the web Composer share one `/goal` parser (`util/agent/goal/command.mjs`, the single source of truth, mirroring MiniMax-code's `thread-goal-command`), so both clients behave identically:

@@ -301,7 +301,7 @@ export async function runAgentTurn(ctx) {
     return calls;
   };
 
-  goalRt?.beginTurn();
+  const goalStartNote = goalRt?.beginTurn() || null; // 活跃目标的新用户轮首轮重述（压缩失忆防护 + 审计）
 
   try {
     // —— 计划阶段：只读 / 检索 / 待办工具产出计划，用户批准后才进入执行 ——
@@ -340,7 +340,7 @@ export async function runAgentTurn(ctx) {
 
     // —— 执行阶段：完整工具集（计划批准后计划文本作为既定契约已在上下文中）——
     const execToolNames = [...new Set([...harness.tools, ...(skills.length ? ['skill'] : []), ...allTools.map((t) => t.name)])];
-    let goalNote = ''; // goal 续跑 / 验证反馈提醒：只带一轮（runRound 消费后即清）
+    let goalNote = goalStartNote || ''; // goal 轮首重述 / 续跑 / 验证反馈提醒：只带一轮（runRound 消费后即清）
     for (round = round + 1; round <= harness.maxRounds; round++) {
       const roundT0 = Date.now();
       const r = await runRound({ toolNames: execToolNames, extraSystem: goalNote });

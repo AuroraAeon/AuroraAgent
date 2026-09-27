@@ -65,6 +65,8 @@ Goal 模式给会话挂一个**跨轮次存续的目标**：模型自主推进�
 
 在 turn 进行中改写目标文本（网页 `/goal edit` / Composer 或 REST）时，在飞模型不会蒙在鼓里：下一轮即收到【目标已更新】提醒——新目标按不可信数据包裹（`<untrusted_objective>`）并附预算快照（已用 / 上限 / 剩余，无预算记 `unlimited`），模型据此调整方向，不再继续只为旧目标服务的工作；针对旧目标提出的待定终态提案同时作废（对齐 MiniMax `renderObjectiveUpdatedPrompt` 与绑定失配取消语义）。
 
+活跃目标在每次用户轮的首轮即重述（对齐 MiniMax 每轮准入注入 `continuationBody`）：上下文压缩把 `create_goal` 的工具调用挤出窗口后，模型在新用户轮里仍然知道在追什么；每 5 个 goal 轮附带一次例行状态审计（对齐 MiniMax `reminder-policy` 的 terminal-audit），提醒对照当前证据重估完成 / 受阻，避免无限推进从不提案。
+
 ## 用户面操作
 
 终端与网页 Composer 共用同一份 `/goal` 命令解析（`util/agent/goal/command.mjs` 单一事实源，语义对齐 MiniMax-code 的 `thread-goal-command`），两端行为完全一致：

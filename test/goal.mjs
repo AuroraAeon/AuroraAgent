@@ -19,7 +19,7 @@ import { applyUsage, budgetBreach, rearmAfterBudgetRaise, goalUsageChip, formatG
 import { replyFingerprint, advanceBreakers } from '../util/agent/goal/breaker.mjs';
 import { createGoalRuntime } from '../util/agent/goal/runtime.mjs';
 import { parseVerdict } from '../util/agent/goal/verification.mjs';
-import { GOAL_CONTINUATION_NOTE, GOAL_WRAPUP_NOTE, goalContinuationNote, goalObjectiveUpdatedNote, goalVerifierFeedbackNote } from '../util/agent/goal/continuation.mjs';
+import { GOAL_AUDIT_INTERVAL, GOAL_CONTINUATION_NOTE, GOAL_WRAPUP_NOTE, goalContinuationNote, goalObjectiveUpdatedNote, goalTurnStartNote, goalVerifierFeedbackNote } from '../util/agent/goal/continuation.mjs';
 
 export async function runGoalTests(test, assert, eq) {
   console.log('\nGoal 模式单测');
@@ -617,6 +617,34 @@ export async function runGoalTests(test, assert, eq) {
     const unlimited = goalObjectiveUpdatedNote({ objective: 'x', tokensUsed: 10, tokenBudget: null });
     assert(unlimited.includes('上限 unlimited') && unlimited.includes('剩余 unlimited'), '无预算记 unlimited（对齐 codex parity）');
     assert(!goalObjectiveUpdatedNote({}).includes('<untrusted_objective>'), '无目标文本时不加空包裹块');
+  });
+
+  await test('goal: 轮首重述提醒——目标文本 + 每 5 轮状态审计（对齐 MiniMax reminder-policy）', () => {
+    const note = goalTurnStartNote({ objective: 'a<b>&c', turnsUsed: 3 });
+    assert(note.includes('【进行中的目标】'), '应带标记');
+    assert(note.includes('<objective>') && note.includes('a&lt;b&gt;&amp;c'), '应按不可信数据包裹重述目标');
+    assert(!note.includes('【目标状态审计】'), '未到审计间隔不应出现审计段');
+    eq(goalTurnStartNote({ turnsUsed: 4 }).includes('【目标状态审计】'), false, '第 4 轮不审计');
+    assert(goalTurnStartNote({ turnsUsed: 5 }).includes('【目标状态审计】'), '第 5 轮应审计');
+    assert(goalTurnStartNote({ turnsUsed: 10 }).includes('【目标状态审计】'), '第 10 轮应审计');
+    eq(goalTurnStartNote({ turnsUsed: 0 }).includes('【目标状态审计】'), false, '第 0 轮不审计');
+    assert(!goalTurnStartNote({}).includes('<objective>'), '无目标文本时不加空包裹块');
+    eq(GOAL_AUDIT_INTERVAL, 5);
+  });
+
+  await test('goal: 运行时 beginTurn——active 目标返回轮首重述，暂停 / 无目标返回 null', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'goal-rt-start-'));
+    const store = new GoalStore(dir);
+    const rt = createGoalRuntime({
+      goalStore: store, sessionId: 'rtstart', config: parseGoalConfig(undefined),
+      harnessTools: ['create_goal', 'update_goal', 'get_goal'], emit: () => {},
+    });
+    eq(rt.beginTurn(), null, '无目标时返回 null');
+    rt.tools[0].run({ objective: '轮首重述测试' });
+    const note = rt.beginTurn();
+    assert(note && note.includes('【进行中的目标】') && note.includes('轮首重述测试'), 'active 目标应返回带目标文本的重述');
+    store.update('rtstart', (g) => ({ ...g, status: 'paused', statusReason: 'paused(user_requested)' }));
+    eq(rt.beginTurn(), null, '暂停目标不重述');
   });
 
   await test('goal: 续跑/收尾/验证反馈提醒文案单一事实源', () => {
