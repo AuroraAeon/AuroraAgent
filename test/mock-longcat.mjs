@@ -57,6 +57,8 @@ export function startMock(port = 18901) {
         const isSwarmRound = lastText.includes('USE_SWARM') && !hasToolResult;
         const isMcpRound = lastText.includes('USE_MCP') && !hasToolResult;
         const isToolRound = (lastText.includes('USE_TOOL') || isSkillRound || isTodoRound || isEditRound || isSwarmRound || isMcpRound) && !hasToolResult;
+        // 会话标题生成请求（titleMode=model）：系统提示带【会话标题生成】标记，回一个固定标题供断言
+        const isTitleRound = body.includes('【会话标题生成】');
         const toolName = isSkillRound ? 'skill' : isTodoRound ? 'todo' : isEditRound ? 'edit_file' : isSwarmRound ? 'task' : isMcpRound ? 'mcp__mock__echo' : lastText.includes('USE_TOOL_WRITE') ? 'write_file' : 'read_file';
         const toolArgs = isSkillRound ? { name: 'code-review' }
           : isTodoRound ? { action: 'add', item: 'mock 待办事项' }
@@ -64,7 +66,7 @@ export function startMock(port = 18901) {
           : isSwarmRound ? { tasks: ['子任务甲：统计工作目录文件数', '子任务乙：读取 README 前 20 行'] }
           : isMcpRound ? { text: '来自模型的调用' }
           : toolName === 'write_file' ? { path: 'written_by_agent.txt', content: 'AGENT_WROTE' } : { path: 'mock.txt' };
-        const answer = isToolRound ? '' : hasToolResult ? `工具结果已收到：${toolEcho}` : isImg ? '图中有一个蓝色的圆形。' : isPlanRound ? '计划：先读取目标文件确认现状，再用 edit_file 精确替换，最后汇报差异。' : lastText.includes('【已批准的计划】') ? '已按批准的计划执行完毕。' : lastText.includes('子任务甲') ? '子代理甲结果：工作目录共 3 个文件。' : lastText.includes('子任务乙') ? '子代理乙结果：README 开头是 AuroraAgent 本地 Agent 运行时。' : `你好！我是 ${j.model}。`;
+        const answer = isToolRound ? '' : isTitleRound ? 'README 安装章节改写' : hasToolResult ? `工具结果已收到：${toolEcho}` : isImg ? '图中有一个蓝色的圆形。' : isPlanRound ? '计划：先读取目标文件确认现状，再用 edit_file 精确替换，最后汇报差异。' : lastText.includes('【已批准的计划】') ? '已按批准的计划执行完毕。' : lastText.includes('子任务甲') ? '子代理甲结果：工作目录共 3 个文件。' : lastText.includes('子任务乙') ? '子代理乙结果：README 开头是 AuroraAgent 本地 Agent 运行时。' : `你好！我是 ${j.model}。`;
         // FLAKY：首次请求直接掐断 socket，模拟网络层失败（用于测试连接期重试）
         if (lastText.includes('FLAKY') && !state.flakyDone) {
           state.flakyDone = true;

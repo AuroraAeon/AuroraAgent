@@ -33,6 +33,7 @@ import { runTuiComponentTests } from './tui-components.mjs';
 import { runPickTests } from './pick.mjs';
 import { runSkillsTests } from './skills.mjs';
 import { runTitleTests } from './title.mjs';
+import { TITLE_MAX_TOKENS } from '../util/agent/title-model.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MOCK_PORT = 18901;
@@ -869,7 +870,7 @@ const toolFrames = (name, args) => [
 ];
 
 /** 一次性 loop 运行环境：临时数据目录 + stub fetch + 事件收集 */
-async function runLoopOnce({ framesByCall, harness = getHarness('standard'), permission = 'allow', seedRecords = [], providerExtra = {}, input = '开始', planMode = false, planDecision = 'approve', sessionName = '' }) {
+async function runLoopOnce({ framesByCall, harness = getHarness('standard'), permission = 'allow', seedRecords = [], providerExtra = {}, input = '开始', planMode = false, planDecision = 'approve', sessionName = '', titleMode = 'local' }) {
   const dir = mkdtempSync(join(tmpdir(), 'mt-loop-'));
   const ws = join(dir, 'workspace');
   mkdirSync(ws, { recursive: true });
@@ -900,6 +901,7 @@ async function runLoopOnce({ framesByCall, harness = getHarness('standard'), per
     controller,
     requestPermission: async () => { permCalls++; return permission; },
     planMode,
+    titleMode,
     requestPlanDecision: async () => planDecision,
     log: () => {},
   }).finally(() => { globalThis.fetch = realFetch; });
@@ -1022,6 +1024,67 @@ await test('Loop：提炼不出内容时保留默认名', async () => {
   });
   eq(store.list()[0].name, '新会话', '纯标点输入不强行起标题');
   assert(!events.some((e) => e.type === 'session_renamed'), '无标题可提炼时不推送事件');
+});
+
+await test('Loop：titleMode=model 多一次标题请求并起模型名', async () => {
+  const { store, usage, events, requests } = await runLoopOnce({
+    framesByCall: [textFrames('好的，我来看一下'), textFrames('「README 安装章节改写」')],
+    input: '帮我把 README 的安装章节改写一下',
+    harness: getHarness('minimal'),
+    titleMode: 'model',
+  });
+  eq(requests.length, 2, '主轮之外应多一次标题请求');
+  const titleReq = requests[1].body;
+  assert(String(titleReq.messages[0].content).includes('【会话标题生成】'), '标题请求应带标题生成系统提示');
+  assert(String(titleReq.messages[1].content).includes('帮我把 README'), '标题请求应带上首条用户消息');
+  assert(String(titleReq.messages[1].content).includes('助手答复'), '标题请求应参考助手终稿');
+  eq(titleReq.max_tokens, TITLE_MAX_TOKENS, '标题请求应压住输出上限');
+  eq(titleReq.tools, undefined, '标题请求不应带工具');
+  eq(store.list()[0].name, 'README 安装章节改写', '应采用模型总结并清洗引号壳');
+  const renamed = events.find((e) => e.type === 'session_renamed');
+  assert(renamed && renamed.mode === 'model', 'session_renamed 应带 mode=model');
+  eq(usage.read().length, 2, '账本应记主轮与标题两笔');
+  eq(usage.read()[1].purpose, 'title', '标题账应带 purpose 标记');
+  const meta = store.list()[0];
+  eq(meta.inputTokens, 20, '会话汇总应含标题请求的输入 tokens');
+  eq(meta.outputTokens, 10, '会话汇总应含标题请求的输出 tokens');
+  assert(meta.cost > 0, '会话汇总费用应含标题请求');
+});
+
+await test('Loop：模型标题失败回退本地推导且不记标题账', async () => {
+  const { store, usage, events, requests } = await runLoopOnce({
+    framesByCall: [textFrames('好的'), { frames: [textFrames('不会走到')], status: 500 }],
+    input: '帮我把 README 的安装章节改写一下',
+    harness: getHarness('minimal'),
+    titleMode: 'model',
+  });
+  eq(requests.length, 2, '标题请求应真实发出');
+  eq(store.list()[0].name, '帮我把 README 的安装章…', '失败应回退本地推导');
+  assert(events.some((e) => e.type === 'session_renamed' && e.mode === 'model'), '仍应推送改名事件');
+  eq(usage.read().length, 1, '失败的标题请求不记账');
+});
+
+await test('Loop：local 模式不产生额外上游请求', async () => {
+  const { store, requests } = await runLoopOnce({
+    framesByCall: [textFrames('好的')],
+    input: '帮我把 README 的安装章节改写一下',
+    harness: getHarness('minimal'),
+  });
+  eq(requests.length, 1, '本地推导零成本：只应有一次上游请求');
+  eq(store.list()[0].name, '帮我把 README 的安装章…');
+});
+
+await test('Loop：model 模式已命名会话不花标题钱', async () => {
+  const { store, usage, requests } = await runLoopOnce({
+    framesByCall: [textFrames('好的')],
+    input: '帮我把 README 的安装章节改写一下',
+    harness: getHarness('minimal'),
+    titleMode: 'model',
+    sessionName: '用户自己起的名字',
+  });
+  eq(requests.length, 1, '已命名会话不应发起标题请求');
+  eq(store.list()[0].name, '用户自己起的名字');
+  eq(usage.read().length, 1, '只应记主轮一笔');
 });
 
 await test('Loop：工具轮经权限允许后执行并回填结果', async () => {
@@ -1827,6 +1890,27 @@ await test('PATCH /api/agent/sessions/:id 切换模式 / 改名 / 换模型', as
   eq(detail.meta.harness, 'ultimate', '失败的 PATCH 不应改动会话');
   eq((await fetch(`${AGENT}/sessions/nope`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 404, '未知会话 404');
   await fetch(`${AGENT}/sessions/${s.id}`, { method: 'DELETE' });
+});
+
+await test('Agent turn：titleMode=model 经上游总结标题并记账', async () => {
+  const s = (await (await fetch(`${AGENT}/sessions`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+  })).json()).session;
+  await fetch(`${AGENT}/sessions/${s.id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ titleMode: 'model' }),
+  });
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: '帮我把 README 的安装章节改写一下' }),
+  });
+  const all = await drainAgentStream(openAgentStream(resp));
+  const renamed = all.find((e) => e.type === 'session_renamed');
+  assert(renamed && renamed.mode === 'model' && renamed.name === 'README 安装章节改写', '标题应由上游总结出来');
+  assert(all.find((e) => e.type === 'turn_completed'), '应以 turn_completed 收尾');
+  const detail = await (await fetch(`${AGENT}/sessions/${s.id}`)).json();
+  eq(detail.meta.name, 'README 安装章节改写', '模型标题应落元信息');
+  assert(detail.meta.cost > 0, '标题请求成本应计入会话汇总');
 });
 
 await test('Agent turn：首条消息自动总结会话标题并落元信息', async () => {

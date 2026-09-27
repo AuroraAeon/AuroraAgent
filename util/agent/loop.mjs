@@ -14,7 +14,9 @@ import { resolveTool, toolResource } from './tools.mjs';
 import { PermissionPolicy, defaultRules } from './policy.mjs';
 import { createSpawner } from './swarm.mjs';
 import { deriveTitle } from './title.mjs';
+import { generateTitleText } from './title-model.mjs';
 import { DEFAULT_SESSION_NAME } from './session.mjs';
+import { DEFAULT_TITLE_MODE } from '../config.mjs';
 import { PLAN_MAX_ROUNDS, PLAN_MODE_PROMPT, planExecutionNote, planToolNames } from './plan.mjs';
 import { assembleMessages, needsCompaction, planCompaction, compactionMessages, contextWindowOf } from './context.mjs';
 
@@ -45,7 +47,7 @@ export async function runAgentTurn(ctx) {
   const {
     store, usage, session, input, provider, model, harness, builtinPrice,
     gen = {}, skills = [], extraTools = [], emit, controller, requestPermission, requestPlanDecision,
-    permissionMode = 'ask_when_needed', planMode = false, depth = 0, log = () => {},
+    permissionMode = 'ask_when_needed', planMode = false, titleMode = DEFAULT_TITLE_MODE, depth = 0, log = () => {},
   } = ctx;
   const sessionId = session.id;
   const turnId = randomUUID();
@@ -54,15 +56,56 @@ export async function runAgentTurn(ctx) {
 
   store.append(sessionId, { t: 'user', text: input });
   store.patch(sessionId, { turns: (session.turns || 0) + 1 });
-  // 首条消息自动总结标题：会话仍是默认名时按用户输入推导简短标题（本地推导，不调模型、零成本）
-  if (!session.name || session.name === DEFAULT_SESSION_NAME) {
-    const title = deriveTitle(input);
-    if (title) {
-      store.patch(sessionId, { name: title });
-      session.name = title; // 同步内存引用，本轮内读取保持一致
-      emit('session_renamed', { sessionId, name: title });
+
+  let totIn = 0, totOut = 0, totCost = 0;
+  const recordRoundUsage = (u, stopped = false) => {
+    const inTok = u?.prompt_tokens || 0;
+    const outTok = u?.completion_tokens || 0;
+    const cost = (inTok * price.input + outTok * price.output) / 1_000_000;
+    totIn += inTok; totOut += outTok; totCost = Number((totCost + cost).toFixed(6));
+    store.append(sessionId, { t: 'usage', inputTokens: inTok, outputTokens: outTok, cost });
+    store.patch(sessionId, { inputTokens: totIn, outputTokens: totOut, cost: totCost });
+    usage.record({ kind: 'agent', requestId: turnId, sessionId, model, provider: provider.id, ms: Date.now() - started, inputTokens: inTok, outputTokens: outTok, reasoningTokens: u?.completion_tokens_details?.reasoning_tokens || 0, cost: Number(cost.toFixed(6)), stopped });
+    emit('token_usage_updated', { sessionId, turnId, model, inputTokens: inTok, outputTokens: outTok, cost: Number(cost.toFixed(6)) });
+  };
+
+  /** 标题请求记账（titleMode=model 的增量成本）：同一套单价，进账本与会话汇总，但不进转录与轮次脚注（渲染口径与本地模式一致） */
+  const recordTitleUsage = (u, ms) => {
+    if (!u) return;
+    const inTok = u.prompt_tokens || 0;
+    const outTok = u.completion_tokens || 0;
+    const cost = (inTok * price.input + outTok * price.output) / 1_000_000;
+    totIn += inTok; totOut += outTok; totCost = Number((totCost + cost).toFixed(6));
+    store.patch(sessionId, { inputTokens: totIn, outputTokens: totOut, cost: totCost });
+    usage.record({ kind: 'agent', requestId: `title_${turnId}`, sessionId, model, provider: provider.id, ms, inputTokens: inTok, outputTokens: outTok, reasoningTokens: 0, cost: Number(cost.toFixed(6)), purpose: 'title' });
+  };
+
+  /**
+   * 自动总结标题：会话仍是默认名时才起名（用户改名或显式命名不覆盖）。
+   * local：本地推导，零成本，turn 一开始就定好；model：多一次小额上游请求，失败回退本地推导，
+   * 等终稿出来再花这笔钱（中止 / 失败的 turn 不花）。
+   */
+  const autoTitle = async (answer = '') => {
+    if (session.name && session.name !== DEFAULT_SESSION_NAME) return;
+    let title = '';
+    if (titleMode === 'model') {
+      const t0 = Date.now();
+      try {
+        const r = await generateTitleText({ provider, model, input, answer, controller });
+        recordTitleUsage(r.usage, Date.now() - t0);
+        title = deriveTitle(r.text);
+      } catch (e) {
+        log('warn', '模型总结标题失败，回退本地推导', { sessionId, error: String(e) });
+      }
     }
-  }
+    if (!title) title = deriveTitle(input);
+    if (!title) return;
+    store.patch(sessionId, { name: title });
+    session.name = title; // 同步内存引用，本轮内读取保持一致
+    emit('session_renamed', { sessionId, name: title, mode: titleMode });
+  };
+  if (titleMode !== 'model') await autoTitle();
+
   let records = store.records(sessionId);
   emit('turn_started', { sessionId, turnId, turnIndex: (session.turns || 0) + 1, userInput: input, model, provider: provider.id, harness: harness.id });
 
@@ -78,21 +121,9 @@ export async function runAgentTurn(ctx) {
   // 子代理派发器：task 工具经 ctx.spawn 派生子 turn；深度随嵌套递增（swarm.mjs 封顶）
   const spawn = createSpawner({
     runTurn: runAgentTurn, store, usage, provider, model, harness, skills, builtinPrice,
-    emit, controller, requestPermission, permissionMode, rules: sessionRules, gen, extraTools,
+    emit, controller, requestPermission, permissionMode, titleMode, rules: sessionRules, gen, extraTools,
     workspace: session.workspace, depth, log,
   });
-
-  let totIn = 0, totOut = 0, totCost = 0;
-  const recordRoundUsage = (u, stopped = false) => {
-    const inTok = u?.prompt_tokens || 0;
-    const outTok = u?.completion_tokens || 0;
-    const cost = (inTok * price.input + outTok * price.output) / 1_000_000;
-    totIn += inTok; totOut += outTok; totCost = Number((totCost + cost).toFixed(6));
-    store.append(sessionId, { t: 'usage', inputTokens: inTok, outputTokens: outTok, cost });
-    store.patch(sessionId, { inputTokens: totIn, outputTokens: totOut, cost: totCost });
-    usage.record({ kind: 'agent', requestId: turnId, sessionId, model, provider: provider.id, ms: Date.now() - started, inputTokens: inTok, outputTokens: outTok, reasoningTokens: u?.completion_tokens_details?.reasoning_tokens || 0, cost: Number(cost.toFixed(6)), stopped });
-    emit('token_usage_updated', { sessionId, turnId, model, inputTokens: inTok, outputTokens: outTok, cost: Number(cost.toFixed(6)) });
-  };
 
   /** 超长时把早期记录折叠成一条 summary（压缩本身花一轮模型调用，失败不阻塞主流程） */
   const maybeCompact = async () => {
@@ -302,6 +333,7 @@ export async function runAgentTurn(ctx) {
     emit('turn_failed', { sessionId, turnId, error: String(err), round });
     return { turnId, text: finalText, rounds: round, tools: totalTools, failed: true };
   }
+  if (titleMode === 'model') await autoTitle(finalText); // 等终稿出来再花这笔标题钱，失败回退本地推导
   emit('turn_completed', { sessionId, turnId, totalRounds: round, totalTools, durationMs: Date.now() - started, finishReason: finished ? 'stop' : 'max_rounds' });
   return { turnId, text: finalText, rounds: round, tools: totalTools };
 }

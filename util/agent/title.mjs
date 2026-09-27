@@ -21,8 +21,14 @@ const CONTROL_RE = /[\u0000-\u0009\u000b-\u001f\u007f]+/g; // 不含 \n：换行
 /** 行首 markdown 噪声：井号标题 / 引用 / 列表符号 / 代码围栏（可重复出现） */
 const LEADING_NOISE_RE = /^(?:#{1,6}\s*|>\s*|(?:[-*+]|\d+[.)])\s+|`{3,}\s*\S*\s*)+/;
 
-/** 首尾强调符号壳（加粗 / 行内代码 / 删除线的记号） */
-const EDGE_EMPHASIS_RE = /^[*_~`\s]+|[*_~`\s]+$/g;
+/** 首尾强调符号与引号壳（加粗 / 行内代码 / 删除线 / 中英引号——模型输出常带引号） */
+const EDGE_EMPHASIS_RE = /^[*_~`\s"'\u300c\u300d\u300e\u300f\u201c\u201d\u2018\u2019]+|[*_~`\s"'\u300c\u300d\u300e\u300f\u201c\u201d\u2018\u2019]+$/g;
+
+/** 结尾句读（标题不该以标点收尾） */
+const TRAILING_PUNCT_RE = /[\u3002\uff01\uff1f.!?\uff1b;\uff0c,]+$/;
+
+/** 模型有时会带「标题：」前缀（提示词已要求不带，这里兜底剥掉） */
+const LABEL_PREFIX_RE = /^(?:\u6807\u9898|title)\s*[:\uff1a]\s*/i;
 
 /** 至少含一个文字或数字才算有实质内容（纯标点行跳过） */
 const WORD_RE = /[\p{L}\p{N}]/u;
@@ -31,6 +37,9 @@ const WORD_RE = /[\p{L}\p{N}]/u;
 function cleanLine(line) {
   const s = String(line ?? '').trim()
     .replace(LEADING_NOISE_RE, '')
+    .replace(LABEL_PREFIX_RE, '')
+    .replace(EDGE_EMPHASIS_RE, '')
+    .replace(TRAILING_PUNCT_RE, '')
     .replace(EDGE_EMPHASIS_RE, '')
     .trim()
     .replace(/\s+/g, ' ');

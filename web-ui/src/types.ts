@@ -2,7 +2,7 @@
 export type ToolPhase = 'started' | 'params_partial' | 'confirmation_needed' | 'confirmed' | 'rejected' | 'completed' | 'failed';
 
 export type AgentEvent =
-  | { type: 'session_renamed'; sessionId: string; name: string }
+  | { type: 'session_renamed'; sessionId: string; name: string; mode?: 'local' | 'model' }
   | { type: 'turn_started'; sessionId: string; turnId: string; turnIndex: number; userInput: string; model: string; provider: string; harness: string }
   | { type: 'model_round_started'; sessionId: string; turnId: string; round: number }
   | { type: 'text_chunk'; sessionId: string; turnId: string; text: string }

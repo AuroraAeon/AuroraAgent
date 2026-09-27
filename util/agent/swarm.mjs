@@ -18,7 +18,7 @@ export const MAX_DEPTH = 2;
 export function createSpawner(ctx) {
   const {
     runTurn, store, usage, provider, model, harness, skills = [], builtinPrice,
-    emit, controller, requestPermission, permissionMode = 'ask_when_needed',
+    emit, controller, requestPermission, permissionMode = 'ask_when_needed', titleMode = 'local',
     rules = [], gen = {}, extraTools = [], workspace = '', depth = 0, log = () => {},
   } = ctx;
 
@@ -49,7 +49,7 @@ export function createSpawner(ctx) {
         store, usage, session: child, input: task, provider, model, harness,
         builtinPrice, skills, gen, extraTools,
         emit: childEmit, controller: childController,
-        requestPermission, permissionMode,
+        requestPermission, permissionMode, titleMode,
         planMode: false, // 计划是父层契约，子代理直接执行
         depth: depth + 1,
         log,

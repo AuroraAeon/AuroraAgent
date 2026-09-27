@@ -130,7 +130,7 @@ export async function runTerminalTurn({ store, usage, session, input, provider, 
       case 'session_renamed':
         endToolLine();
         breakLine();
-        write(painter.dim(`  ↳ 会话标题已按首条消息更新为 ${p.name}\n`));
+        write(painter.dim(`  ↳ 会话标题已${p.mode === 'model' ? '由模型总结' : '按首条消息'}更新为 ${p.name}\n`));
         break;
       case 'turn_cancelled':
         endToolLine();

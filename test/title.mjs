@@ -55,6 +55,16 @@ export async function runTitleTests(test, assert, eq) {
     eq(deriveTitle(null), '');
   });
 
+  await test('title: 兼容模型输出形态——剥引号壳 / 标题前缀 / 结尾句读', () => {
+    eq(deriveTitle('「修复登录页的 401 报错」'), '修复登录页的 401 报错', '中文引号壳应剥掉');
+    eq(deriveTitle('"修复登录 401"'), '修复登录 401', '英文引号壳应剥掉');
+    eq(deriveTitle('标题：修复登录问题'), '修复登录问题', '标题前缀应剥掉');
+    eq(deriveTitle('Title: fix login 401'), 'fix login 401', '英文标题前缀应剥掉');
+    eq(deriveTitle('帮我把 README 的安装章节改写一下。'), '帮我把 README 的安装章…', '结尾句读应剥掉');
+    eq(deriveTitle('怎么做？'), '怎么做', '问号结尾应剥掉');
+    eq(deriveTitle('**加粗的标题**。'), '加粗的标题', '强调壳与句读应先后剥净');
+  });
+
   await test('title: 按显示宽度截断，CJK 记 2 列', () => {
     eq(TITLE_MAX_WIDTH, 24);
     eq(deriveTitle('帮我把 README 的安装章节改写一下'), '帮我把 README 的安装章…');
