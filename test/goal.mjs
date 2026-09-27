@@ -873,11 +873,15 @@ export async function runGoalTests(test, assert, eq) {
     eq(parseGoalCommand('budget=50K').tokenBudget, 50000);
     eq(parseGoalCommand('budget 50000').kind, 'budget');
     eq(parseGoalCommand('budget 50000').tokenBudget, 50000);
-    // 清除同义词
-    for (const raw of ['budget=clear', 'budget=null', 'budget=none', 'budget=off', 'budget=0', 'budget clear', 'budget']) {
+    // 清除同义词（裸 budget 除外——见下方错误分支）
+    for (const raw of ['budget=clear', 'budget=null', 'budget=none', 'budget=off', 'budget=0', 'budget clear']) {
       eq(parseGoalCommand(raw).kind, 'budget', `${raw} 应解析为预算清除`);
       eq(parseGoalCommand(raw).tokenBudget, null, `${raw} 应清除上限`);
     }
+    // 裸 /goal budget 无值一律报错：绝不明静默清除上限（对齐 MiniMax '/goal budget needs a value'）
+    const bareBudget = parseGoalCommand('budget');
+    eq(bareBudget.kind, 'error');
+    assert(bareBudget.message.includes('budget=50K') && bareBudget.message.includes('budget=clear'), '报错文案应给出两种可操作写法');
     // 错误分支
     eq(parseGoalCommand('budget=abc').kind, 'error');
     eq(parseGoalCommand('budget -5').kind, 'error');
@@ -908,6 +912,7 @@ export async function runGoalTests(test, assert, eq) {
     assert(goalActionHint('active').includes('/goal pause'), '进行中应提示暂停');
     assert(goalActionHint('budget_limited').includes('抬高预算'), '预算耗尽应提示抬高预算');
     assert(goalActionHint('complete').includes('新目标'), '已完成应提示开新目标');
+    assert(goalActionHint('complete').includes('/goal clear'), '已完成提示应补移除目标那半（对齐 MiniMax actionHint）');
     const g = { status: 'active', objective: '改写 README', tokensUsed: 12500, turnsUsed: 3, timeUsedSeconds: 120, tokenBudget: 50000, lastVerification: null };
     const summary = formatGoalSummary(g);
     assert(summary.includes('改写 README') && summary.includes('13K') && summary.includes('2min'), '摘要应含目标 / 用量 / 时长');

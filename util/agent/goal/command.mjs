@@ -8,7 +8,7 @@
  *   /goal                         查看当前目标摘要
  *   /goal <objective>             创建目标；已有未完成目标则改写目标文本
  *   /goal <objective> budget=50K  创建并设 token 预算（K / M 后缀）
- *   /goal budget=50K              改当前目标预算（也接受旧式 /goal budget 50K）
+ *   /goal budget=50K              改当前目标预算（也接受旧式 /goal budget 50K；裸 budget 无值报错）
  *   /goal budget=clear            清除预算上限（clear / null / none / off / 0 同义）
  *   /goal clear                   移除目标（cancel / delete 同义别名）
  *   /goal edit                    把当前目标文本填回输入框续编
@@ -115,7 +115,11 @@ export function parseGoalCommand(rawArgs) {
   // 旧式空格写法（AuroraAgent 终端既有形态）：/goal budget 50000 | clear
   if (head === 'budget') {
     const rest = firstSpace === -1 ? '' : tail.slice(firstSpace + 1).trim();
-    if (!rest) return { kind: 'budget', tokenBudget: null };
+    // 裸 budget 一律报错而非静默清除上限：用户本想设预算却丢掉上限是危险静默失败
+    // （对齐 MiniMax thread-goal-command：'/goal budget needs a value'，报错文案保持可操作）
+    if (!rest) {
+      return { kind: 'error', message: '/goal budget 需要取值：`/goal budget=50K` 或 `/goal budget=clear`（旧式 `/goal budget 50000` 等价）' };
+    }
     const parsed = parseGoalBudgetValue(rest);
     if (parsed === 'invalid') {
       return { kind: 'error', message: '预算值需为正整数（可带 K / M 后缀）或 clear（清除上限）' };
@@ -167,7 +171,7 @@ export function parseGoalCommand(rawArgs) {
 /** 横幅 / 查看输出的可执行操作提示（随状态裁剪，与 canTransition 语义一致） */
 export function goalActionHint(status) {
   if (status === 'active') return '/goal pause · /goal edit · /goal clear';
-  if (status === 'complete') return '/goal <目标内容> 开始新目标';
+  if (status === 'complete') return '/goal <目标内容> 开始新目标 · /goal clear 移除该目标';
   if (status === 'budget_limited') return '/goal budget=更大值 抬高预算可继续 · /goal clear 移除';
   if (status === 'usage_limited') return '/goal resume · /goal edit · /goal clear';
   return '/goal resume · /goal edit · /goal clear';
