@@ -46,7 +46,7 @@ Goal 模式给会话挂一个**跨轮次存续的目标**：模型自主推进�
 - **token 预算**：每轮结束经用量账本累计 `tokensUsed`；触顶自动转 `budget_limited(token)`，并追加唯一一个无工具的收尾轮——只总结「已完成 / 未完成 / 为何停止」，并告知可经 `update_goal` 调整预算后续跑
 - **轮次 / 时长预算**：`goal.mainTurns`（续跑轮次上限）与 `goal.activeSeconds`（轮内活跃秒数）触顶转 `budget_limited(main_turn)` / `budget_limited(active_time)`；`graceSteps` 是触顶后的宽限轮数（默认 1）
 - **重新武装**：抬高或清零 `token_budget` 可把 `budget_limited(token)` 恢复为 `active`（模型侧走 CAS 预算模式，用户侧走 `/goal budget`）
-- **双熔断**：归一化回复指纹连续重复（`noProgressStreak`）与「连续无工具提交轮」（`noToolStreak`）共享阈值 `goal.repeatedReplyLimit`（默认 3），互不累加；任一触发转 `paused(no_progress)`
+- **双熔断**：归一化回复指纹连续重复（`noProgressStreak`）与「连续无工具提交轮」（`noToolStreak`）共享阈值 `goal.repeatedReplyLimit`（默认 3，范围 2–10），互不累加；阶梯对齐 MiniMax `decideAction`：第 1 次观察只记录、第 2 次注入对应纠正提醒（复读 / 无工具各自成文，同时中招合并注入下一轮）、第 3 次转 `paused(no_progress)`；无可用回复文本的轮（纯工具轮）不携带指纹证据——连胜与指纹原样保持，杜绝「交替空轮 + 复读」绕过熔断
 
 ## 验证三档
 
@@ -100,7 +100,7 @@ REST 面对应 `GET /api/agent/goal/:id`、`POST /api/agent/goal`（创建，未
 | `verification` | `none` | 验证档位：`none` / `evaluator` / `subagent` |
 | `evaluatorModel` | 空 | evaluator 档必填；填了即隐含启用 evaluator |
 | `evidence` | `brief` | 验证证据形态：`brief` / `transcript` |
-| `repeatedReplyLimit` | 3 | 双熔断共享阈值 |
+| `repeatedReplyLimit` | 3 | 双熔断共享阈值（2–10；第 2 次观察注入纠正提醒，第 N 次熔断） |
 | `repeatedNotMetLimit` | 5 | `not_met` 连续次数（缺口集合相同才累加）转 `paused(no_progress)` |
 | `graceSteps` | 1 | 轮次 / 时长触顶后的宽限轮数（0–3） |
 | `mainTurns` | 0 | 续跑轮次上限，0 = 不限 |

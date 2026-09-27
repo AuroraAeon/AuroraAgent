@@ -119,7 +119,7 @@ export async function runGoalTests(test, assert, eq) {
     eq(c.graceSteps, 3, 'graceSteps 钳到上限 3');
     eq(c.mainTurns, 0, '负主轮回退 0（不限制）');
     eq(c.activeSeconds, 0, '非整秒回退 0');
-    eq(c.repeatedReplyLimit, 1, '低于下限钳到 1');
+    eq(c.repeatedReplyLimit, 2, '低于下限钳到 2（对齐 MiniMax：首次观察只记录，不会一上来就熔断）');
     eq(c.repeatedNotMetLimit, 10, '高于上限钳到 10');
     eq(c.evaluator.maxTokens, 256, 'evaluator maxTokens 钳到下限');
     eq(c.evaluator.timeoutSeconds, 300, 'timeoutSeconds 钳到上限');
@@ -207,21 +207,78 @@ export async function runGoalTests(test, assert, eq) {
     eq(replyFingerprint('   '), '', '纯空白按空回复处理');
   });
 
-  await test('goal: advanceBreakers 双计数器独立触顶，不可信信号不冤枉模型', () => {
+  await test('goal: advanceBreakers 阶梯——首观察记录、二次 nudge、limit 次熔断；空轮不重置（对齐 MiniMax decideAction/scoresReply）', () => {
     const g = createGoalState({ sessionId: 's', objective: 'x' });
-    let cur = g;
-    for (let i = 0; i < 2; i++) cur = advanceBreakers(cur, { replyText: '同样的话', toolCommitted: true, limit: 3 }).goal;
-    eq(cur.noProgressStreak, 2);
-    eq(advanceBreakers(cur, { replyText: '同样的话', toolCommitted: true, limit: 3 }).tripped, true, '第 3 次相同回复触发');
-    eq(advanceBreakers(cur, { replyText: '同样的话', toolCommitted: true, limit: 3 }).by, 'reply');
-    const spin = advanceBreakers(advanceBreakers(advanceBreakers(g, { replyText: `第${1}句`, toolCommitted: false }).goal, { replyText: `第${2}句`, toolCommitted: false }).goal, { replyText: '第3句', toolCommitted: false });
-    eq(spin.goal.noToolStreak, 3, '无工具轮累加');
-    eq(spin.tripped, true);
-    eq(spin.by, 'no_tool');
-    const reset = advanceBreakers(spin.goal, { replyText: '第4句', toolCommitted: false, toolSignalTrustworthy: false });
+    // 回复指纹阶梯：第 1 次只记录、第 2 次注入纠正提醒、第 3 次（limit）熔断
+    const first = advanceBreakers(g, { replyText: '同样的话', toolCommitted: true, limit: 3 });
+    eq(first.goal.noProgressStreak, 1, '首次观察只记录');
+    eq(first.nudge.length, 0, '首次不提醒');
+    eq(first.tripped, false);
+    const second = advanceBreakers(first.goal, { replyText: '同样的话', toolCommitted: true, limit: 3 });
+    eq(second.goal.noProgressStreak, 2);
+    eq(second.tripped, false, '第二次不断闸');
+    eq(second.nudge.join('+'), 'reply', '第二次注入复读纠正提醒');
+    const third = advanceBreakers(second.goal, { replyText: '同样的话', toolCommitted: true, limit: 3 });
+    eq(third.tripped, true, '第 3 次相同回复触发');
+    eq(third.by, 'reply');
+    eq(third.nudge.length, 0, '触顶轮不再提醒');
+    // 无工具阶梯（回复各异，只累 noToolStreak）
+    const t1 = advanceBreakers(g, { replyText: '第1句', toolCommitted: false, limit: 3 });
+    eq(t1.nudge.length, 0);
+    const t2 = advanceBreakers(t1.goal, { replyText: '第2句', toolCommitted: false, limit: 3 });
+    eq(t2.goal.noToolStreak, 2, '无工具轮累加');
+    eq(t2.nudge.join('+'), 'no_tool', '第二次无工具注入纠正提醒');
+    const t3 = advanceBreakers(t2.goal, { replyText: '第3句', toolCommitted: false, limit: 3 });
+    eq(t3.tripped, true);
+    eq(t3.by, 'no_tool');
+    // 双计数器同时到第 2 阶：合并注入
+    const both = advanceBreakers(advanceBreakers(g, { replyText: '复读', toolCommitted: false, limit: 3 }).goal, { replyText: '复读', toolCommitted: false, limit: 3 });
+    eq(both.nudge.join('+'), 'reply+no_tool', '两个计数器同时中招应合并提醒');
+    const reset = advanceBreakers(t3.goal, { replyText: '第4句', toolCommitted: false, toolSignalTrustworthy: false });
     eq(reset.goal.noToolStreak, 0, '工具信号不可信时重置，不把不可信的零计成零');
-    const empty = advanceBreakers(g, { replyText: '  ', toolCommitted: false });
-    eq(empty.goal.noProgressStreak, 0, '空回复中断指纹连胜');
+    // 空回复不携带指纹证据：连胜与指纹原样保持（杜绝「交替空轮 + 复读」绕过熔断）
+    const mid = advanceBreakers(advanceBreakers(g, { replyText: '同样的话', toolCommitted: true, limit: 3 }).goal, { replyText: '同样的话', toolCommitted: true, limit: 3 });
+    const empty = advanceBreakers(mid.goal, { replyText: '  ', toolCommitted: true, limit: 3 });
+    eq(empty.goal.noProgressStreak, 2, '空回复不重置连胜');
+    eq(empty.goal.replyFingerprint, mid.goal.replyFingerprint, '空回复不清除指纹');
+    eq(advanceBreakers(empty.goal, { replyText: '同样的话', toolCommitted: true, limit: 3 }).tripped, true, '空轮之后的复读继续累加');
+    // 下限 2：limit=1 按 2 处理（对齐 MiniMax max(2, limit)）
+    eq(advanceBreakers(g, { replyText: 'x', toolCommitted: true, limit: 1 }).tripped, false, 'limit=1 被钳到 2：首次观察不熔断');
+  });
+
+  await test('goal: 运行时——熔断第 2 阶注入无进展纠正提醒（afterRound nudge / onIdle 续跑+nudge）', async () => {
+    const usage = { prompt_tokens: 10, completion_tokens: 5 };
+    const dir = mkdtempSync(join(tmpdir(), 'goal-rt-nudge-'));
+    const store = new GoalStore(dir);
+    const rt = createGoalRuntime({
+      goalStore: store, sessionId: 'rtnudge', config: parseGoalConfig({ repeatedReplyLimit: 3 }),
+      harnessTools: ['create_goal', 'update_goal', 'get_goal'], emit: () => {},
+    });
+    rt.tools[0].run({ objective: 'nudge 测试' });
+    rt.beginTurn();
+    eq(rt.afterRound({ replyText: '复读内容', toolCalls: [{ name: 'read_file' }], usage, roundMs: 50 }), undefined, '首观察只记录');
+    eq(rt.afterRound({ replyText: '复读内容', toolCalls: [{ name: 'read_file' }], usage, roundMs: 50 }), 'nudge', '第二次相同回复应转 nudge 而非直接熔断');
+    const note = rt.consumeNote();
+    assert(note.includes('【无进展提醒】') && note.includes('不要重复'), '纠正提醒应带复读守卫');
+    eq(rt.consumeNote(), null, '提醒一次性消费');
+    eq(rt.afterRound({ replyText: '复读内容', toolCalls: [{ name: 'read_file' }], usage, roundMs: 50 }), 'finish', '第三次相同回复熔断');
+    eq(store.get('rtnudge').statusReason, 'paused(no_progress)');
+    // onIdle 路径：续跑提醒 + nudge 合并（对齐 MiniMax renderNudgePrompt = continuationBody + nudgeGuard）
+    const dir2 = mkdtempSync(join(tmpdir(), 'goal-rt-nudge2-'));
+    const store2 = new GoalStore(dir2);
+    const rt2 = createGoalRuntime({
+      goalStore: store2, sessionId: 'rtnudge2', config: parseGoalConfig({ repeatedReplyLimit: 3 }),
+      harnessTools: ['create_goal', 'update_goal', 'get_goal'], emit: () => {},
+    });
+    rt2.tools[0].run({ objective: 'nudge 测试 2' });
+    rt2.beginTurn();
+    const d1 = await rt2.onIdle({ replyText: '空转甲', toolCalls: [], usage, roundMs: 50 });
+    eq(d1.action, 'continue');
+    assert(d1.extraSystem.includes('【目标续跑】') && !d1.extraSystem.includes('【无进展提醒】'), '首轮空转只带续跑提醒');
+    const d2 = await rt2.onIdle({ replyText: '空转甲', toolCalls: [], usage, roundMs: 50 });
+    eq(d2.action, 'continue', '第二次不断闸');
+    assert(d2.extraSystem.includes('【目标续跑】') && d2.extraSystem.includes('【无进展提醒】'), '续跑提醒与纠正提醒合并（对齐 renderNudgePrompt）');
+    eq(store2.get('rtnudge2').status, 'active', '第二次空转不熔断');
   });
 
   await test('goal: GoalStore 一会话一目标、未完成冲突与 complete 后可替换', () => {

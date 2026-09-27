@@ -2569,6 +2569,24 @@ await test('Agent turn：GOAL_TURN2 新用户轮首轮重述进行中目标（�
   assert(all.at(-1).type === 'turn_completed', '应以 turn_completed 收尾');
 });
 
+await test('Agent turn：USE_GOAL_SPIN 复读三轮——第 2 轮注入【无进展提醒】、第 3 轮转 paused(no_progress)', async () => {
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_GOAL_SPIN 盯着把 README 安装章节改写' }),
+  });
+  const all = await drainAgentStream(openAgentStream(resp));
+  assert(mock.state.requests.some((r) => r.body.includes('【无进展提醒】')), '第 2 次相同回复应注入无进展纠正提醒');
+  assert(mock.state.requests.some((r) => r.body.includes('【目标续跑】') && r.body.includes('【无进展提醒】')), 'nudge 应与续跑提醒合并注入（对齐 renderNudgePrompt）');
+  const changed = all.find((e) => e.type === 'goal_status_changed' && e.goal.status === 'paused');
+  assert(changed, '第 3 次相同回复应熔断');
+  eq(changed.statusReason, 'paused(no_progress)');
+  const goalFile = JSON.parse(readFileSync(join(tmpDataDir, 'goals', `${s.id}.json`), 'utf8'));
+  eq(goalFile.status, 'paused');
+  assert(goalFile.turnsUsed >= 3, 'create/复读/复读三个 goal 轮都应入账');
+  assert(all.at(-1).type === 'turn_completed', '应以 turn_completed 收尾');
+});
+
 await test('Agent turn：USE_GOAL_VERIFY_MET 经 evaluator 裁决 met → complete(verifier_met)', async () => {
   // goal 验证档配置落临时数据目录（evaluator 同路由小快模型）
   writeFileSync(join(tmpDataDir, 'auroraagent.config.json'), JSON.stringify({ goal: { verification: 'evaluator', evaluatorModel: 'LongCat-2.0' } }));

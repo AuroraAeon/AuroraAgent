@@ -73,6 +73,8 @@ export function startMock(port = 18901) {
         // mock 只见到重述才调 read_file 佐证；续跑轮（【目标续跑】在场）才提案完成
         const isGoalTurn2Read = body.includes('GOAL_TURN2') && !hasToolResult && body.includes('【进行中的目标】');
         const isGoalTurn2Proposal = body.includes('GOAL_TURN2') && body.includes('【目标续跑】');
+        // USE_GOAL_SPIN：create 后每轮原样复读同一句——验证熔断阶梯（第 2 轮 nudge、第 3 轮 paused）
+        const isGoalSpinRound = body.includes('USE_GOAL_SPIN') && lastToolText.includes('目标已创建');
         if (isGoalEditRound) {
           state.goalEditDone = true;
           const editSid = /USE_GOAL_EDIT:([0-9a-f-]{36})/.exec(body)?.[1];
@@ -89,7 +91,7 @@ export function startMock(port = 18901) {
         const isGoalIdleRound = body.includes('USE_GOAL_IDLE') && !isGoalWrapUp && body.includes('目标已创建')
           && !body.includes('【目标续跑】') && !lastToolText.includes('已记录');
         // 提案轮：首提案（上一条工具结果是 create 回执）或验证未通过反馈在场的复议；收尾轮不带工具不能误判
-        const isGoalProposalRound = !isGoalWrapUp && !isGoalIdleRound && !isGoalEditRound && (
+        const isGoalProposalRound = !isGoalWrapUp && !isGoalIdleRound && !isGoalEditRound && !isGoalSpinRound && (
           lastToolText.includes('目标已创建')
           || (body.includes('【目标验证未通过') && lastToolText.includes('已记录'))
           || isGoalTurn2Proposal
@@ -111,7 +113,7 @@ export function startMock(port = 18901) {
           : toolName === 'write_file' ? { path: 'written_by_agent.txt', content: 'AGENT_WROTE' } : { path: 'mock.txt' };
         const answer = isToolRound ? '' : isTitleRound ? 'README 安装章节改写' : isGoalWrapUp ? '已完成：建立目标并开始追踪；未完成：目标本身的工作；停止原因：token 预算已耗尽，可经 update_goal 抬高预算后续跑。' : isEvaluatorRound ? (body.includes('VERIFY_RETRY')
             ? ((state.evalRetryCalls = (state.evalRetryCalls || 0) + 1) === 1 ? '我觉得大概完成了' : '{"verdict":"met","evidence":"README 安装章节已按自述改写"}')
-            : lastText.includes('VERIFY_MET') ? '{"verdict":"met","evidence":"README 安装章节已按自述改写"}' : '{"verdict":"not_met","evidence":"自述与事实不符，缺口仍在","missing":["README 安装章节仍未按自述改写"]}') : isGoalIdleRound ? '让我先理清现状，下一步读取目标文件确认缺口。' : hasToolResult ? `工具结果已收到：${toolEcho}` : isImg ? '图中有一个蓝色的圆形。' : isPlanRound ? '计划：先读取目标文件确认现状，再用 edit_file 精确替换，最后汇报差异。' : lastText.includes('【已批准的计划】') ? '已按批准的计划执行完毕。' : lastText.includes('子任务甲') ? '子代理甲结果：工作目录共 3 个文件。' : lastText.includes('子任务乙') ? '子代理乙结果：README 开头是 AuroraAgent 本地 Agent 运行时。' : `你好！我是 ${j.model}。`;
+            : lastText.includes('VERIFY_MET') ? '{"verdict":"met","evidence":"README 安装章节已按自述改写"}' : '{"verdict":"not_met","evidence":"自述与事实不符，缺口仍在","missing":["README 安装章节仍未按自述改写"]}') : isGoalSpinRound ? '原地打转的回复。' : isGoalIdleRound ? '让我先理清现状，下一步读取目标文件确认缺口。' : hasToolResult ? `工具结果已收到：${toolEcho}` : isImg ? '图中有一个蓝色的圆形。' : isPlanRound ? '计划：先读取目标文件确认现状，再用 edit_file 精确替换，最后汇报差异。' : lastText.includes('【已批准的计划】') ? '已按批准的计划执行完毕。' : lastText.includes('子任务甲') ? '子代理甲结果：工作目录共 3 个文件。' : lastText.includes('子任务乙') ? '子代理乙结果：README 开头是 AuroraAgent 本地 Agent 运行时。' : `你好！我是 ${j.model}。`;
         // FLAKY：首次请求直接掐断 socket，模拟网络层失败（用于测试连接期重试）
         if (lastText.includes('FLAKY') && !state.flakyDone) {
           state.flakyDone = true;

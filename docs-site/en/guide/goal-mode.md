@@ -44,7 +44,7 @@ Names and schemas match codex / minimax-code so models need zero learning time; 
 - **Token budget**: `tokensUsed` accumulates through the usage ledger each round; on exhaustion the goal moves to `budget_limited(token)` and a single tool-free wrap-up round runs — summarizing what was done, what was not, and why it stopped, plus how to re-budget and continue
 - **Round / time budgets**: `goal.mainTurns` (continuation rounds) and `goal.activeSeconds` (in-turn active seconds) move the goal to `budget_limited(main_turn)` / `budget_limited(active_time)`; `graceSteps` is the grace period after exhaustion (default 1)
 - **Re-arming**: raising or clearing `token_budget` restores a `budget_limited(token)` goal to `active` (model side via CAS budget mode, user side via `/goal budget`)
-- **Dual breakers**: a repeated normalized reply fingerprint (`noProgressStreak`) and consecutive tool-free rounds (`noToolStreak`) share the threshold `goal.repeatedReplyLimit` (default 3) and never accumulate together; either trips the goal into `paused(no_progress)`
+- **Dual breakers**: a repeated normalized reply fingerprint (`noProgressStreak`) and consecutive tool-free rounds (`noToolStreak`) share the threshold `goal.repeatedReplyLimit` (default 3, range 2–10) and never accumulate together. The ladder mirrors MiniMax `decideAction`: the first observation is only recorded, the second injects the matching corrective nudge (repeated-reply / no-tool wording, merged when both fire, delivered with the next round), and the third trips the goal into `paused(no_progress)`. A round without usable reply text (a pure tool round) carries no fingerprint evidence — the streak and fingerprint stay as they were, so alternating empty rounds cannot launder a repeated reply past the breaker
 
 ## Verification tiers
 
@@ -98,7 +98,7 @@ The `goal` section of `auroraagent.config.json` (per-leaf fallback + clamping + 
 | `verification` | `none` | tier: `none` / `evaluator` / `subagent` |
 | `evaluatorModel` | empty | required for evaluator; setting it implies evaluator |
 | `evidence` | `brief` | evidence shape: `brief` / `transcript` |
-| `repeatedReplyLimit` | 3 | shared breaker threshold |
+| `repeatedReplyLimit` | 3 | shared breaker threshold (2–10; nudge on the 2nd observation, trip on the Nth) |
 | `repeatedNotMetLimit` | 5 | consecutive `not_met` (counted only while the gap set is unchanged) before `paused(no_progress)` |
 | `graceSteps` | 1 | grace rounds after round / time exhaustion (0–3) |
 | `mainTurns` | 0 | continuation round cap, 0 = unlimited |

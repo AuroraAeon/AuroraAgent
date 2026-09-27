@@ -19,7 +19,7 @@
 | `verification` | `none` | 验证档位：`none` / `evaluator` / `subagent` |
 | `evaluatorModel` | 空 | evaluator 档必填；填了即隐含启用 evaluator |
 | `evidence` | `brief` | 验证证据形态：`brief` / `transcript` |
-| `repeatedReplyLimit` | 3 | 双熔断共享阈值 |
+| `repeatedReplyLimit` | 3 | 双熔断共享阈值（2–10；第 2 次观察注入纠正提醒，第 N 次熔断） |
 | `repeatedNotMetLimit` | 5 | `not_met` 连续次数（缺口集合相同才累加）转 `paused(no_progress)` |
 | `graceSteps` | 1 | 轮次 / 时长触顶后的宽限轮数（0–3） |
 | `mainTurns` | 0 | 续跑轮次上限，0 = 不限 |

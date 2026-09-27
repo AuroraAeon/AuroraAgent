@@ -62,7 +62,7 @@ export function parseGoalConfig(raw, { warn = () => {} } = {}) {
   const graceSteps = leaf('graceSteps', g.graceSteps, clampInt(g.graceSteps, 0, 3, D.graceSteps));
   const mainTurns = leaf('mainTurns', g.mainTurns, clampInt(g.mainTurns, 0, 100000, D.mainTurns));
   const activeSeconds = leaf('activeSeconds', g.activeSeconds, clampInt(g.activeSeconds, 0, 10000000, D.activeSeconds));
-  const repeatedReplyLimit = leaf('repeatedReplyLimit', g.repeatedReplyLimit, clampInt(g.repeatedReplyLimit, 1, 10, D.repeatedReplyLimit));
+  const repeatedReplyLimit = leaf('repeatedReplyLimit', g.repeatedReplyLimit, clampInt(g.repeatedReplyLimit, 2, 10, D.repeatedReplyLimit));
   const repeatedNotMetLimit = leaf('repeatedNotMetLimit', g.repeatedNotMetLimit, clampInt(g.repeatedNotMetLimit, 1, 10, D.repeatedNotMetLimit));
 
   const ev = g.evaluator && typeof g.evaluator === 'object' && !Array.isArray(g.evaluator) ? g.evaluator : {};

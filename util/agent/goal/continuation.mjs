@@ -20,6 +20,24 @@ export function goalContinuationNote(goal) {
   return `${GOAL_CONTINUATION_NOTE}\n\n<objective>\n${escapeXmlText(objective)}\n</objective>`;
 }
 
+/** 熔断第 2 阶的纠正提醒（对齐 MiniMax nudgeGuard：复读 / 无工具各自成文，同时中招合并注入） */
+export const GOAL_NUDGE_NOTE = {
+  reply: [
+    '【无进展提醒】你上一轮的回复与此前的某一轮完全相同。不要重复同样的总结或停止点。',
+    '请重新审视当前证据，选择一个能实质推进目标的不同动作并执行，然后再汇报。',
+  ].join('\n'),
+  no_tool: [
+    '【无进展提醒】本目标的最近连续多轮都没有调用任何工具。重述计划、状态或意图不算进展。',
+    '请用工具检查当前证据并执行下一个具体动作，然后再汇报。',
+  ].join('\n'),
+};
+
+/** 按熔断计数器种类拼纠正提醒（kinds: ['reply' | 'no_tool']） */
+export function goalNudgeNote(kinds = []) {
+  const list = (Array.isArray(kinds) ? kinds : [kinds]).filter((k) => GOAL_NUDGE_NOTE[k]);
+  return list.map((k) => GOAL_NUDGE_NOTE[k]).join('\n\n');
+}
+
 /** 例行状态审计间隔（对齐 MiniMax reminder-policy 的 GOAL_TERMINAL_AUDIT_INTERVAL） */
 export const GOAL_AUDIT_INTERVAL = 5;
 

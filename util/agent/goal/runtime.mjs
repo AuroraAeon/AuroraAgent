@@ -7,7 +7,8 @@
  * 与 loop 的协作约定：
  *   - beginTurn()  turn 开始时定格目标是否 active（决定本 turn 是否受 goal 管辖）；
  *   - afterRound() 有工具调用的模型轮结束后调用，返回 undefined / 'finish' / 'wrapup / 'updated'；
- *     'updated' = 用户在 turn 内改写了目标文本，经 consumeNote() 取走【目标已更新】提醒注入下一轮；
+ *     'updated' / 'nudge' = 暂存了一条下一轮提醒（【目标已更新】/ 熔断第 2 阶纠正提醒），
+ *     均经 consumeNote() 取走注入下一轮；
  *   - onIdle()    无工具调用的模型轮结束后调用（含入账），返回 finish / wrapup / continue；
  *   - wait(reason) 权限 / 计划 / 验证等待期间设置 executionWait（供两端渲染「等待中」）；
  *   - finish()     turn 正常结束或上游失败时调用，结算待定的终态提案。
@@ -17,7 +18,7 @@ import { CREATE_GOAL_DEF, UPDATE_GOAL_DEF, GET_GOAL_DEF, resolveUpdateGoalMode }
 import { applyUsage, budgetBreach, rearmAfterBudgetRaise } from './budget.mjs';
 import { advanceBreakers } from './breaker.mjs';
 import { goalLimits, parseGoalConfig } from './config.mjs';
-import { GOAL_WRAPUP_NOTE, goalContinuationNote, goalObjectiveUpdatedNote, goalTurnStartNote, goalVerifierFeedbackNote } from './continuation.mjs';
+import { GOAL_WRAPUP_NOTE, goalContinuationNote, goalNudgeNote, goalObjectiveUpdatedNote, goalTurnStartNote, goalVerifierFeedbackNote } from './continuation.mjs';
 import { verifyGoalProposal, sameMissingSet } from './verification.mjs';
 
 export { GOAL_WRAPUP_NOTE };
@@ -52,7 +53,7 @@ export function createGoalRuntime({
   let createdThisTurn = false;    // 本 turn 内经 create_goal 武装
   let goalActiveAtStart = false;  // turn 开始时目标是否 active
   let seenObjective = null;      // turn 开始（或 create_goal）时定格的目标文本：用户中途改写即失配
-  let updatedNote = null;        // afterRound 检出改写时暂存的【目标已更新】提醒（loop 经 consumeNote 取走）
+  let pendingNote = null;        // afterRound 暂存的下一轮提醒（【目标已更新】/ 无进展纠正；loop 经 consumeNote 取走）
 
   const allowed = (name) => harnessTools.includes(name);
   const inPlay = () => goalActiveAtStart || createdThisTurn;
@@ -162,6 +163,7 @@ export function createGoalRuntime({
     // 提案轮也算「接了 goal 协议」：noToolStreak 不因提案累加，验证连胜才是提案打转的后备闸
     const toolCommitted = toolCalls.some((c) => !BOOKKEEPING_TOOLS.has(c.name)) || Boolean(pendingProposal);
     let directive;
+    let nudgeKinds = null;
     const next = goalStore.update(sessionId, (g) => {
       let n = applyUsage(g, { tokens, turnSeconds });
       const br = advanceBreakers(n, { replyText, toolCommitted, limit: cfg.repeatedReplyLimit });
@@ -176,11 +178,13 @@ export function createGoalRuntime({
         } else if (br.tripped) {
           n = { ...n, status: 'paused', statusReason: 'paused(no_progress)' };
           directive = 'finish';
+        } else if (br.nudge.length) {
+          nudgeKinds = br.nudge; // 熔断第 2 阶：不断闸，下一轮带纠正提醒（对齐 MiniMax nudge）
         }
       }
       return n;
     });
-    return { goal: next, directive };
+    return { goal: next, directive, nudge: nudgeKinds };
   };
 
   /** 有工具调用的模型轮结束后：入账 + 熔断 + 预算，返回 undefined / 'finish' / 'wrapup' */
@@ -193,15 +197,19 @@ export function createGoalRuntime({
       // 用户在 turn 进行中改写了目标文本（REST edit / 网页 Composer）：在飞模型下一轮
       // 必须看到新目标（对齐 MiniMax objective-updated 与 binding-stale 的失配取消语义）
       seenObjective = r.goal.objective;
-      updatedNote = goalObjectiveUpdatedNote(r.goal);
+      pendingNote = goalObjectiveUpdatedNote(r.goal);
       emitStatus(r.goal); // 状态未变但目标文本变了：让两端刷新展示
       return 'updated';
+    }
+    if (!r.directive && r.nudge) {
+      pendingNote = goalNudgeNote(r.nudge);
+      return 'nudge';
     }
     return r.directive;
   };
 
-  /** 取走并清空【目标已更新】提醒（afterRound 返回 'updated' 后由 loop 注入下一轮） */
-  const consumeNote = () => { const note = updatedNote; updatedNote = null; return note; };
+  /** 取走并清空暂存的下一轮提醒（afterRound 返回 'updated' / 'nudge' 后由 loop 注入） */
+  const consumeNote = () => { const note = pendingNote; pendingNote = null; return note; };
 
   /** 结算一次终态提案；allowContinue 决定验证未过（未到阈值）时是否带反馈续跑 */
   const settleProposal = async (goal, proposal, { allowContinue = false } = {}) => {
@@ -312,11 +320,11 @@ export function createGoalRuntime({
     emitUsage(r.goal);
     if (r.directive === 'wrapup') return { action: 'wrapup' };
     if (r.directive === 'finish') return { action: 'finish' };
-    return decideNext(r.goal);
+    return decideNext(r.goal, r.nudge);
   };
 
   /** 目标仍 active 时的下一步：有待定提案走结算（可带验证反馈续跑），否则注入续跑提醒 */
-  const decideNext = async (goal) => {
+  const decideNext = async (goal, nudgeKinds = null) => {
     if (goal.objective !== seenObjective) {
       // 空转轮前用户改写了目标：同样以【目标已更新】续轮；针对旧目标的待定提案作废
       // （对齐 MiniMax 绑定失配即取消——旧提案回答了没人再问的问题）
@@ -324,7 +332,11 @@ export function createGoalRuntime({
       pendingProposal = null;
       return { action: 'continue', extraSystem: goalObjectiveUpdatedNote(goal) };
     }
-    if (!pendingProposal) return { action: 'continue', extraSystem: goalContinuationNote(goal) };
+    if (!pendingProposal) {
+      const base = goalContinuationNote(goal);
+      const nudge = nudgeKinds && nudgeKinds.length ? `\n\n${goalNudgeNote(nudgeKinds)}` : '';
+      return { action: 'continue', extraSystem: `${base}${nudge}` };
+    }
     const d = await settleProposal(goal, pendingProposal, { allowContinue: true });
     const after = goalStore.get(sessionId);
     if (after) emitUsage(after);

@@ -19,7 +19,7 @@ Per-leaf fallback + clamping + startup warning. Full semantics: [Goal Mode guide
 | `verification` | `none` | tier: `none` / `evaluator` / `subagent` |
 | `evaluatorModel` | empty | required for evaluator; setting it implies evaluator |
 | `evidence` | `brief` | evidence shape: `brief` / `transcript` |
-| `repeatedReplyLimit` | 3 | shared breaker threshold |
+| `repeatedReplyLimit` | 3 | shared breaker threshold (2–10; nudge on the 2nd observation, trip on the Nth) |
 | `repeatedNotMetLimit` | 5 | consecutive `not_met` (counted only while the gap set is unchanged) before `paused(no_progress)` |
 | `graceSteps` | 1 | grace rounds after round / time exhaustion (0–3) |
 | `mainTurns` | 0 | continuation round cap, 0 = unlimited |
