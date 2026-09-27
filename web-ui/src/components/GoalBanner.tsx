@@ -52,7 +52,6 @@ export function GoalBanner({ goal, onAction }: Props) {
           {formatGoalCount(goal.tokensUsed)}{goal.tokenBudget != null ? ` / ${formatGoalCount(goal.tokenBudget)}` : ''} · {goal.turnsUsed} 轮 · {elapsed}
         </span>
       </div>
-      {goal.executionWait ? <div className="goalbanner-wait">{GOAL_WAIT_LABELS[goal.executionWait.reason] || '等待中'}…</div> : null}
       {v ? (
         <div className="goalbanner-verify">
           最近验证：{VERDICT_LABELS[v.verdict] || v.verdict}

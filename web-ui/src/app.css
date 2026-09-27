@@ -311,7 +311,6 @@
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
 .goalbanner-usage { flex:none; color:var(--dim); font-size:12px; font-variant-numeric:tabular-nums; }
-.goalbanner-wait { color:var(--think); font-size:12px; }
 .goalbanner-verify { color:var(--dim); font-size:12px; line-height:1.5; }
 .goalbanner-hint { color:var(--faint); font-size:12px; line-height:1.5; }
 .goalbanner-actions { display:flex; gap:8px; flex-wrap:wrap; }
