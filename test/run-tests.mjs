@@ -1606,6 +1606,8 @@ try {
     assert(app.includes('ev.sessionId === currentIdRef.current') && app.includes('if (ev.sessionId === currentIdRef.current) setGoal(ev.goal)'), 'SSE goal 事件应校验会话归属（对齐 MiniMax goal-flow.project 首行 sessionId 校验）');
     assert(app.includes('const stale = () => goalViewEpochRef.current !== epoch || currentIdRef.current !== sid;'), 'goal 命令回调应捕获发起时会话与纪元（对齐 MiniMax canProjectOperation）');
     assert(app.split('if (stale()) return;').length - 1 >= 4, 'goal 命令四类异步回调（clear / create / budget / pause·resume·stop）应依次防串会话');
+    assert(app.includes('existing = (await getGoal(sid)).goal;') && app.includes('if (stale()) return;\n    setGoal(existing);'), 'goal 命令执行前应取新鲜目标快照再分派（对齐 MiniMax execute() 的 runtime.getGoal）');
+    assert(/unfinished = existing !== null && existing\.status !== 'complete';/.test(app), 'create-or-edit 判定应基于新鲜快照而非 React state');
     assert(app.includes('const epoch = ++goalViewEpochRef.current;') && app.includes('if (goalViewEpochRef.current !== epoch) return;'), 'openSession 迟到响应应凭纪元丢弃（快切会话不投影旧会话内容）');
     assert(/当前没有会话[\s\S]{0,240}setGoalPrefill/.test(app), '无会话时 goal 命令应原样回填草稿（对齐 MiniMax retained 语义）');
     const msg = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Message.tsx'), 'utf8');

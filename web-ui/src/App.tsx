@@ -274,9 +274,24 @@ export default function App() {
     prevGoal.current = cur;
   }, [goal]);
 
-  /** /goal 斜杠命令：解析与终端 REPL 共用 command.mjs 单一事实源；执行走 /api/agent/goal* REST 面 */
-  const handleGoalCommand = (rawArgs: string) => {
+  /**
+   * /goal 斜杠命令：解析与终端 REPL 共用 command.mjs 单一事实源；执行走 /api/agent/goal* REST 面。
+   * 每次执行前先取一次新鲜目标快照再分派（对齐 MiniMax TuiGoalFlow.execute() 的
+   * `existing = await runtime.getGoal(sessionId)`）：React state 里的 goal 可能陈旧——turn 运行中
+   * 模型侧自建 / 改写目标、或另一客户端刚改动过——陈旧快照会让人误走 create 而非 edit、
+   * 或带陈旧纪元触发假 GOAL_STALE 409。help / error 不依赖快照，本地直接收尾（MiniMax 同样
+   * 在取快照前消费二者）。
+   */
+  const handleGoalCommand = async (rawArgs: string) => {
     const push = (text: string) => setMessages((m) => [...m, { kind: 'notice', key: `g${Date.now()}`, text }]);
+    const intent = parseGoalCommand(rawArgs);
+    if (intent.kind === 'help') { push(GOAL_COMMAND_HELP); return; }
+    if (intent.kind === 'error') {
+      // 解析失败不回撤输入：原样回填便于就地修改（对齐 MiniMax 的 retained 语义）
+      push(intent.message);
+      setGoalPrefill({ text: `/goal ${rawArgs}`, nonce: Date.now() });
+      return;
+    }
     if (!currentId) {
       push('当前没有会话：请先新建或切换会话，再管理目标');
       // 对齐 MiniMax retained 语义：无会话也原样回填，会话就绪后可直接重发
@@ -294,25 +309,23 @@ export default function App() {
       setGoalPrefill({ text: `/goal ${rawArgs}`, nonce: Date.now(), onlyIfEmpty: true });
       setError(`目标操作失败：${e instanceof Error ? e.message : String(e)}（输入已保留，可修改后重发）`);
     };
-    const intent = parseGoalCommand(rawArgs);
+    // 新鲜快照：create-or-edit 判定、纪元、查看摘要、edit 回填全部以它为准（在途切会话则丢弃）
+    let existing: GoalState | null;
+    try {
+      existing = (await getGoal(sid)).goal;
+    } catch (e) { fail(e); return; }
+    if (stale()) return;
+    setGoal(existing); // 以服务端真相校正横幅（含 turn 运行中模型侧的自建 / 改写）
     // 有未完成目标时「设立」语义变为「改写目标文本」（与 MiniMax 客户端 setObjective 一致；创建的严格 409 由服务端守）
-    const unfinished = goal !== null && goal.status !== 'complete';
+    const unfinished = existing !== null && existing.status !== 'complete';
     switch (intent.kind) {
       case 'view':
-        if (!goal) { push('当前会话没有目标：输入 /goal <你想达成的目标> 设立'); return; }
-        push(formatGoalSummary(goal));
-        return;
-      case 'help':
-        push(GOAL_COMMAND_HELP);
-        return;
-      case 'error':
-        // 解析失败不回撤输入：原样回填便于就地修改（对齐 MiniMax 的 retained 语义）
-        push(intent.message);
-        setGoalPrefill({ text: `/goal ${rawArgs}`, nonce: Date.now() });
+        if (!existing) { push('当前会话没有目标：输入 /goal <你想达成的目标> 设立'); return; }
+        push(formatGoalSummary(existing));
         return;
       case 'edit':
-        if (!goal) { push('当前会话没有目标'); return; }
-        setGoalPrefill({ text: `/goal ${goal.objective}`, nonce: Date.now() });
+        if (!existing) { push('当前会话没有目标'); return; }
+        setGoalPrefill({ text: `/goal ${existing.objective}`, nonce: Date.now() });
         push('编辑目标文本后按 Enter 提交（budget=50K 可随文调整预算）');
         return;
       case 'clear':
@@ -320,8 +333,8 @@ export default function App() {
         return;
       case 'create':
         // 改写路径同样携带 budget= 与纪元快照（/goal <目标> budget=50K 对已有目标也生效）
-        (unfinished
-          ? editGoal(sid, intent.objective, intent.tokenBudget, goal ? { expectedGoalId: goal.goalId, expectedUpdatedAt: goal.updatedAt } : undefined)
+        (unfinished && existing
+          ? editGoal(sid, intent.objective, intent.tokenBudget, { expectedGoalId: existing.goalId, expectedUpdatedAt: existing.updatedAt })
           : createGoal(sid, intent.objective, intent.tokenBudget))
           .then((r) => {
             if (stale()) return;
@@ -330,8 +343,8 @@ export default function App() {
           }).catch(fail);
         return;
       case 'budget':
-        if (!goal) { push('当前会话没有目标'); return; }
-        goalAction(sid, 'budget', { tokenBudget: intent.tokenBudget, expectedGoalId: goal.goalId, expectedUpdatedAt: goal.updatedAt })
+        if (!existing) { push('当前会话没有目标'); return; }
+        goalAction(sid, 'budget', { tokenBudget: intent.tokenBudget, expectedGoalId: existing.goalId, expectedUpdatedAt: existing.updatedAt })
           .then((r) => {
             if (stale()) return;
             setGoal(r.goal);
