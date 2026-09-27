@@ -141,7 +141,8 @@ export default function App() {
       await runTurn(
         { sessionId: cur.id, input: text, thinking, model: cur.model, provider: cur.provider },
         (ev: AgentEvent) => {
-          if (ev.type === 'turn_started') setLive((l) => (l ? { ...l, startedAt: Date.now() } : l));
+          if (ev.type === 'session_renamed') setSessions((prev) => prev.map((s) => (s.id === ev.sessionId ? { ...s, name: ev.name } : s)));
+          else if (ev.type === 'turn_started') setLive((l) => (l ? { ...l, startedAt: Date.now() } : l));
           else if (ev.type === 'model_round_started') setLive((l) => (l ? { ...l, round: ev.round } : l));
           else if (ev.type === 'text_chunk') setLive((l) => (l ? { ...l, text: l.text + ev.text } : l));
           else if (ev.type === 'thinking_chunk') setLive((l) => (l ? { ...l, thinking: l.thinking + ev.text } : l));

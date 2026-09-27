@@ -1313,6 +1313,17 @@ try {
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'tokens.css'), 'utf8');
     assert(css.includes('--diff-add:') && css.includes('--diff-del:'), 'tokens.css 应有 diff 语义令牌');
   });
+  await test('会话标题自动总结源码契约：事件登记、前端实时刷新与产物同步', async () => {
+    const events = readFileSync(join(__dirname, '..', 'util', 'agent', 'events.mjs'), 'utf8');
+    assert(events.includes("'session_renamed'"), '事件协议应登记 session_renamed');
+    const types = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'types.ts'), 'utf8');
+    assert(types.includes("type: 'session_renamed'"), '前端事件类型应声明 session_renamed');
+    const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
+    assert(app.includes("ev.type === 'session_renamed'"), 'App 应处理 session_renamed 并实时刷新会话标题');
+    const html = await (await fetch(`${BASE}/`)).text();
+    const js = await (await fetch(`${BASE}${/\/app\/assets\/[A-Za-z0-9._-]+\.js/.exec(html)[0]}`)).text();
+    assert(js.includes('session_renamed'), '构建产物应含标题刷新逻辑（改了 web-ui 忘了 build:web 会红）');
+  });
   await test('流式活动状态行源码契约：轮次 / 工具数 / 计时与费用行统一', () => {
     const cv = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ChatView.tsx'), 'utf8');
     assert(cv.includes('live-status') && cv.includes('useElapsed') && cv.includes('第 {live.round || 1} 轮'), '流式行应有活动状态（轮次 / 工具 / 计时）');
