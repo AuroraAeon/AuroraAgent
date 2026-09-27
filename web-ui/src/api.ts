@@ -1,5 +1,5 @@
 /** API 客户端：全部走 web.mjs 的同源 /api/*；turn 用 fetch 读 SSE（EventSource 不支持 POST） */
-import type { AgentEvent, GoalState, Harness, McpServerRow, ModelInfo, ProviderRow, SessionMeta, SessionRecord, SettingsInfo, SkillRow } from './types';
+import type { AgentEvent, GoalState, Harness, McpServerRow, ModelInfo, ProviderRow, SessionMeta, SessionRecord, SettingsInfo, SkillRow, TuiSettings } from './types';
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(path, {
@@ -25,6 +25,9 @@ export const listHarnesses = () => api<{ harnesses: Harness[]; default: string }
 export const listModels = () => api<{ models: ModelInfo[]; status: string }>('/api/models');
 export const getSettings = () => api<SettingsInfo>('/api/settings');
 export const setAutostart = (autostart: boolean) => api<{ ok: boolean }>('/api/settings', { method: 'POST', body: JSON.stringify({ autostart }) });
+export const getTuiSettings = () => api<TuiSettings>('/api/settings/tui');
+export const saveTuiSettings = (body: { terminalTitle?: string[]; notifications?: { when?: string; method?: string; events?: string[] } }) =>
+  api<{ ok: boolean; tui: TuiSettings['tui'] }>('/api/settings/tui', { method: 'POST', body: JSON.stringify(body) });
 export const listProviders = () => api<{ ok: boolean; protocols: { id: string; label: string }[]; providers: ProviderRow[] }>('/api/providers');
 export const createProvider = (draft: unknown) => api<{ ok: boolean; provider: ProviderRow; providers: ProviderRow[] }>('/api/providers', { method: 'POST', body: JSON.stringify(draft) });
 export const updateProvider = (id: string, draft: unknown) => api<{ ok: boolean; provider: ProviderRow; providers: ProviderRow[] }>(`/api/providers/${id}`, { method: 'PUT', body: JSON.stringify(draft) });

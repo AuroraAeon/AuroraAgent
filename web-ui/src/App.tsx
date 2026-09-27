@@ -4,6 +4,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
+import { browserNotifyEnabled } from './components/TuiPanel';
 import { ChatView } from './components/ChatView';
 import { Composer } from './components/Composer';
 import { SettingsDialog } from './components/SettingsDialog';
@@ -172,6 +173,14 @@ export default function App() {
           else if (ev.type === 'context_compression_failed') setLive((l) => (l ? { ...l, compression: null } : l));
           else if (ev.type === 'goal_created' || ev.type === 'goal_status_changed' || ev.type === 'goal_usage_updated' || ev.type === 'goal_wait_changed') setGoal(ev.goal);
           else if (ev.type === 'turn_failed') setError(ev.error || '任务失败');
+          // 浏览器通知（opt-in，默认关；未授权时静默跳过）
+          if ((ev.type === 'turn_completed' || ev.type === 'turn_failed') && browserNotifyEnabled() && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+            try {
+              new Notification(ev.type === 'turn_completed' ? 'AuroraAgent：任务完成' : 'AuroraAgent：任务失败', {
+                body: ev.type === 'turn_failed' ? (ev.error || '详见界面错误提示') : '点击回到会话查看结果',
+              });
+            } catch { /* 部分浏览器构造即抛，忽略 */ }
+          }
         },
       );
     } catch (e) {

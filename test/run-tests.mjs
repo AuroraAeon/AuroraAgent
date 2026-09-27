@@ -1535,6 +1535,15 @@ try {
     assert(api2.includes('/api/agent/sessions/${id}/fork') && api2.includes('forkSession'), 'api 客户端应覆盖会话派生');
     assert(app.includes('forkSession(id)') && app.includes('onFork={forkSessionById}'), 'App 应接线派生会话');
     assert(js.includes('sess-fork'), '构建产物应含派生入口（改了 web-ui 忘了 build:web 会红）');
+    // 终端偏好面板：标题项序 / 通知三档 / 浏览器通知开关
+    const tuiPanel = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'TuiPanel.tsx'), 'utf8');
+    assert(tuiPanel.includes('tui-chip') && tuiPanel.includes('saveTuiSettings') && tuiPanel.includes('browserNotifyEnabled') && !hasEmoji(tuiPanel), 'TuiPanel 应有芯片开关与保存接线且零 emoji');
+    assert(tuiPanel.includes('/api/settings/tui') === false, '前端不直连路径，走 api.ts');
+    const api3 = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'api.ts'), 'utf8');
+    assert(api3.includes('/api/settings/tui') && api3.includes('getTuiSettings') && api3.includes('saveTuiSettings'), 'api 客户端应覆盖终端偏好读写');
+    const dlg = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SettingsDialog.tsx'), 'utf8');
+    assert(dlg.includes('<TuiPanel />'), '设置弹层应挂载终端偏好面板');
+    assert(js.includes('tui-chip'), '构建产物应含终端偏好面板（改了 web-ui 忘了 build:web 会红）');
   });
   await test('OSC 终端标题接线源码契约：状态词随模式变、挂起清除、退出清空', async () => {
     const term = readFileSync(join(__dirname, '..', 'util', 'agent', 'terminal.mjs'), 'utf8');
@@ -2451,6 +2460,47 @@ await test('Agent turn：USE_GOAL_VERIFY_NOTMET 连续未达到阈值转 blocked
   eq(goalFile.status, 'blocked');
   eq(goalFile.statusReason, 'blocked(verifier_impossible)');
   assert(goalFile.lastVerification.notMetStreak >= 5);
+});
+
+// ---------- 终端偏好：/api/settings/tui（设置页读写，终端启动时读取一次） ----------
+await test('GET/POST /api/settings/tui：读生效配置、局部合并更新、坏值 400 / 405', async () => {
+  const cfgPath = join(tmpDataDir, 'auroraagent.config.json');
+  writeFileSync(cfgPath, JSON.stringify({
+    tui: { terminalTitle: ['state', 'app'], notifications: { when: 'always', method: 'osc9', events: ['turn-complete'] } },
+  }));
+  const got = await (await fetch(`${BASE}/api/settings/tui`)).json();
+  eq(got.ok, true, '应回 ok');
+  eq(got.tui.terminalTitle.join(','), 'state,app', '应读到达项序');
+  eq(got.tui.notifications.when, 'always', '应读到达通知时机');
+  eq(got.tui.notifications.method, 'osc9');
+  eq(got.tui.notifications.events.join(','), 'turn-complete');
+  assert(got.options.terminalTitleItems.includes('session') && got.options.notificationEvents.includes('question-required'), '应回可选取值供设置页渲染');
+  const p1 = await (await fetch(`${BASE}/api/settings/tui`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ notifications: { when: 'never' } }),
+  })).json();
+  eq(p1.tui.notifications.when, 'never', '局部更新应生效');
+  eq(p1.tui.terminalTitle.join(','), 'state,app', '未给字段应保持');
+  eq(p1.tui.notifications.method, 'osc9', '同段未给字段应保持');
+  const p2 = await (await fetch(`${BASE}/api/settings/tui`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ terminalTitle: [] }),
+  })).json();
+  eq(p2.tui.terminalTitle.length, 0, '空数组应关闭标题');
+  eq((await fetch(`${BASE}/api/settings/tui`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ terminalTitle: ['nope'] }),
+  })).status, 400, '未知标题项应 400');
+  eq((await fetch(`${BASE}/api/settings/tui`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notifications: { when: 'sometimes' } }),
+  })).status, 400, '未知通知时机应 400');
+  eq((await fetch(`${BASE}/api/settings/tui`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notifications: { events: ['nope'] } }),
+  })).status, 400, '未知通知事件应 400');
+  eq((await fetch(`${BASE}/api/settings/tui`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+  })).status, 400, '空体应 400');
+  eq((await fetch(`${BASE}/api/settings/tui`, { method: 'DELETE' })).status, 405, '其他方法应 405');
+  rmSync(cfgPath, { force: true });
 });
 
 // ---------- Goal REST 面：/api/agent/goal*（用户操作优先级永远高于模型提案） ----------

@@ -91,6 +91,20 @@ export type SettingsInfo = {
   serviceRunning: boolean; servicePid: number | null; port: number; dataDir: string;
 };
 
+/** 终端 TUI 偏好（服务端配置，终端启动时读取一次；解析形态见 util/tui/config.mjs） */
+export type TuiConfig = {
+  terminalTitle: string[];
+  notifications: { when: string; method: string; events: string[] };
+};
+export type TuiSettings = {
+  ok: boolean; tui: TuiConfig;
+  options: {
+    terminalTitleItems: string[]; defaultTerminalTitle: string[];
+    notificationWhen: string[]; notificationMethods: string[]; notificationEvents: string[];
+    defaultNotifications: { when: string; method: string; events: string[] };
+  };
+};
+
 /** 历史投影：一条 assistant 视图可带思考、工具列表与用量脚注 */
 export type TodoItem = { text: string; done: boolean };
 export type DiffLine = { type: 'context' | 'add' | 'del' | 'meta'; lineNo: number; text: string };

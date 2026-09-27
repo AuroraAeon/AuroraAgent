@@ -17,7 +17,8 @@ import { ProviderStore, ProviderError, handleProviderApi } from './util/provider
 import { pumpSse, pumpTranslated } from './util/stream.mjs';
 import { openChatStream } from './util/llm/provider.mjs';
 import { createAgentApi } from './util/agent/http.mjs';
-import { resolveDataDir, loadConfig, PRICE } from './util/config.mjs';
+import { handleTuiSettingsApi } from './util/tui/settings-api.mjs';
+import { resolveDataDir, loadConfig, saveConfig, PRICE } from './util/config.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // 数据目录与配置统一走 util/config.mjs（env → 源码态 → App 态三级回退，含旧命名一次性迁移）
@@ -315,6 +316,11 @@ const server = createServer(async (req, res) => {
       }
     });
     return;
+  }
+
+  // 终端 TUI 偏好（/api/settings/tui，实现见 util/tui/settings-api.mjs；终端启动时读取一次）
+  if (url.startsWith('/api/settings/tui')) {
+    if (await handleTuiSettingsApi(req, res, url, { loadConfig, saveConfig, log })) return;
   }
 
   if (req.method === 'POST' && url === '/api/abort') {
