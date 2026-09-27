@@ -9,6 +9,7 @@ import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { parseGoalConfig } from './agent/goal/config.mjs';
+import { parseTuiConfig } from './tui/config.mjs';
 
 /** 限时折扣价: 输入 ¥2 / 输出 ¥8 每百万 tokens */
 export const PRICE = { input: 2, output: 8 };
@@ -89,6 +90,8 @@ export function loadConfig({ warn } = {}) {
     titleMode: TITLE_MODES.includes(saved.titleMode) ? saved.titleMode : DEFAULT_TITLE_MODE,
     // goal 段解析（单叶容错 + 钳制）落在 goal/config.mjs；启动方传 warn  surfaced 坏值告警
     goal: parseGoalConfig(saved.goal, warn ? { warn } : {}),
+    // tui 段解析（终端标题项序 + 通知三档）落在 tui/config.mjs，同样的单叶容错纪律
+    tui: parseTuiConfig(saved.tui, warn ? { warn } : {}),
   };
 }
 
@@ -103,6 +106,7 @@ export function saveConfig(cfg) {
     planMode: cfg.planMode === true,
     titleMode: TITLE_MODES.includes(cfg.titleMode) ? cfg.titleMode : DEFAULT_TITLE_MODE,
     goal: parseGoalConfig(cfg.goal),
+    tui: parseTuiConfig(cfg.tui),
   };
   if (!cfg.keyIsOverride) out.apiKey = cfg.apiKey;
   writeFileSync(join(resolveDataDir(), CONFIG_FILE), JSON.stringify(out, null, 2) + '\n');
