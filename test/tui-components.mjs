@@ -75,5 +75,9 @@ export async function runTuiComponentTests(test, assert, eq) {
     const narrow = strip(renderFooter({ model: 'LongCat-2.5', harness: 'Standard', thinking: true, permissionMode: 'ask_when_needed', tokens: 1234, cost: '0.5' }, p, 30));
     assert(narrow.includes('LongCat-2.5'), '窄屏保留必需段');
     assert(!narrow.includes('tokens'), '窄屏裁剪可选 tokens 段');
+    const modelTitle = strip(renderFooter({ model: 'LongCat-2.5', harness: 'Standard', thinking: true, permissionMode: 'ask_when_needed', titleMode: 'model' }, p, 100));
+    assert(modelTitle.includes('标题') && modelTitle.includes('模型总结'), '模型总结标题时应显示标题段');
+    const localTitle = strip(renderFooter({ model: 'LongCat-2.5', harness: 'Standard', thinking: true, permissionMode: 'ask_when_needed', titleMode: 'local' }, p, 100));
+    assert(!localTitle.includes('标题'), '本地推导不应显示标题段');
   });
 }

@@ -1385,6 +1385,12 @@ try {
     assert(app.includes("ev.type === 'session_renamed'"), 'App 应处理 session_renamed 并实时刷新会话标题');
     const turn = readFileSync(join(__dirname, '..', 'util', 'agent', 'terminal-turn.mjs'), 'utf8');
     assert(turn.includes("case 'session_renamed':"), '终端渲染器应呈现标题更新提示');
+    assert(turn.includes('titleMode: TITLE_MODES.includes(session.titleMode)'), '终端应把标题生成方式透传 Loop');
+    const term = readFileSync(join(__dirname, '..', 'util', 'agent', 'terminal.mjs'), 'utf8');
+    assert(term.includes("{ name: 'title'") && term.includes("argHint: '<local|model>'"), '终端应有 /title 切换命令');
+    assert(term.includes("name: 'new'") && term.includes('titleMode: TITLE_MODES.includes(meta.titleMode)'), '终端新建会话应继承标题生成方式');
+    const footer = readFileSync(join(__dirname, '..', 'util', 'tui', 'footer.mjs'), 'utf8');
+    assert(footer.includes("state.titleMode === 'model'"), '状态栏应在模型总结模式下提示标题段');
     const html = await (await fetch(`${BASE}/`)).text();
     const js = await (await fetch(`${BASE}${/\/app\/assets\/[A-Za-z0-9._-]+\.js/.exec(html)[0]}`)).text();
     assert(js.includes('session_renamed'), '构建产物应含标题刷新逻辑（改了 web-ui 忘了 build:web 会红）');

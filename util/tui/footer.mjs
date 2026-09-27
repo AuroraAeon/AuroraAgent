@@ -15,6 +15,7 @@ export function renderFooter(state, painter, width = 80) {
     { label: '权限', val: PERM_LABEL[state.permissionMode] || state.permissionMode || '必要时询问', token: 'text', optional: true },
   ];
   if (state.planMode) segs.push({ label: '计划', val: '开', token: 'warning', optional: true });
+  if (state.titleMode === 'model') segs.push({ label: '标题', val: '模型总结', token: 'text', optional: true });
   if (state.busy) segs.push({ label: '', val: '生成中', token: 'primary', optional: true });
   if (state.tokens != null) {
     const cost = state.cost != null ? ` · ¥${state.cost}` : '';

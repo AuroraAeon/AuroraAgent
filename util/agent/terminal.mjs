@@ -9,7 +9,7 @@ import { SessionStore } from './session.mjs';
 import { UsageLedger } from '../usage.mjs';
 import { ProviderStore } from '../providers.mjs';
 import { HARNESSES, getHarness } from './harness.mjs';
-import { loadConfig, saveConfig, PRICE, resolveDataDir, experimentalEnabled } from '../config.mjs';
+import { loadConfig, saveConfig, PRICE, resolveDataDir, experimentalEnabled, TITLE_MODES } from '../config.mjs';
 import { McpRegistry } from '../mcp/registry.mjs';
 import { defineCommands, commandHelpLines, parseCommand } from '../tui/commands.mjs';
 import { renderFooter } from '../tui/footer.mjs';
@@ -66,7 +66,7 @@ export async function runTerminal({ argv = [] } = {}) {
   if (mcp) mcp.refresh().catch(() => {});
 
   let meta = store.list()[0] || store.create({
-    model: cfg.model, provider: providers.providerForModel(cfg.model).id, harness: 'standard',
+    model: cfg.model, provider: providers.providerForModel(cfg.model).id, harness: 'standard', titleMode: cfg.titleMode,
   });
 
   // 主题：环境变量 AURORAAGENT_THEME 或会话内 /theme 切换；painter 每帧从当前色板新建
@@ -199,7 +199,10 @@ export async function runTerminal({ argv = [] } = {}) {
   const baseCommands = [
     { name: 'help', summary: '显示全部命令', run: printHelp },
     { name: 'new', summary: '新建会话（携带当前模型与模式）', run: () => {
-      const created = store.create({ model: meta.model, provider: meta.provider, harness: meta.harness, planMode: meta.planMode === true });
+      const created = store.create({
+        model: meta.model, provider: meta.provider, harness: meta.harness, planMode: meta.planMode === true,
+        titleMode: TITLE_MODES.includes(meta.titleMode) ? meta.titleMode : cfg.titleMode,
+      });
       meta = created;
       console.log(painter().dim(`✓ 新会话已创建：${created.name}`));
     } },
@@ -222,6 +225,16 @@ export async function runTerminal({ argv = [] } = {}) {
         console.log(`  ${painter().text(s.name || s.id)} ${painter().dim(`(${s.transport})`)} ${state}`);
       }
       console.log(painter().dim(`  可用 MCP 工具 ${mcp.tools.length} 个：${mcp.tools.map((t) => t.name).join('、') || '（无）'}`));
+    } },
+    { name: 'title', argHint: '<local|model>', summary: '会话标题生成方式（local 本地推导零成本 / model 调模型总结）', run: (arg) => {
+      const want = String(arg || '').trim();
+      if (!want) {
+        console.log(painter().dim(`当前标题生成方式: ${meta.titleMode === 'model' ? '模型总结（每个新会话多一次小额请求）' : '本地推导（零成本）'}`));
+        return;
+      }
+      if (!TITLE_MODES.includes(want)) { console.log(painter().warning('用法: /title local|model（local 本地推导，model 调模型总结）')); return; }
+      meta = store.patch(meta.id, { titleMode: want }) || meta;
+      console.log(painter().dim(`✓ 标题生成方式已切换为${want === 'model' ? '模型总结（每个新会话多一次小额请求）' : '本地推导（零成本）'}`));
     } },
     { name: 'plan', argHint: 'on|off', summary: '计划模式开关（默认关；开启后下一轮先出计划，批准才执行）', run: (arg) => {
       const on = arg !== 'off';
@@ -265,6 +278,7 @@ export async function runTerminal({ argv = [] } = {}) {
     thinking: cfg.thinking,
     permissionMode: cfg.permissionMode,
     planMode: meta.planMode === true,
+    titleMode: TITLE_MODES.includes(meta.titleMode) ? meta.titleMode : cfg.titleMode,
     tokens: foot.tokens,
     cost: foot.cost,
   });

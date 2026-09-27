@@ -5,7 +5,7 @@
  * （每帧从当前色板新建，主题切换当帧生效）。契约：docs/tui-design.md + util/agent/events.mjs。
  */
 import { runAgentTurn } from './loop.mjs';
-import { PRICE } from '../config.mjs';
+import { PRICE, TITLE_MODES } from '../config.mjs';
 import { toolLabel, fmtCost, indent, CLEAR } from './terminal-format.mjs';
 
 /**
@@ -161,6 +161,7 @@ export async function runTerminalTurn({ store, usage, session, input, provider, 
       emit, controller: turnController, extraTools,
       permissionMode: cfg.permissionMode,
       planMode: session.planMode !== undefined ? session.planMode === true : cfg.planMode === true,
+      titleMode: TITLE_MODES.includes(session.titleMode) ? session.titleMode : cfg.titleMode,
       // 权限询问与主输入共用同一条 line 通道（ask()），避免 readline 双消费；
       // 中断（Ctrl+C）时按拒绝放行，让循环收尾成 turn_cancelled
       requestPermission: ({ toolName, params, resource }) => new Promise((resolve) => {
