@@ -4,6 +4,7 @@
 import { parseCommand, defineCommands, commandHelpLines } from '../util/tui/commands.mjs';
 import { renderSelect } from '../util/tui/select.mjs';
 import { renderFooter } from '../util/tui/footer.mjs';
+import { buildTerminalTitle, oscTitle, clearTitle } from '../util/tui/title.mjs';
 import { SearchableList } from '../util/tui/searchable-list.mjs';
 import { createPainter, PALETTES } from '../util/tui/theme.mjs';
 
@@ -67,6 +68,20 @@ export async function runTuiComponentTests(test, assert, eq) {
     list.setQuery('zzz');
     const lines = stripAll(renderSelect({ list, title: 'Select', hint: 'hint', width: 40, painter: p }));
     assert(lines.some((l) => l.includes('No matches')));
+  });
+
+  await test('title: buildTerminalTitle 项序拼装、空项序关闭与序列净化', () => {
+    eq(buildTerminalTitle(['state', 'session', 'app'], { state: '生成中', session: '新会话', app: 'AuroraAgent' }), '生成中 | 新会话 | AuroraAgent');
+    eq(buildTerminalTitle(['session', 'state'], { state: '就绪', session: '测试' }), '测试 | 就绪', '应按配置项序而非传入序');
+    eq(buildTerminalTitle([], { state: '就绪', session: 'x', app: 'y' }), null, '空项序 = 关闭');
+    eq(buildTerminalTitle(['state', 'session'], { state: '', session: '' }), null, '全空段不产生标题');
+    eq(buildTerminalTitle(['app'], { app: 'AuroraAgent' }), 'AuroraAgent', '缺省段被跳过');
+    // 会话名里的 ESC / BEL / 换行必须被剥掉，防止注入终端序列
+    const evil = oscTitle(buildTerminalTitle(['session'], { session: '坏\x1b]0;pwned\x07名' }));
+    assert(!evil.includes('pwned') || evil.indexOf('pwned') > evil.indexOf('\x1b]0;') + 3, '注入序列不得形成第二个 OSC');
+    eq(evil.startsWith('\x1b]0;'), true, '应以 OSC 0 开头');
+    eq(evil.endsWith('\x07'), true, '应以 BEL 收尾');
+    eq(clearTitle(), '\x1b]0;\x07', '清空序列');
   });
 
   await test('footer: 含模型/模式/思考/权限，窄宽度裁剪可选段', () => {

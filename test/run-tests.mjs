@@ -1440,6 +1440,16 @@ try {
     const js = await (await fetch(`${BASE}${/\/app\/assets\/[A-Za-z0-9._-]+\.js/.exec(html)[0]}`)).text();
     assert(js.includes('goalbanner'), '构建产物应含目标横幅（改了 web-ui 忘了 build:web 会红）');
   });
+  await test('OSC 终端标题接线源码契约：状态词随模式变、挂起清除、退出清空', async () => {
+    const term = readFileSync(join(__dirname, '..', 'util', 'agent', 'terminal.mjs'), 'utf8');
+    assert(term.includes('buildTerminalTitle(cfg.tui.terminalTitle'), '标题应按 tui.terminalTitle 项序拼装');
+    assert(term.includes("state: btwMode ? '侧边对话' : busy ? '生成中' : '就绪'"), '状态词应随侧边/生成态切换');
+    assert(term.includes("process.on('SIGTSTP'") && term.includes("'SIGSTOP'"), '挂起应用不可捕获的 SIGSTOP 真正停下（Node 会拦截 SIGTSTP 重发）');
+    assert(term.includes("process.on('SIGCONT'") && term.includes('applyTitle'), '恢复后应重设标题');
+    assert(term.includes('const cleanExit = ()') && term.split('process.exit(0)').length - 1 <= 1, '退出应统一走 cleanExit 清标题');
+    const title = readFileSync(join(__dirname, '..', 'util', 'tui', 'title.mjs'), 'utf8');
+    assert(title.includes('export function oscTitle') && title.includes('export function clearTitle'), '标题模块应导出写/清两个函数');
+  });
   await test('流式活动状态行源码契约：轮次 / 工具数 / 计时与费用行统一', () => {
     const cv = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ChatView.tsx'), 'utf8');
     assert(cv.includes('live-status') && cv.includes('useElapsed') && cv.includes('第 {live.round || 1} 轮'), '流式行应有活动状态（轮次 / 工具 / 计时）');

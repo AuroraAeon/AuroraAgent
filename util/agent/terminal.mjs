@@ -17,6 +17,7 @@ import { loadConfig, saveConfig, PRICE, resolveDataDir, experimentalEnabled, TIT
 import { McpRegistry } from '../mcp/registry.mjs';
 import { defineCommands, commandHelpLines, parseCommand } from '../tui/commands.mjs';
 import { renderFooter } from '../tui/footer.mjs';
+import { buildTerminalTitle, oscTitle, clearTitle } from '../tui/title.mjs';
 import { paletteFor, createPainter } from '../tui/theme.mjs';
 import { SearchableList } from '../tui/searchable-list.mjs';
 import { pick } from '../tui/pick.mjs';
@@ -80,12 +81,32 @@ export async function runTerminal({ argv = [] } = {}) {
   const foot = { tokens: null, cost: null }; // footer 展示的最近一次用量
 
   const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: process.stdin.isTTY === true });
+  // OSC 终端标题：状态词随 mode/busy 变；退出与挂起清空、恢复重设
+  const applyTitle = () => {
+    const t = buildTerminalTitle(cfg.tui.terminalTitle, {
+      state: btwMode ? '侧边对话' : busy ? '生成中' : '就绪',
+      session: meta.name,
+      app: 'AuroraAgent',
+    });
+    if (t) process.stdout.write(oscTitle(t));
+  };
+  // 挂起（Ctrl+Z）：Node 会拦截 SIGTSTP 的重发导致假挂起，改用不可捕获的 SIGSTOP 真正停下；
+  // 期间标题已清空，SIGCONT（fg）后按当前状态重设
+  process.on('SIGTSTP', () => {
+    process.stdout.write(clearTitle());
+    process.kill(process.pid, 'SIGSTOP');
+  });
+  process.on('SIGCONT', () => applyTitle());
+  // 退出统一出口：清标题再走（oneShot / close / wantExit 三条路径共用）
+  const cleanExit = () => { process.stdout.write(clearTitle()); process.exit(0); };
+
   const hooks = {}; // turn 运行期挂 abort；rl 的 SIGINT 事件中转进来（raw mode 下无真信号）
   rl.on('SIGINT', () => {
     if (hooks.abort) hooks.abort(); // 生成中：中断并保留已生成内容
     else rl.close(); // 空提示符：退出（与无监听时的 readline 默认行为一致）
   });
   let busy = false;
+  let btwMode = false; // 侧边对话模式（/btw 进入，Ctrl+/ 切换）
   let wantExit = false;
   let quitting = false;
   const lineQueue = [];
@@ -95,10 +116,10 @@ export async function runTerminal({ argv = [] } = {}) {
     if (lineWaiter) { const w = lineWaiter; lineWaiter = null; w(line); }
     else lineQueue.push(line);
   });
-  rl.on('close', () => { if (!busy && !lineQueue.length) process.exit(0); wantExit = true; });
+  rl.on('close', () => { if (!busy && !lineQueue.length) cleanExit(); wantExit = true; });
   const ask = () => {
     if (lineQueue.length) return Promise.resolve(lineQueue.shift());
-    if (wantExit) process.exit(0);
+    if (wantExit) cleanExit();
     return new Promise((res) => { lineWaiter = res; });
   };
 
@@ -149,6 +170,7 @@ export async function runTerminal({ argv = [] } = {}) {
         return;
       }
       meta = list[idx];
+      applyTitle();
       console.log(painter().dim(`✓ 已切换到：${meta.name}`));
       if (meta.turns > 0) printRecap(meta);
       return;
@@ -162,6 +184,7 @@ export async function runTerminal({ argv = [] } = {}) {
     });
     if (!chosen) return;
     meta = chosen;
+    applyTitle();
     console.log(painter().dim(`✓ 已切换到：${chosen.name}`));
     if (meta.turns > 0) printRecap(meta);
   };
@@ -252,6 +275,7 @@ export async function runTerminal({ argv = [] } = {}) {
         titleMode: TITLE_MODES.includes(meta.titleMode) ? meta.titleMode : cfg.titleMode,
       });
       meta = created;
+      applyTitle();
       console.log(painter().dim(`✓ 新会话已创建：${created.name}`));
     } },
     { name: 'sessions', argHint: '[序号]', summary: '列出 / 切换会话（无参数弹出选择器）', run: cmdSessions },
@@ -347,11 +371,13 @@ export async function runTerminal({ argv = [] } = {}) {
 
   if (oneShot) {
     busy = true;
+    applyTitle();
     await runTurn(oneShot);
-    process.exit(0);
+    cleanExit();
   }
 
   printBanner();
+  applyTitle();
   if (meta.turns > 0) { console.log(painter().dim('  最近几行:')); printRecap(meta); console.log(''); }
 
   for (;;) {
@@ -370,8 +396,10 @@ export async function runTerminal({ argv = [] } = {}) {
       continue;
     }
     busy = true;
+    applyTitle();
     await runTurn(line);
     busy = false;
-    if (wantExit && !lineQueue.length) process.exit(0);
+    applyTitle();
+    if (wantExit && !lineQueue.length) cleanExit();
   }
 }
