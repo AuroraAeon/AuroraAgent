@@ -1,5 +1,5 @@
 /**
- * 手写 Markdown 子集渲染器：代码块 / 行内代码 / 粗体 / 链接 / 标题 / 有序无序列表 / LaTeX 公式。
+ * 手写 Markdown 子集渲染器：代码块 / 行内代码 / 粗体 / 链接 / 标题 / 有序无序列表 / 表格 / LaTeX 公式。
  * 刻意不引 md 库（零依赖铁律的延伸：前端也保持轻量）；纯文本一律经 React 转义，
  * 唯一例外是 latex.tsx 交给 KaTeX 的公式排版结果（理由见该文件注释）。
  * 公式分隔符覆盖 $$...$$ / \[...\] / 裸 \begin{env} / $...$ / \(...\)，见 math-split.mjs。
@@ -7,6 +7,8 @@
 import { createElement, type ReactNode } from 'react';
 import { MathView } from './latex';
 import { isDisplayMathStart, splitMathSegments, takeDisplayMath } from './math-split.mjs';
+import { parseTableBlock } from './md-table.mjs';
+import type { TableAlign, TableBlock } from './md-table.mjs';
 import { highlightCode } from './highlight';
 
 const BOLD_LINK_RE = /\*\*([^*\n]+)\*\*|\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g;
@@ -44,6 +46,33 @@ function inline(text: string, keyPrefix: string): ReactNode[] {
     i++;
   }
   return nodes;
+}
+
+/** 表格块：表头 + 分隔行 + 数据行（解析规则在 md-table.mjs），单元格走同行内渲染 */
+function TableView({ table }: { table: TableBlock }) {
+  const cell = (text: string, key: string, align: TableAlign) => (
+    <td key={key} style={{ textAlign: align }}>{inline(text, key)}</td>
+  );
+  return (
+    <div className="md-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            {table.header.map((c, ci) => (
+              <th key={`h${ci}`} style={{ textAlign: table.align[ci] || 'left' }}>{inline(c, `th${ci}`)}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {table.rows.map((r, ri) => (
+            <tr key={`r${ri}`}>
+              {table.header.map((_, ci) => cell(r[ci] ?? '', `td${ri}-${ci}`, table.align[ci] || 'left'))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 const UL_RE = /^\s*[-*]\s+(.*)$/;
@@ -91,6 +120,12 @@ export function Markdown({ text }: { text: string }) {
       i++;
       continue;
     }
+    const table = parseTableBlock(lines, i);
+    if (table) {
+      blocks.push(<TableView key={k++} table={table} />);
+      i = table.next;
+      continue;
+    }
     if (UL_RE.test(line)) {
       const items: string[] = [];
       while (i < lines.length) {
@@ -123,7 +158,7 @@ export function Markdown({ text }: { text: string }) {
     }
     if (!line.trim()) { i++; continue; }
     const para: string[] = [];
-    while (i < lines.length && lines[i].trim() && !H_RE.test(lines[i]) && !UL_RE.test(lines[i]) && !OL_RE.test(lines[i]) && !/^```/.test(lines[i]) && !isDisplayMathStart(lines[i])) {
+    while (i < lines.length && lines[i].trim() && !H_RE.test(lines[i]) && !UL_RE.test(lines[i]) && !OL_RE.test(lines[i]) && !/^```/.test(lines[i]) && !isDisplayMathStart(lines[i]) && !parseTableBlock(lines, i)) {
       para.push(lines[i]);
       i++;
     }

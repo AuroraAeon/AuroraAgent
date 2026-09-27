@@ -167,6 +167,13 @@
 }
 .md pre code { background:none; border:0; padding:0; font-size:12.8px; line-height:1.65; }
 .md strong { color:var(--text); font-weight:650; }
+/* 表格：外层包裹层负责横向滚动，宽表格不撑破气泡 */
+.md-table-wrap { margin:.6em 0; border:1px solid var(--line); border-radius:10px; overflow-x:auto; }
+.md table { border-collapse:collapse; width:100%; font-size:13.8px; }
+.md th, .md td { padding:.4em .7em; border-bottom:1px solid var(--line); border-right:1px solid var(--line); vertical-align:top; }
+.md th:last-child, .md td:last-child { border-right:0; }
+.md tbody tr:last-child td { border-bottom:0; }
+.md thead th { background:var(--code-bg); font-weight:650; color:var(--text); }
 
 /* ---------- LaTeX 公式（KaTeX，见 latex.tsx） ---------- */
 /* 包装层不参与布局：显示公式以块级身份直接落在段落里，行内公式则贴合文字流 */

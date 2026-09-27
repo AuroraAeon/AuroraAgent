@@ -28,6 +28,7 @@ import { runTuiToolkitTests } from './tui-toolkit.mjs';
 import { runGuardTests } from './guards.mjs';
 import { runLlmTests } from './llm.mjs';
 import { runHighlightTests } from './highlight.mjs';
+import { runMarkdownTests } from './markdown.mjs';
 import { runConfigTests } from './config.mjs';
 import { runTuiComponentTests } from './tui-components.mjs';
 import { runPickTests } from './pick.mjs';
@@ -89,6 +90,7 @@ async function readStream(resp) {
 await runTuiToolkitTests(test, assert, eq);
 await runLlmTests(test, assert, eq);
 await runHighlightTests(test, assert, eq);
+await runMarkdownTests(test, assert, eq);
 await runConfigTests(test, assert, eq);
 await runTuiComponentTests(test, assert, eq);
   await runPickTests(test, assert, eq);

@@ -83,6 +83,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 | `web-ui/` | React + Vite + TS 工作台：`src/App.tsx` + `components/{Sidebar,ChatView,Message,ToolCard,Composer(+SkillPalette 斜杠调色板),ProviderEditor,SettingsDialog(+McpPanel+SkillsPanel),PlanCard,Todo}.tsx` + 手写 Markdown 子集渲染器 + `highlight.ts` 零依赖语法高亮 + `projection.ts`（委托 `transcript.mjs` 同源投影）+ 内联 SVG 图标 + `tokens.css` 设计令牌（`app.css` 引用） |
 | `web-ui/src/latex.tsx` | LaTeX 渲染：KaTeX 自托管（`trust: false`，`\href` / `\includegraphics` / HTML 扩展一律拒绝），`htmlAndMathml` 输出；解析失败回退展示原始源码而非红色错误墙 |
 | `web-ui/src/math-split.mjs` | 公式分段纯函数（零依赖，Node 测试直接 import 同一份）：识别 `$...$` / `\(...\)` / `$$...$$` / `\[...\]` / 裸 `\begin{env}`，代码段与货币区间假阳性防护；`.d.mts` 供 TS 取类型 |
+| `web-ui/src/md-table.mjs` | Markdown 表格块解析纯函数（零依赖，Node 测试直接 import 同一份）：GFM 子集（表头 + 分隔行 + 对齐 + 数据行），列数不匹配 / 裸 `---` 不成表；渲染（thead/tbody/滚动包裹层）在 `markdown.tsx`，`.d.mts` 供 TS 取类型 |
 | `public/app/` | web-ui 构建产物（随仓库提交）：`/` 与 `/app/` 同一份 index.html，哈希资产长缓存 |
 | `public/icon.svg` `public/vendors/` | 品牌标识 / 各接入厂商标识（`/vendor/` 白名单路由） |
 | `test/` | e2e 测试：mock 上游 + 真实 socket（见第 8 节）；子套件（llm / tui / highlight / config / pick / skills / guards）经 import 聚合；`guards.mjs` 仓库守卫入套 |
@@ -164,7 +165,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 - mock 触发词：消息含 `USE_TOOL` → 模型发起 `read_file mock.txt`；含 `USE_TOOL_WRITE` → 发起 `write_file written_by_agent.txt`；`FLAKY` 断网重试；`SLOW` 慢速；`USE_SKILL` / `USE_TODO` / `USE_EDIT` / `USE_PLAN` / `USE_SWARM` / `USE_MCP` 分别触发技能加载 / 待办维护 / diff 回传 / 计划两阶段 / 子代理派发 / MCP 工具调用；`USE_GOAL` → create_goal 全链路；`USE_GOAL_BUDGET` → 预算触顶转 budget_limited + 收尾轮；`USE_GOAL_IDLE` → 空转轮后续跑；`USE_GOAL_VERIFY_MET` / `USE_GOAL_VERIFY_NOTMET` → evaluator 裁决 met 转 complete(verifier_met) / not_met 连击转 blocked(verifier_impossible)；系统提示带 `【会话标题生成】` 标记即标题生成轮（titleMode=model），回固定标题 `README 安装章节改写`
 - 前端契约测试（`/app` 服务、哈希资产、令牌 CSS 在场、零 emoji、旧路由 404、ProviderEditor 源码校验规则）守着构建产物与 `web-ui/` 的同步；改了 `web-ui/` 忘了 `build:web` 会红
 - 仓库守卫（`test/guards.mjs`，已入 `npm test`）：产品源码零 emoji、TUI 颜色单一真值源（仅 `theme.mjs` 出 SGR）、色板对比度达标、新模块 ≤500 行、文档站结构契约（中英页面一一对应 / 发布笔记标记在场 / 依赖例外登记）
-- 基线 266/266 通过。提交前 `npm test` 必须全绿；不许 `skip`，不许放宽断言迁就失败
+- 基线 275/275 通过。提交前 `npm test` 必须全绿；不许 `skip`，不许放宽断言迁就失败
 - `npm run check` 走真实上游，只在改上游集成时跑（花少量钱）
 - 跑 `npm test` 前确认 18901 无常驻 mock 占用（`pkill -f mock-longcat`）；exec 沙箱会杀后台进程，常驻服务 / mock 用 exec_command 前台会话跑
 
@@ -181,7 +182,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 
 ## 10. 验证基线（改动后自查）
 
-- `npm test` → 266/266
+- `npm test` → 275/275
 - `curl -s localhost:8787/api/health` → `{"ok":true,...}`；`/api/settings` → `version` / `managed` / `dataDir` 符合预期
 - 浏览器打开 http://localhost:8787 ：无 emoji、模型选择器按提供方分组、完整 turn（工具卡 / 权限卡 / 用量脚注）正常、设置弹层可开关开机自启
 - 终端 `npm run chat`：`/help`、权限 y/n/a、`/sessions` 切换、`/goal` 状态与预算、`/btw` 侧边对话与 `Ctrl+/` 切换均正常
