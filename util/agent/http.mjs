@@ -9,7 +9,7 @@ import { runAgentTurn } from './loop.mjs';
 import { getHarness, harnessSummaries } from './harness.mjs';
 import { sseFrame } from './events.mjs';
 import { loadSkills, findSkill, skillInvocationText } from './skills.mjs';
-import { PERMISSION_MODES, experimentalEnabled } from '../config.mjs';
+import { PERMISSION_MODES, TITLE_MODES, experimentalEnabled } from '../config.mjs';
 import { McpRegistry } from '../mcp/registry.mjs';
 
 const SESSION_RE = /^\/api\/agent\/sessions\/([0-9a-f-]{36})$/;
@@ -70,6 +70,7 @@ export function createAgentApi(deps) {
         workspace: String(body.workspace || ''),
         permissionMode: PERMISSION_MODES.includes(body.permissionMode) ? body.permissionMode : '',
         planMode: body.planMode === true,
+        titleMode: TITLE_MODES.includes(body.titleMode) ? body.titleMode : cfg.titleMode,
       });
       log('info', 'Agent 会话已创建', { sessionId: meta.id, harness: harness.id });
       return json(res, 200, { session: meta });
@@ -113,6 +114,12 @@ export function createAgentApi(deps) {
         changes.permissionMode = body.permissionMode;
       }
       if (body.planMode !== undefined) changes.planMode = body.planMode === true;
+      if (body.titleMode !== undefined) {
+        if (!TITLE_MODES.includes(body.titleMode)) {
+          return json(res, 400, { error: { message: `未知标题生成方式：${body.titleMode}（可用 local / model）` } });
+        }
+        changes.titleMode = body.titleMode;
+      }
       if (body.provider !== undefined) {
         const pid = String(body.provider || '');
         if (!/^[A-Za-z0-9._-]{1,64}$/.test(pid)) return json(res, 400, { error: { message: '提供方 ID 不合法' } });
@@ -124,7 +131,7 @@ export function createAgentApi(deps) {
         changes.model = model;
       }
       if (!Object.keys(changes).length) {
-        return json(res, 400, { error: { message: '没有可更新的字段（name / harness / model / provider / permissionMode / planMode）' } });
+        return json(res, 400, { error: { message: '没有可更新的字段（name / harness / model / provider / permissionMode / planMode / titleMode）' } });
       }
       log('info', 'Agent 会话已更新', { sessionId: sessionMatch[1], changes: Object.keys(changes) });
       return json(res, 200, { meta: sessions.patch(sessionMatch[1], changes) });
@@ -205,6 +212,8 @@ export function createAgentApi(deps) {
         : PERMISSION_MODES.includes(got.meta.permissionMode) ? got.meta.permissionMode : cfg.permissionMode;
       const planMode = body.planMode !== undefined ? body.planMode === true
         : got.meta.planMode !== undefined ? got.meta.planMode === true : cfg.planMode === true;
+      const titleMode = TITLE_MODES.includes(body.titleMode) ? body.titleMode
+        : TITLE_MODES.includes(got.meta.titleMode) ? got.meta.titleMode : cfg.titleMode;
       const controller = new AbortController();
       activeTurns.set(sessionId, { controller });
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' });
@@ -228,7 +237,7 @@ export function createAgentApi(deps) {
           store: sessions, usage, session: got.meta, input, provider, model, harness,
           builtinPrice, skills,
           gen: { maxTokens: cfg.maxTokens, temperature: cfg.temperature, thinkingOn: body.thinking !== false },
-          emit, controller, permissionMode, planMode, extraTools: mcpTools(),
+          emit, controller, permissionMode, planMode, titleMode, extraTools: mcpTools(),
           requestPermission: ({ requestId }) => new Promise((resolve) => {
             pendingPermissions.set(requestId, { resolve, sessionId });
           }),

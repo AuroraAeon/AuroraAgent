@@ -1808,6 +1808,16 @@ await test('PATCH /api/agent/sessions/:id 切换模式 / 改名 / 换模型', as
     body: JSON.stringify({ model: '坏模型/带斜杠' }),
   });
   eq(badModel.status, 400, '非法模型 ID 应 400');
+  const title = await (await fetch(`${AGENT}/sessions/${s.id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ titleMode: 'model' }),
+  })).json();
+  eq(title.meta.titleMode, 'model', '标题生成方式应可切换为模型总结');
+  const badTitle = await fetch(`${AGENT}/sessions/${s.id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ titleMode: 'magic' }),
+  });
+  eq(badTitle.status, 400, '未知标题生成方式应 400');
   const empty = await fetch(`${AGENT}/sessions/${s.id}`, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({}),
