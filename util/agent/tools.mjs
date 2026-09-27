@@ -447,19 +447,49 @@ export function getTool(name) {
   return TOOLS.find((t) => t.name === String(name || '')) || null;
 }
 
-/** OpenAI function calling 形状的 tools 参数；extraTools 承载 MCP 等外部工具 */
-export function toolSchemas(names, extraTools = []) {
+/**
+ * tools 拼装缓存：每个模型轮都要按 (toolNames, extraTools) 重建一次 tools[]，
+ * 长会话里这是纯重复劳动。缓存键含 extraTools 各工具对象的标识——
+ * MCP 刷新会换新对象（标识随之变），因此不会服务陈旧 schema；
+ * 约定工具对象创建后不再原地修改（normalizeTool 一律产出新对象）。
+ */
+const objIds = new WeakMap();
+let objIdSeq = 0;
+function objId(o) {
+  let v = objIds.get(o);
+  if (v === undefined) { v = ++objIdSeq; objIds.set(o, v); }
+  return v;
+}
+const convCache = new WeakMap(); // 工具对象 -> { openai, anthropic } 转换结果
+const schemaCache = new Map();   // 缓存键 -> tools[]
+
+function converted(t) {
+  let c = convCache.get(t);
+  if (!c) { c = { openai: toOpenAIFunction(t), anthropic: toAnthropicTool(t) }; convCache.set(t, c); }
+  return c;
+}
+
+function pickTools(names, extraTools = []) {
   const picked = names.length ? TOOLS.filter((t) => names.includes(t.name)) : [];
   const extra = extraTools.filter((t) => names.includes(t.name));
   // deferred 工具不进请求顶层 tools[]：保持字节稳定以命中提示缓存；Loop 侧仍可解析执行
-  return [...picked, ...extra].filter((t) => t.deferred !== true).map((t) => toOpenAIFunction(t));
+  return [...picked, ...extra].filter((t) => t.deferred !== true);
+}
+
+/** OpenAI function calling 形状的 tools 参数；extraTools 承载 MCP 等外部工具 */
+export function toolSchemas(names, extraTools = []) {
+  const key = `openai|${names.join(',')}|${extraTools.map(objId).join(',')}`;
+  let hit = schemaCache.get(key);
+  if (!hit) { hit = pickTools(names, extraTools).map((t) => converted(t).openai); schemaCache.set(key, hit); }
+  return hit;
 }
 
 /** Anthropic Messages 形状（input_schema 而非 parameters） */
 export function anthropicToolSchemas(names, extraTools = []) {
-  const picked = names.length ? TOOLS.filter((t) => names.includes(t.name)) : [];
-  const extra = extraTools.filter((t) => names.includes(t.name));
-  return [...picked, ...extra].filter((t) => t.deferred !== true).map((t) => toAnthropicTool(t));
+  const key = `anthropic|${names.join(',')}|${extraTools.map(objId).join(',')}`;
+  let hit = schemaCache.get(key);
+  if (!hit) { hit = pickTools(names, extraTools).map((t) => converted(t).anthropic); schemaCache.set(key, hit); }
+  return hit;
 }
 
 /** 工具解析：内置优先，其次 extraTools（MCP 工具经 loop 注入） */
