@@ -15,7 +15,7 @@ import { applyUserGoalAction, setUserGoalObjective, clearUserGoal, GOAL_BAD_INPU
 import { parseGoalCommand, parseGoalBudgetValue, goalActionHint, formatGoalSummary, formatGoalReceipt, GOAL_COMMAND_HELP } from '../util/agent/goal/command.mjs';
 import { resolveUpdateGoalMode, hasUpdateGoalTokenBudgetIntent } from '../util/agent/goal/tools.mjs';
 import { parseGoalConfig, GOAL_CONFIG_DEFAULTS, goalLimits } from '../util/agent/goal/config.mjs';
-import { applyUsage, budgetBreach, rearmAfterBudgetRaise, goalUsageChip } from '../util/agent/goal/budget.mjs';
+import { applyUsage, budgetBreach, rearmAfterBudgetRaise, goalUsageChip, formatGoalCount, formatGoalDuration } from '../util/agent/goal/budget.mjs';
 import { replyFingerprint, advanceBreakers } from '../util/agent/goal/breaker.mjs';
 import { createGoalRuntime } from '../util/agent/goal/runtime.mjs';
 import { parseVerdict } from '../util/agent/goal/verification.mjs';
@@ -178,11 +178,23 @@ export async function runGoalTests(test, assert, eq) {
     eq(Object.keys(raised).sort().join(','), 'status,statusReason,tokenBudget', '重新武装增量仅三字段');
   });
 
-  await test('goal: goalUsageChip 形态（K 缩写 · 时分秒）', () => {
+  await test('goal: goalUsageChip 形态（K/M 缩写 · min 时分秒，对齐 MiniMax）', () => {
     const g = { ...createGoalState({ sessionId: 's', objective: 'x', tokenBudget: 20000 }), tokensUsed: 12500, timeUsedSeconds: 125 };
-    eq(goalUsageChip(g), '12.5K / 20.0K · 2m5s');
+    eq(goalUsageChip(g), '13K / 20K · 2min5s', '>=10 的 K 值取整、时长记 min+秒');
     const noCap = { ...g, tokenBudget: null, tokensUsed: 800, timeUsedSeconds: 45 };
     eq(goalUsageChip(noCap), '800 · 45s', '无预算时只显示已用与时长');
+    // 时长：<60s 记 s、整分不省略 0s、>=1h 记 h+min+s（对齐 MiniMax formatTuiDuration）
+    eq(formatGoalDuration(8), '8s');
+    eq(formatGoalDuration(62), '1min2s');
+    eq(formatGoalDuration(120), '2min0s', '整分也保留秒位');
+    eq(formatGoalDuration(7320), '2h2min0s');
+    eq(formatGoalDuration(7770), '2h9min30s');
+    // 计数：<10 非整数保留一位小数，>=10 取整，>=1M 记 M（对齐 MiniMax formatGoalCount）
+    eq(formatGoalCount(1200), '1.2K');
+    eq(formatGoalCount(12500), '13K');
+    eq(formatGoalCount(20000), '20K');
+    eq(formatGoalCount(999), '999');
+    eq(formatGoalCount(2500000), '2.5M');
   });
 
   await test('goal: replyFingerprint 对空白不敏感，空回复不参与', () => {
@@ -634,14 +646,14 @@ export async function runGoalTests(test, assert, eq) {
     assert(goalActionHint('complete').includes('新目标'), '已完成应提示开新目标');
     const g = { status: 'active', objective: '改写 README', tokensUsed: 12500, turnsUsed: 3, timeUsedSeconds: 120, tokenBudget: 50000, lastVerification: null };
     const summary = formatGoalSummary(g);
-    assert(summary.includes('改写 README') && summary.includes('12.5K') && summary.includes('2m'), '摘要应含目标 / 用量 / 时长');
+    assert(summary.includes('改写 README') && summary.includes('13K') && summary.includes('2min'), '摘要应含目标 / 用量 / 时长');
     assert(summary.includes('预算：50000 tokens'), '摘要应含预算');
     const withV = formatGoalSummary({ ...g, lastVerification: { verdict: 'not_met', notMetStreak: 2 } });
     assert(withV.includes('未达到') && withV.includes('连续 2 次'), '摘要应带验证结论与连击');
     const withMissing = formatGoalSummary({ ...g, lastVerification: { verdict: 'not_met', notMetStreak: 2, missing: ['缺 A', '缺 B', '缺 C'] } });
     assert(withMissing.includes('缺口：缺 A；缺 B') && withMissing.includes('+1'), 'not_met 摘要应展示前 2 条缺口并记 +N');
     const receipt = formatGoalReceipt({ ...g, status: 'complete' });
-    assert(receipt.includes('2m') && receipt.includes('12500 tokens') && receipt.includes('3 轮'), '回执应含时长 / token / 轮次');
+    assert(receipt.includes('2min') && receipt.includes('13K tokens') && receipt.includes('3 轮'), '回执应含时长 / token / 轮次（计数紧凑化）');
     assert(GOAL_COMMAND_HELP.includes('/goal edit'), '帮助应含 edit');
     assert(GOAL_COMMAND_HELP.includes('cancel / delete'), '帮助应说明 clear 别名');
   });

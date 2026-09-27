@@ -51,14 +51,32 @@ export function rearmAfterBudgetRaise(goal, tokenBudget) {
   return { tokenBudget: nextBudget };
 }
 
-/** footer / banner 共用的用量摘要：'12.5K · 2m' 形态；无预算时刻度只显示已用与时长 */
-export function goalUsageChip(goal, { now = Date.now() } = {}) {
-  const tokens = goal.tokensUsed >= 1000 ? `${(goal.tokensUsed / 1000).toFixed(1)}K` : String(goal.tokensUsed);
-  const mins = Math.floor(goal.timeUsedSeconds / 60);
-  const secs = goal.timeUsedSeconds % 60;
-  const time = mins > 0 ? `${mins}m${secs > 0 ? `${secs}s` : ''}` : `${secs}s`;
-  const cap = goal.tokenBudget != null
-    ? ` / ${goal.tokenBudget >= 1000 ? `${(goal.tokenBudget / 1000).toFixed(1)}K` : goal.tokenBudget}`
-    : '';
-  return `${tokens}${cap} · ${time}`;
+/** 紧凑计数：>=10 或整数取整，否则保留一位小数（对齐 MiniMax formatCompactCount：12.5→13、1.2→1.2、20→20） */
+function formatCompactCount(value) {
+  return value >= 10 || Number.isInteger(value) ? String(Math.round(value)) : value.toFixed(1);
+}
+
+/** token 紧凑计数：<1K 原样、<1M 记 K、其余记 M（对齐 MiniMax formatGoalCount） */
+export function formatGoalCount(rawValue) {
+  const value = Math.max(0, Math.floor(Number(rawValue) || 0));
+  if (value < 1000) return String(value);
+  if (value < 1000000) return `${formatCompactCount(value / 1000)}K`;
+  return `${formatCompactCount(value / 1000000)}M`;
+}
+
+/** 时长格式：<60s 记 s、<60min 记 min+s、其余记 h+min+s，秒位不省略（对齐 MiniMax formatTuiDuration：2h9min30s） */
+export function formatGoalDuration(rawSeconds) {
+  const totalSeconds = Number.isFinite(rawSeconds) ? Math.max(0, Math.floor(rawSeconds)) : 0;
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const seconds = totalSeconds % 60;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  if (totalMinutes < 60) return `${totalMinutes}min${seconds}s`;
+  const hours = Math.floor(totalMinutes / 60);
+  return `${hours}h${totalMinutes % 60}min${seconds}s`;
+}
+
+/** 用量芯片：tokens[ / 预算] · 时长（终端 footer / 状态变更行与网页 GoalBanner 共用同一套格式化） */
+export function goalUsageChip(goal) {
+  const cap = goal.tokenBudget != null ? ` / ${formatGoalCount(goal.tokenBudget)}` : '';
+  return `${formatGoalCount(goal.tokensUsed)}${cap} · ${formatGoalDuration(goal.timeUsedSeconds)}`;
 }

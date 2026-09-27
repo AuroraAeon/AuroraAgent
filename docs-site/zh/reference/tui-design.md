@@ -147,7 +147,7 @@
 ## 11. footer 状态栏与目标芯片
 
 - footer 是单行纯渲染（`util/tui/footer.mjs`）：`模型 · 模式 · 思考 · 权限 [· 计划 · 标题 · 目标 · 生成态 · tokens/费用]`，方括号为可选段，超宽时**从右到左**逐段裁剪（ANSI 不计宽）。
-- **目标芯片**：有 `active` 目标时插入 `目标` 段（`accent` token），值形如 `12.5K / 50.0K · 2m30s`（tokens 用量 / 预算 · 活跃时长；无预算时省略 `/ 预算`，时长 `Ns` / `Nm` / `Nms` 短形态），与 turn 渲染器同源（`goal/budget.mjs` 的 `goalUsageChip`）。
+- **目标芯片**：有 `active` 目标时插入 `目标` 段（`accent` token），值形如 `13K / 50K · 2min30s`（tokens 用量 / 预算 · 活跃时长；无预算时省略 `/ 预算`）。计数与时长走紧凑格式化（对齐 MiniMax）：tokens `<1K` 原样、`<1M` 记 `K`（`>=10` 取整，如 `12500→13K`）、其余记 `M`；时长 `Ns`（`<60s`）/ `NminNs`（`<60min`，秒位不省略）/ `NhNminNs`，与 turn 渲染器同源（`goal/budget.mjs` 的 `formatGoalCount` / `formatGoalDuration` / `goalUsageChip`）。
 - 状态词进 OSC 标题的 `state` 段：就绪 / 生成中 / 侧边对话。
 
 ## 12. 新增 / 改造 dialog 自查清单

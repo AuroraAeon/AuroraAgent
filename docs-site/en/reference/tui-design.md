@@ -25,7 +25,7 @@ The canonical spec is the Chinese edition: [终端设计规范](/zh/reference/tu
 
 - **OSC title** (`util/tui/title.mjs`): OSC 0 sets window + icon title, assembled in `tui.terminalTitle` item order as `state | session | app` (e.g. "generating | New session | AuroraAgent"); an empty item list disables it. Cleared on exit and suspend, re-set on resume. Dynamic segments are stripped of ESC / BEL / newlines.
 - **Notifications** (`util/tui/notify.mjs`): three channels — OSC9, OSC777, bel — selected by `tui.notifications` (`when` × `method` × `events`). `auto` picks OSC777 on known terminals, else OSC9; `unfocused` probes focus via `osascript` (200ms timeout, 3s cache) and treats failure as unfocused. Notifications are async and never block rendering.
-- **Footer** (`util/tui/footer.mjs`): one line, `model · harness · thinking · permission [· plan · title · goal · generating · tokens/cost]`; optional segments are trimmed right-to-left when narrow. The goal chip (`accent`) looks like `12.5K / 50.0K · 2m30s` (usage / budget · active time; the budget half is omitted when unset).
+- **Footer** (`util/tui/footer.mjs`): one line, `model · harness · thinking · permission [· plan · title · goal · generating · tokens/cost]`; optional segments are trimmed right-to-left when narrow. The goal chip (`accent`) looks like `13K / 50K · 2min30s` (usage / budget · active time; the budget half is omitted when unset). Counts and durations use compact formatting (matching MiniMax): tokens stay raw `<1K`, take `K` `<1M` (rounded when `>=10`, e.g. `12500→13K`), else `M`; time is `Ns` (`<60s`) / `NminNs` (`<60min`, seconds never dropped) / `NhNminNs`.
 
 ## Vocabulary
 

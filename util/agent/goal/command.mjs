@@ -16,7 +16,7 @@
  *   /goal help                    命令帮助
  */
 import { GOAL_STATUS_LABELS } from './types.mjs';
-import { goalUsageChip } from './budget.mjs';
+import { goalUsageChip, formatGoalCount, formatGoalDuration } from './budget.mjs';
 
 /** 预算指令与目标文本之间的边界字符：空白、中文与全角标点（ASCII 标点不算，技术文本保住尾巴） */
 const RELAXED_BOUNDARY = '[\\s\\u2026\\u3000-\\u30FF\\u4E00-\\u9FFF\\uFF00-\\uFFEF]';
@@ -200,7 +200,7 @@ export function formatGoalSummary(goal) {
   return lines.join('\n');
 }
 
-/** 完成回执（目标转 complete 时两端展示同源文案） */
+/** 完成回执（目标转 complete 时两端展示同源文案；计数与时长走紧凑格式化，对齐 MiniMax formatGoalCompletionReceipt） */
 export function formatGoalReceipt(goal) {
-  return `目标完成 · 用时 ${goalUsageChip(goal).split(' · ')[1] || '0s'} · ${goal.tokensUsed} tokens · ${goal.turnsUsed} 轮`;
+  return `目标完成 · 用时 ${formatGoalDuration(goal.timeUsedSeconds)} · ${formatGoalCount(goal.tokensUsed)} tokens · ${formatGoalCount(goal.turnsUsed)} 轮`;
 }

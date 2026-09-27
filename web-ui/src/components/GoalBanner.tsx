@@ -9,12 +9,8 @@ import { IconStop, IconTag } from '../icons';
 import { GOAL_STATUS_LABELS, GOAL_WAIT_LABELS, goalActionsFor } from '../types';
 import type { GoalState } from '../types';
 import { goalActionHint } from '../../../util/agent/goal/command.mjs';
+import { formatGoalCount, formatGoalDuration } from '../../../util/agent/goal/budget.mjs';
 
-const fmtTokens = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n));
-const fmtTime = (s: number) => {
-  const m = Math.floor(s / 60);
-  return m > 0 ? `${m}m${s % 60 > 0 ? `${s % 60}s` : ''}` : `${s}s`;
-};
 const VERDICT_LABELS: Record<string, string> = {
   met: '已达到', not_met: '未达到', impossible: '判定不可行', unavailable: '验证不可用', inconclusive: '无结论',
 };
@@ -41,7 +37,7 @@ export function GoalBanner({ goal, onAction }: Props) {
   const chipLabel = waiting
     ? GOAL_WAIT_LABELS[goal.executionWait!.reason] || '等待中'
     : GOAL_STATUS_LABELS[goal.status];
-  const elapsed = fmtTime(goal.timeUsedSeconds + (live ? liveSecs : 0));
+  const elapsed = formatGoalDuration(goal.timeUsedSeconds + (live ? liveSecs : 0));
   const v = goal.lastVerification;
   const missing = v && v.verdict === 'not_met' && Array.isArray(v.missing) ? v.missing.filter(Boolean) : [];
   const missingVisible = missing.slice(0, 2);
@@ -53,7 +49,7 @@ export function GoalBanner({ goal, onAction }: Props) {
         <span className={`goalbanner-chip gb-${goal.status}`} title={goal.statusReason || undefined}>{chipLabel}</span>
         <span className="goalbanner-objective" title={goal.objective}>{goal.objective}</span>
         <span className="goalbanner-usage">
-          {fmtTokens(goal.tokensUsed)}{goal.tokenBudget != null ? ` / ${fmtTokens(goal.tokenBudget)}` : ''} · {goal.turnsUsed} 轮 · {elapsed}
+          {formatGoalCount(goal.tokensUsed)}{goal.tokenBudget != null ? ` / ${formatGoalCount(goal.tokenBudget)}` : ''} · {goal.turnsUsed} 轮 · {elapsed}
         </span>
       </div>
       {goal.executionWait ? <div className="goalbanner-wait">{GOAL_WAIT_LABELS[goal.executionWait.reason] || '等待中'}…</div> : null}
