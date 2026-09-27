@@ -19,7 +19,7 @@ import { applyUsage, budgetBreach, rearmAfterBudgetRaise, goalUsageChip, formatG
 import { replyFingerprint, advanceBreakers } from '../util/agent/goal/breaker.mjs';
 import { createGoalRuntime } from '../util/agent/goal/runtime.mjs';
 import { parseVerdict } from '../util/agent/goal/verification.mjs';
-import { GOAL_CONTINUATION_NOTE, GOAL_WRAPUP_NOTE, goalVerifierFeedbackNote } from '../util/agent/goal/continuation.mjs';
+import { GOAL_CONTINUATION_NOTE, GOAL_WRAPUP_NOTE, goalContinuationNote, goalVerifierFeedbackNote } from '../util/agent/goal/continuation.mjs';
 
 export async function runGoalTests(test, assert, eq) {
   console.log('\nGoal 模式单测');
@@ -538,15 +538,28 @@ export async function runGoalTests(test, assert, eq) {
     eq(deduped.missing.join('|'), 'a b|c', 'missing 归一化：空白折叠 + 去重 + 排序（对齐 MiniMax normalizeMissing）');
   });
 
+  await test('goal: 续跑提醒每轮重述目标——上下文压缩失忆防护（对齐 MiniMax continuationBody）', () => {
+    const note = goalContinuationNote({ objective: '把 README 安装章节改写' });
+    assert(note.includes('【目标续跑】'), '提醒本体在场');
+    assert(note.includes('<objective>') && note.includes('把 README 安装章节改写'), '目标文本随每轮提醒重述');
+    const escaped = goalContinuationNote({ objective: 'a<b>&c' });
+    assert(escaped.includes('a&lt;b&gt;&amp;c'), '目标按不可信数据 XML 转义（对齐 escapeXmlText）');
+    assert(!goalContinuationNote({}).includes('<objective>'), '无目标文本时不加空 objective 块');
+    assert(!goalContinuationNote({ objective: 'x'.repeat(2500) }).includes('x'.repeat(2001)), '超长目标截断到 2000 字符');
+  });
+
   await test('goal: 续跑/收尾/验证反馈提醒文案单一事实源', () => {
     assert(GOAL_CONTINUATION_NOTE.includes('【目标续跑】'), '续跑提醒应带标记（mock 与测试依赖）');
     assert(GOAL_WRAPUP_NOTE.includes('【目标预算收尾】'), '收尾提醒应带标记');
     assert(GOAL_WRAPUP_NOTE.includes('不要调用任何工具'), '收尾轮禁工具');
     const note = goalVerifierFeedbackNote({ evidence: 'README 未改' }, 2, 5);
     assert(note.includes('第 2/5 次') && note.includes('README 未改'), '反馈提醒应带连胜与证据');
-    const withMissing = goalVerifierFeedbackNote({ evidence: 'e', missing: ['缺 A', '缺 B', '缺 C', '缺 D', '缺 E', '缺 F', '缺 G'] }, 3, 5);
-    assert(withMissing.includes('缺 A') && withMissing.includes('缺 E'), '反馈提醒应带前 5 条缺口');
-    assert(withMissing.includes('另有 2 条缺口从简略提示中省略'), '超出 5 条应记省略数');
+    const many = Array.from({ length: 12 }, (_, i) => `缺 ${String.fromCharCode(65 + i)}`);
+    const withMissing = goalVerifierFeedbackNote({ evidence: 'e', missing: many }, 3, 5);
+    assert(withMissing.includes('缺 A') && withMissing.includes('缺 J'), '反馈提醒应带前 10 条缺口（对齐 MAX_FEEDBACK_ITEMS）');
+    assert(withMissing.includes('另有 2 条缺口从简略提示中省略'), '超出 10 条应记省略数');
+    const longGap = goalVerifierFeedbackNote({ evidence: 'e', missing: ['x'.repeat(300)] }, 1, 5);
+    assert(!longGap.includes('x'.repeat(241)) && longGap.includes('…'), '单条缺口截断到 240 字符（对齐 MAX_FEEDBACK_ITEM_CHARS）');
     assert(!goalVerifierFeedbackNote({ evidence: 'e' }, 1, 5).includes('尚未满足的缺口'), '无 missing 不渲染缺口块');
   });
 

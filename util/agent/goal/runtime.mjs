@@ -16,7 +16,7 @@ import { CREATE_GOAL_DEF, UPDATE_GOAL_DEF, GET_GOAL_DEF, resolveUpdateGoalMode }
 import { applyUsage, budgetBreach, rearmAfterBudgetRaise } from './budget.mjs';
 import { advanceBreakers } from './breaker.mjs';
 import { goalLimits, parseGoalConfig } from './config.mjs';
-import { GOAL_CONTINUATION_NOTE, GOAL_WRAPUP_NOTE, goalVerifierFeedbackNote } from './continuation.mjs';
+import { GOAL_WRAPUP_NOTE, goalContinuationNote, goalVerifierFeedbackNote } from './continuation.mjs';
 import { verifyGoalProposal, sameMissingSet } from './verification.mjs';
 
 export { GOAL_WRAPUP_NOTE };
@@ -276,7 +276,8 @@ export function createGoalRuntime({
     }));
     emitStatus(next); // 状态未变但验证结论刷新（lastVerification 随事件透出）
     if (allowContinue) {
-      return { action: 'continue', extraSystem: goalVerifierFeedbackNote(result, streak, cfg.repeatedNotMetLimit) };
+      // 续跑提醒（含目标重述）+ 验证反馈：对齐 MiniMax continuationBody = hint(+objective) + feedback
+      return { action: 'continue', extraSystem: `${goalContinuationNote(goal)}\n\n${goalVerifierFeedbackNote(result, streak, cfg.repeatedNotMetLimit)}` };
     }
     return { action: 'finish' };
   };
@@ -297,7 +298,7 @@ export function createGoalRuntime({
 
   /** 目标仍 active 时的下一步：有待定提案走结算（可带验证反馈续跑），否则注入续跑提醒 */
   const decideNext = async (goal) => {
-    if (!pendingProposal) return { action: 'continue', extraSystem: GOAL_CONTINUATION_NOTE };
+    if (!pendingProposal) return { action: 'continue', extraSystem: goalContinuationNote(goal) };
     const d = await settleProposal(goal, pendingProposal, { allowContinue: true });
     const after = goalStore.get(sessionId);
     if (after) emitUsage(after);

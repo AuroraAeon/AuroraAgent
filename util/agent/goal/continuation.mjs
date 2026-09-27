@@ -4,6 +4,22 @@
  * 由 loop 把这些提醒作为 extraSystem 注入下一轮，不建队列子系统。
  */
 
+/** XML 文本转义（对齐 MiniMax escapeXmlText：目标是不可信数据，不得撑破包裹结构） */
+function escapeXmlText(input) {
+  return String(input).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
+ * 续跑提醒 + 当前目标文本。每轮重述目标（对齐 MiniMax continuationBody 的
+ * {{objective}} 注入）：上下文压缩把 create_goal 的工具调用挤出窗口后，
+ * 模型仍然知道在追什么——否则「自动续跑」会在失忆状态下空转。
+ */
+export function goalContinuationNote(goal) {
+  const objective = String(goal?.objective || '').trim().slice(0, 2000);
+  if (!objective) return GOAL_CONTINUATION_NOTE;
+  return `${GOAL_CONTINUATION_NOTE}\n\n<objective>\n${escapeXmlText(objective)}\n</objective>`;
+}
+
 /** 模型空转（无工具调用）时的续跑提醒：三选一，禁止空泛复读 */
 export const GOAL_CONTINUATION_NOTE = [
   '【目标续跑】本会话有一个进行中的目标，上一轮你没有提交任何工具调用。请只做以下三件事之一：',
@@ -24,7 +40,12 @@ export const GOAL_WRAPUP_NOTE = [
 export function goalVerifierFeedbackNote(verification, streak, limit) {
   const evidence = String(verification?.evidence || '').slice(0, 1500) || '（验证器未给出具体证据）';
   const allMissing = Array.isArray(verification?.missing) ? verification.missing : [];
-  const missing = allMissing.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 5);
+  // 条数与单条截断对齐 MiniMax renderVerifierFeedback：MAX_FEEDBACK_ITEMS=10、单条 240 字符
+  const missing = allMissing
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .slice(0, 10)
+    .map((item) => (item.length > 240 ? `${item.slice(0, 239)}…` : item));
   const omitted = Math.max(0, allMissing.length - missing.length);
   const lines = [
     `【目标验证未通过（第 ${streak}/${limit} 次）】独立验证器认为目标尚未达成，你的完成提案未被采信。`,
