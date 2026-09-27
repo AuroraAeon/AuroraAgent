@@ -15,8 +15,10 @@ import { goalUsageChip } from './goal/budget.mjs';
  * footer 状态（tokens / cost）经 onUsage 回传，供 coordinator 的 footer 状态条展示。
  * hooks 由 coordinator 持有：readline 终端模式下 Ctrl+C 不产生真 SIGINT（raw mode 吞掉），
  * 改由 rl 的 'SIGINT' 事件经 hooks.abort 中转进来，保证「生成中 Ctrl+C 可中断」的承诺成立。
+ * notifier（util/tui/notify.mjs）可选：完成 / 失败 / 授权 / 提问四类事件按 tui.notifications
+ * 配置发系统通知（unfocused 时先尽力探测焦点，失败按未聚焦通知——宁可多响不漏响）。
  */
-export async function runTerminalTurn({ store, usage, session, input, provider, model, harness, cfg, painter, ask, onUsage, onSession, hooks, extraTools = [], goalStore = null }) {
+export async function runTerminalTurn({ store, usage, session, input, provider, model, harness, cfg, painter, ask, onUsage, onSession, hooks, extraTools = [], goalStore = null, notifier = null }) {
   const started = Date.now();
   let phase = 'idle'; // idle -> think -> text
   let atLineStart = true;
@@ -74,6 +76,7 @@ export async function runTerminalTurn({ store, usage, session, input, provider, 
           toolLineOpen = true;
         } else if (p.phase === 'confirmation_needed') {
           toolLineOpen = false; // 行已由 endToolLine 清掉，转为权限询问
+          notifier?.notify('permission-required', { title: session.name, body: `需要授权：${label}${res ? ` ${res}` : ''}` });
         } else if (p.phase === 'confirmed') {
           write(`  ${sub}${painter.dim('…')} ${label}${res ? ` ${painter.dim(String(res))}` : ''}`);
           toolLineOpen = true;
@@ -97,6 +100,7 @@ export async function runTerminalTurn({ store, usage, session, input, provider, 
         endToolLine();
         breakLine();
         write(`\n${painter.accent('  计划')}（只读探索产出，尚未执行任何修改）\n`);
+        notifier?.notify('question-required', { title: session.name, body: '计划待批准' });
         write(painter.text(indent(String(p.plan || ''), 220)) + '\n');
         break;
       case 'plan_approved':
@@ -173,11 +177,13 @@ export async function runTerminalTurn({ store, usage, session, input, provider, 
         endToolLine();
         breakLine();
         write(`${painter.error('✗')} ${p.error}\n`);
+        notifier?.notify('turn-failed', { title: session.name, body: String(p.error || '任务失败').slice(0, 120) });
         break;
       case 'turn_completed':
         endToolLine();
         breakLine();
         write(painter.dim(`  ↳ ${p.totalRounds} 轮 · ${p.totalTools} 个工具 · ${((Date.now() - started) / 1000).toFixed(1)}s\n`));
+        notifier?.notify('turn-complete', { title: session.name, body: `已完成 · ${p.totalRounds} 轮 · ${p.totalTools} 个工具` });
         break;
     }
   };

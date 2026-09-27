@@ -18,6 +18,7 @@ import { McpRegistry } from '../mcp/registry.mjs';
 import { defineCommands, commandHelpLines, parseCommand } from '../tui/commands.mjs';
 import { renderFooter } from '../tui/footer.mjs';
 import { buildTerminalTitle, oscTitle, clearTitle } from '../tui/title.mjs';
+import { createNotifier } from '../tui/notify.mjs';
 import { paletteFor, createPainter } from '../tui/theme.mjs';
 import { SearchableList } from '../tui/searchable-list.mjs';
 import { pick } from '../tui/pick.mjs';
@@ -79,6 +80,8 @@ export async function runTerminal({ argv = [] } = {}) {
   let themeChoice = process.env.AURORAAGENT_THEME || 'auto';
   const painter = () => createPainter(paletteFor(themeChoice).colors);
   const foot = { tokens: null, cost: null }; // footer 展示的最近一次用量
+  // 系统通知器：按 tui.notifications 配置（when/method/events）发 OSC9 / OSC777 / bel
+  const notifier = createNotifier({ notifications: cfg.tui.notifications });
 
   const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: process.stdin.isTTY === true });
   // OSC 终端标题：状态词随 mode/busy 变；退出与挂起清空、恢复重设
@@ -367,6 +370,7 @@ export async function runTerminal({ argv = [] } = {}) {
     cfg, painter: painter(), ask, hooks,
     onUsage: (u) => { foot.tokens = (u.inputTokens || 0) + (u.outputTokens || 0); foot.cost = u.cost; },
     onSession: (m) => { meta = m; },
+    notifier,
   });
 
   if (oneShot) {

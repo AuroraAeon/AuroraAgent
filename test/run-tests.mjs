@@ -1449,6 +1449,14 @@ try {
     assert(term.includes('const cleanExit = ()') && term.split('process.exit(0)').length - 1 <= 1, '退出应统一走 cleanExit 清标题');
     const title = readFileSync(join(__dirname, '..', 'util', 'tui', 'title.mjs'), 'utf8');
     assert(title.includes('export function oscTitle') && title.includes('export function clearTitle'), '标题模块应导出写/清两个函数');
+    // 通知接线：创建处传配置、渲染器四类事件各有着落
+    assert(term.includes('createNotifier({ notifications: cfg.tui.notifications })'), '协调器应建通知器');
+    const turn = readFileSync(join(__dirname, '..', 'util', 'agent', 'terminal-turn.mjs'), 'utf8');
+    assert(turn.includes("notifier?.notify('turn-complete'") && turn.includes("notifier?.notify('turn-failed'"), '完成与失败应通知');
+    assert(turn.includes("notifier?.notify('permission-required'") && turn.includes("notifier?.notify('question-required'"), '授权询问与计划待批准应通知');
+    const notify = readFileSync(join(__dirname, '..', 'util', 'tui', 'notify.mjs'), 'utf8');
+    assert(notify.includes('probeFocused') && notify.includes('timeout: timeoutMs'), '焦点探测应带超时');
+    assert(notify.includes('resolve(false)') || notify.includes('done(false)'), '探测失败应按未聚焦处理');
   });
   await test('流式活动状态行源码契约：轮次 / 工具数 / 计时与费用行统一', () => {
     const cv = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ChatView.tsx'), 'utf8');

@@ -63,21 +63,22 @@ export function writeNotification(method, { title = 'AuroraAgent', body = '' } =
 /**
  * 建通知器。notify 异步（焦点探测）但不阻塞渲染：调用方 fire-and-forget。
  * @param notifications  parseTuiConfig 产出的 notifications 段
+ * @param probe          焦点探测函数（测试注入；缺省 macOS osascript 尽力探测）
  * @param probeIntervalMs 焦点探测结果缓存时长（避免一次 turn 反复 spawn osascript）
  */
-export function createNotifier({ notifications, probeIntervalMs = 3000 } = {}) {
+export function createNotifier({ notifications, probe = probeFocused, probeIntervalMs = 3000 } = {}) {
   const cfg = { ...DEFAULT_NOTIFICATIONS, ...(notifications || {}) };
+  const wants = (event) => cfg.when !== 'never' && cfg.events.includes(event);
   let lastProbe = 0;
   let focused = null;
   return {
     get config() { return cfg; },
-    /** 事件是否配置为可通知 */
-    wants(event) { return cfg.when !== 'never' && cfg.events.includes(event); },
+    wants,
     async notify(event, { title, body } = {}) {
-      if (!this.wants(event)) return;
+      if (!wants(event)) return;
       if (cfg.when === 'unfocused') {
         if (Date.now() - lastProbe > probeIntervalMs || focused === null) {
-          focused = await probeFocused();
+          focused = await probe();
           lastProbe = Date.now();
         }
         if (focused) return; // 终端正看着：不打扰

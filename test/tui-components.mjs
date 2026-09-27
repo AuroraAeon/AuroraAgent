@@ -5,6 +5,7 @@ import { parseCommand, defineCommands, commandHelpLines } from '../util/tui/comm
 import { renderSelect } from '../util/tui/select.mjs';
 import { renderFooter } from '../util/tui/footer.mjs';
 import { buildTerminalTitle, oscTitle, clearTitle } from '../util/tui/title.mjs';
+import { createNotifier, writeNotification, NOTIFICATION_EVENTS } from '../util/tui/notify.mjs';
 import { SearchableList } from '../util/tui/searchable-list.mjs';
 import { createPainter, PALETTES } from '../util/tui/theme.mjs';
 
@@ -68,6 +69,26 @@ export async function runTuiComponentTests(test, assert, eq) {
     list.setQuery('zzz');
     const lines = stripAll(renderSelect({ list, title: 'Select', hint: 'hint', width: 40, painter: p }));
     assert(lines.some((l) => l.includes('No matches')));
+  });
+
+  await test('notify: 三通道序列形状与 when/events 门控', async () => {
+    eq(writeNotification('osc9', { title: 'T', body: 'B' }), '\x1b]9;B\x07', 'OSC 9 只带正文');
+    eq(writeNotification('osc777', { title: 'T', body: 'B' }), '\x1b]777;notify;T;B\x07', 'OSC 777 带标题与正文');
+    eq(writeNotification('bel', { title: 'T', body: 'B' }), '\x07', 'bel 只响铃');
+    assert(!writeNotification('osc9', { body: '坏\x1b]9;x\x07注入' }).includes('\x1b]9;x'), '通知正文同样防序列注入');
+    // never：一律不通知
+    const never = createNotifier({ notifications: { when: 'never', method: 'auto', events: NOTIFICATION_EVENTS.slice() } });
+    eq(await never.notify('turn-complete', { body: 'x' }), undefined);
+    // always：不探测焦点直接发
+    const always = createNotifier({ notifications: { when: 'always', method: 'osc9', events: ['turn-complete'] }, probe: async () => false });
+    eq(await always.notify('turn-complete', { body: 'x' }), '\x1b]9;x\x07');
+    eq(await always.notify('turn-failed', { body: 'x' }), undefined, '未配置的事件不通知');
+    // unfocused + 聚焦：不打扰；未聚焦：通知
+    const seen = createNotifier({ notifications: { when: 'unfocused', method: 'osc9', events: ['turn-failed'] }, probe: async () => true });
+    eq(await seen.notify('turn-failed', { body: 'x' }), undefined, '终端正看着时不通知');
+    const away = createNotifier({ notifications: { when: 'unfocused', method: 'osc9', events: ['turn-failed'] }, probe: async () => false });
+    eq(await away.notify('turn-failed', { body: 'x' }), '\x1b]9;x\x07');
+    eq(NOTIFICATION_EVENTS.join(','), 'turn-complete,turn-failed,permission-required,question-required');
   });
 
   await test('title: buildTerminalTitle 项序拼装、空项序关闭与序列净化', () => {
