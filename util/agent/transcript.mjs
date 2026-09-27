@@ -100,8 +100,12 @@ export function projectTurns(records) {
         break;
       case 'tool_result': {
         const rr = ensureRound(at);
-        const hit = rr.parts.find((p) => p.kind === 'tool' && p.id === String(r.id || ''));
-        const row = hit || { kind: 'tool', id: String(r.id || `t${idx}`), name: String(r.name || ''), args: null, ok: null, output: '', extra: null };
+        const rid = String(r.id || '');
+        // 同 id 多调用（个别上游代理复用 tool_call id）：优先补第一个尚未完结（ok 为 null）的调用，
+        // 否则后一个调用的结果会顶掉前一个，让前一个永远停在「执行中」
+        const hit = rr.parts.find((p) => p.kind === 'tool' && p.id === rid && p.ok === null)
+          || rr.parts.find((p) => p.kind === 'tool' && p.id === rid);
+        const row = hit || { kind: 'tool', id: rid || `t${idx}`, name: String(r.name || ''), args: null, ok: null, output: '', extra: null };
         if (!hit) rr.parts.push(row);
         row.ok = r.ok !== false;
         row.output = String(r.output || '');

@@ -1115,6 +1115,19 @@ await test('transcript: projectTurns 并行工具调用不拆散且按序回填'
   eq(turns[0].parts.filter((p) => p.kind === 'tool').length, 2);
 });
 
+await test('transcript: projectTurns 同 id 多调用（上游复用 id）结果各归其位', () => {
+  const { turns } = projectTurns([
+    { t: 'tool_call', id: 'call_mock_1', name: 'create_goal', args: { objective: '甲目标' } },
+    { t: 'tool_result', id: 'call_mock_1', name: 'create_goal', ok: true, output: '目标已创建' },
+    { t: 'tool_call', id: 'call_mock_1', name: 'update_goal', args: { mode: 'status', status: 'complete' } },
+    { t: 'tool_result', id: 'call_mock_1', name: 'update_goal', ok: true, output: '已记录' },
+  ]);
+  eq(turns[0].parts.filter((p) => p.kind === 'tool').length, 2, '两个调用各占一张卡片');
+  eq(turns[0].tools[0].output, '目标已创建', '首个调用的结果不被第二个顶掉');
+  eq(turns[0].tools[1].output, '已记录', '第二个调用应拿到自己的结果而非永远执行中');
+  assert(turns[0].tools.every((t) => t.ok === true), '两个调用都应标记完成');
+});
+
 await test('Loop：无工具轮直接出终稿并记账', async () => {
   const { events, store, usage, result, requests } = await runLoopOnce({
     framesByCall: [textFrames('你好，世界')],
