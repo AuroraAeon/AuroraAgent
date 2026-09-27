@@ -252,6 +252,30 @@
 }
 .todopanel-head { display:flex; align-items:center; gap:8px; font-size:12.5px; font-weight:600; color:var(--dim); }
 .todopanel-count { margin-left:auto; color:var(--accent-hi); font-variant-numeric:tabular-nums; }
+/* ---------- @ 提及调色板（镜像 skillpal 结构） ---------- */
+.mentionpal {
+  position:absolute; bottom:calc(100% + 8px); left:0; right:0; max-width:640px; margin:0 auto;
+  background:var(--panel); border:1px solid var(--line-strong); border-radius:12px;
+  box-shadow:0 14px 44px rgb(0 0 0 / 46%); padding:6px; z-index:40; max-height:300px; overflow-y:auto;
+}
+.mentionpal-head { display:flex; align-items:baseline; gap:8px; padding:8px 10px 2px; }
+.mentionpal-title { color:var(--text); font-size:12.5px; font-weight:600; }
+.mentionpal-sub { color:var(--faint); font-size:11px; }
+.mentionpal-hint { color:var(--faint); font-size:11px; padding:0 10px 6px; }
+.mentionpal-list { display:flex; flex-direction:column; gap:1px; }
+.mentionpal-item {
+  width:100%; display:flex; align-items:center; gap:8px; border:0; border-radius:8px;
+  background:none; color:var(--text); font-size:13px; padding:6px 10px; cursor:pointer; text-align:left;
+}
+.mentionpal-item:hover { background:var(--surface-hover); }
+.mentionpal-item.cur { background:var(--accent-glow); }
+.mentionpal-ptr { color:var(--accent); font-size:12px; width:10px; flex:none; }
+.mentionpal-name { color:var(--accent-hi); font-weight:600; flex:none; max-width:55%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mentionpal-desc { color:var(--dim); font-size:12px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mentionpal-src { color:var(--faint); font-size:10.5px; border:1px solid var(--line); border-radius:5px; padding:0 5px; flex:none; }
+.mentionpal-empty, .mentionpal-foot { display:flex; align-items:center; gap:6px; color:var(--dim); font-size:11.5px; padding:8px 10px; }
+.mentionpal-foot { justify-content:flex-end; color:var(--faint); }
+
 /* ---------- 目标横幅 ---------- */
 .goalbanner {
   position:sticky; top:0; z-index:2; margin-bottom:12px;

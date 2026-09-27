@@ -40,6 +40,8 @@ export const respondPlan = (sessionId: string, decision: 'approve' | 'reject') =
   api<{ ok: boolean }>('/api/agent/plan', { method: 'POST', body: JSON.stringify({ sessionId, decision }) });
 export const abortTurn = (sessionId: string) => api<{ aborted: boolean }>('/api/agent/abort', { method: 'POST', body: JSON.stringify({ sessionId }) });
 export const getGoal = (sessionId: string) => api<{ goal: GoalState | null }>(`/api/agent/goal/${sessionId}`);
+export const searchFiles = (sessionId: string, q: string) =>
+  api<{ files: string[] }>(`/api/files/search?sessionId=${encodeURIComponent(sessionId)}&q=${encodeURIComponent(q)}`);
 export const goalAction = (sessionId: string, action: 'pause' | 'resume' | 'stop') =>
   api<{ goal: GoalState }>(`/api/agent/goal/${action}`, { method: 'POST', body: JSON.stringify({ sessionId }) });
 

@@ -35,6 +35,7 @@ import { runSkillsTests } from './skills.mjs';
 import { runTitleTests } from './title.mjs';
 import { runGoalTests } from './goal.mjs';
 import { completePrefix, SideSession } from '../util/agent/side-session.mjs';
+import { searchWorkspaceFiles } from '../util/agent/files.mjs';
 import { TITLE_MAX_TOKENS } from '../util/agent/title-model.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -49,6 +50,10 @@ async function test(name, fn) {
 }
 function assert(cond, msg) { if (!cond) throw new Error(msg || '断言失败'); }
 function eq(a, b, msg) { if (a !== b) throw new Error(`${msg || '值不等'}: ${JSON.stringify(a)} !== ${JSON.stringify(b)}`); }
+// 与 test/guards.mjs 同语义：EMOJI_RE 命中且不在白名单才算 emoji（❯ 等命令行惯例符号豁免）
+const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{1F1E6}-\u{1F1FF}]/u;
+const ALLOWED_GLYPHS = new Set(['✓', '✗', '❯', '←', '→', '↑', '↓', '▼', '·', '…', '—', '─', '│', '╭', '╮', '╰', '╯', '▶', '◀', '★']);
+function hasEmoji(text) { for (const ch of text) if (EMOJI_RE.test(ch) && !ALLOWED_GLYPHS.has(ch)) return true; return false; }
 
 async function chat(body) {
   const resp = await fetch(`${BASE}/api/chat`, {
@@ -130,6 +135,24 @@ await test('btw: completePrefix 截到最后一个无悬空工具调用的自洽
   eq(completePrefix(tidy).length, 4, '正常收尾的轮次全文保留');
   eq(completePrefix([]).length, 0);
   eq(completePrefix(null).length, 0, '坏输入不炸');
+});
+
+await test('files: searchWorkspaceFiles 关键字匹配、跳过依赖目录且不越界', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'files-search-'));
+  mkdirSync(join(dir, 'sub'), { recursive: true });
+  mkdirSync(join(dir, 'node_modules', 'pkg'), { recursive: true });
+  writeFileSync(join(dir, 'alpha.txt'), 'x');
+  writeFileSync(join(dir, 'sub', 'beta.log'), 'x');
+  writeFileSync(join(dir, 'node_modules', 'pkg', 'index.js'), 'x');
+  const hit = searchWorkspaceFiles(dir, 'alpha');
+  eq(hit.join(','), 'alpha.txt', '应按文件名关键字命中');
+  const nested = searchWorkspaceFiles(dir, 'beta');
+  eq(nested.join(','), 'sub/beta.log', '应下钻子目录并返回相对路径');
+  const all = searchWorkspaceFiles(dir, '');
+  assert(all.includes('alpha.txt') && all.includes('sub/beta.log'), '空关键字列文件');
+  assert(!all.some((f) => f.includes('node_modules')), '依赖目录必须跳过');
+  // 坏工作目录不炸
+  eq(searchWorkspaceFiles(join(dir, 'nope'), 'x').length, 0, '不存在目录返回空');
 });
 
 await test('btw: SideSession 内存门面——继承快照、不进列表、不派发子代理', () => {
@@ -1487,7 +1510,7 @@ try {
     assert(banner.includes('goalbanner-chip') && banner.includes('GOAL_STATUS_LABELS[goal.status]'), '横幅应有状态芯片');
     assert(banner.includes('goalActionsFor(goal.status)'), '横幅动作应按状态裁剪');
     assert(banner.includes('tokenBudget != null'), '横幅应展示预算上限');
-    assert(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(banner), 'GoalBanner 零 emoji 铁律');
+    assert(!hasEmoji(banner), 'GoalBanner 零 emoji 铁律');
     const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
     assert(app.includes("ev.type === 'goal_created'") && app.includes('setGoal(ev.goal)'), 'App 应处理四类 goal 事件');
     assert(app.includes('goalAction(currentId, action)') && app.includes('onGoalAction={decideGoal}'), 'App 应接线目标动作回传');
@@ -1498,6 +1521,13 @@ try {
     const html = await (await fetch(`${BASE}/`)).text();
     const js = await (await fetch(`${BASE}${/\/app\/assets\/[A-Za-z0-9._-]+\.js/.exec(html)[0]}`)).text();
     assert(js.includes('goalbanner'), '构建产物应含目标横幅（改了 web-ui 忘了 build:web 会红）');
+    // @ 提及：调色板组件、Composer 接线与产物同步
+    const mention = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'MentionPalette.tsx'), 'utf8');
+    assert(mention.includes('mentionpal-item') && mention.includes('kind') && !hasEmoji(mention), 'MentionPalette 应有列表项与类型徽标且零 emoji');
+    const composer = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Composer.tsx'), 'utf8');
+    assert(composer.includes('MentionPalette') && composer.includes('insertMention') && composer.includes('searchFiles(sessionId, q)'), 'Composer 应接 @ 提及时调色板与防抖搜索');
+    assert(composer.includes('/api/files/search') === false, '前端不直连路径，走 api.ts');
+    assert(js.includes('mentionpal'), '构建产物应含提及调色板（改了 web-ui 忘了 build:web 会红）');
   });
   await test('OSC 终端标题接线源码契约：状态词随模式变、挂起清除、退出清空', async () => {
     const term = readFileSync(join(__dirname, '..', 'util', 'agent', 'terminal.mjs'), 'utf8');
@@ -2392,6 +2422,24 @@ await test('Agent turn：USE_GOAL_VERIFY_NOTMET 连续未达到阈值转 blocked
 });
 
 // ---------- Goal REST 面：/api/agent/goal*（用户操作优先级永远高于模型提案） ----------
+await test('GET /api/files/search：会话工作目录内只读搜索，跳过依赖目录，会话不存在 404', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'files-api-'));
+  mkdirSync(join(dir, 'sub'), { recursive: true });
+  mkdirSync(join(dir, 'node_modules'), { recursive: true });
+  writeFileSync(join(dir, 'README.md'), 'x');
+  writeFileSync(join(dir, 'sub', 'helper.mjs'), 'x');
+  writeFileSync(join(dir, 'node_modules', 'dep.js'), 'x');
+  const s = await createAgentSession({ workspace: dir });
+  const hit = await (await fetch(`${BASE}/api/files/search?sessionId=${s.id}&q=helper`)).json();
+  eq(hit.files.join(','), 'sub/helper.mjs', '应按关键字返回相对路径');
+  const all = await (await fetch(`${BASE}/api/files/search?sessionId=${s.id}&q=`)).json();
+  assert(all.files.includes('README.md') && all.files.includes('sub/helper.mjs'), '空关键字列工作目录文件');
+  assert(!all.files.some((f) => f.includes('node_modules')), 'node_modules 不出列');
+  const miss = await fetch(`${BASE}/api/files/search?sessionId=00000000-0000-0000-0000-000000000000&q=x`);
+  eq(miss.status, 404, '会话不存在 404');
+  rmSync(dir, { recursive: true, force: true });
+});
+
 await test('Goal REST：创建 / 查询 / 空白目标 400 / 会话不存在 404 / 未完成目标 409', async () => {
   const s = await createAgentSession();
   const miss = await (await fetch(`${AGENT}/goal/${s.id}`)).json();

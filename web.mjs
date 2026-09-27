@@ -432,7 +432,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (url.startsWith('/api/agent') || url.startsWith('/api/mcp')) { await agentApi(req, res, url); return; }
+  if (url.startsWith('/api/agent') || url.startsWith('/api/mcp') || url.startsWith('/api/files')) { await agentApi(req, res, url); return; }
 
   res.writeHead(404, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ error: { message: 'not found' } }));

@@ -5,6 +5,9 @@ import {
 } from '../icons';
 import type { Harness, ModelInfo, ProviderRow, SkillRow } from '../types';
 import { SkillPalette } from './SkillPalette';
+import { MentionPalette } from './MentionPalette';
+import type { MentionItem } from './MentionPalette';
+import { searchFiles } from '../api';
 
 /** 厂商标识：按模型 ID 前缀匹配（web.mjs 的 /vendor/ 白名单路由放行），接入新厂商时在此追加 */
 const VENDOR_MARKS: { match: string; icon: string }[] = [{ match: 'LongCat', icon: '/vendor/meituan.svg' }];
@@ -306,19 +309,25 @@ type Props = {
   planMode: boolean;
   onPlanMode: (v: boolean) => void;
   skills: SkillRow[];
+  sessionId: string | null;
   disabled: boolean;
 };
 
 export function Composer({
   busy, onSend, onStop, models, modelStatus, model, onModel, providers, thinking, onThinking, harnesses, harness, onHarness, disabled,
-  permissionMode, onPermissionMode, titleMode, onTitleMode, planMode, onPlanMode, skills,
+  permissionMode, onPermissionMode, titleMode, onTitleMode, planMode, onPlanMode, skills, sessionId,
 }: Props) {
   const [text, setText] = useState('');
   const [skillIdx, setSkillIdx] = useState(0);
+  const [mentionIdx, setMentionIdx] = useState(0);
+  const [mentionFiles, setMentionFiles] = useState<string[]>([]);
   const taRef = useRef<HTMLTextAreaElement>(null);
   // 斜杠技能命令：仅当整段输入是 /开头且无空格时展开调色板（参数段不打磨）
   const slash = /^\/([^\s]*)$/.exec(text);
   const slashOpen = Boolean(slash) && skills.length > 0 && !busy && !disabled;
+  // @ 提及：行首或空白之后的 @ 开始一个词时展开（文件只读搜索 + 技能目录合并）
+  const at = /(^|\s)@([^\s@]*)$/.exec(text);
+  const atOpen = Boolean(at) && !busy && !disabled;
 
   useLayoutEffect(() => {
     const ta = taRef.current;
@@ -326,6 +335,17 @@ export function Composer({
     ta.style.height = 'auto';
     ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
   }, [text]);
+
+  // @ 提及的文件搜索：150ms 防抖；会话未就绪或查询为空时清空（技能过滤在本地）
+  useEffect(() => {
+    if (!atOpen || !sessionId) { setMentionFiles([]); return; }
+    const q = at?.[2] || '';
+    let dead = false;
+    const id = setTimeout(() => {
+      searchFiles(sessionId, q).then((r) => { if (!dead) setMentionFiles(r.files); }).catch(() => { if (!dead) setMentionFiles([]); });
+    }, 150);
+    return () => { dead = true; clearTimeout(id); };
+  }, [atOpen, sessionId, at?.[2]]);
 
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
@@ -342,8 +362,25 @@ export function Composer({
     setText('');
   };
 
+  /** 把 @<query> 尾缀替换为 @路径 或 /技能名（后者即技能调用的既定形态） */
+  const insertMention = (it: MentionItem) => {
+    setText((prev) => prev.replace(/@([^\s@]*)$/, it.kind === 'file' ? `@${it.label} ` : `/${it.label} `));
+    setMentionIdx(0);
+    taRef.current?.focus();
+  };
+
   return (
     <div className="composer">
+      {atOpen ? (
+        <MentionPalette
+          files={mentionFiles}
+          skills={skills}
+          query={at?.[2] || ''}
+          active={mentionIdx}
+          onClose={() => setMentionIdx(0)}
+          onPick={insertMention}
+        />
+      ) : null}
       {slashOpen ? (
         <SkillPalette
           skills={skills}
@@ -365,6 +402,22 @@ export function Composer({
           onKeyDown={(e) => {
             // IME 组合态不拦截（keyCode 229 为部分浏览器合成中的上报值）
             if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+            if (atOpen) {
+              const kw = (at?.[2] || '').toLowerCase();
+              const shown: MentionItem[] = [
+                ...mentionFiles.filter((f) => !kw || f.toLowerCase().includes(kw)).slice(0, 12).map((f) => ({ kind: 'file' as const, key: `f:${f}`, label: f })),
+                ...skills.filter((s) => !kw || s.name.toLowerCase().includes(kw) || s.description.toLowerCase().includes(kw)).slice(0, 6).map((s) => ({ kind: 'skill' as const, key: `s:${s.name}`, label: s.name, desc: s.description })),
+              ];
+              if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIdx((i) => (shown.length ? (i + 1) % shown.length : 0)); return; }
+              if (e.key === 'ArrowUp') { e.preventDefault(); setMentionIdx((i) => (shown.length ? (i - 1 + shown.length) % shown.length : 0)); return; }
+              if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+                e.preventDefault();
+                const pick = shown[Math.min(mentionIdx, shown.length - 1)];
+                if (pick) { insertMention(pick); }
+                return;
+              }
+              if (e.key === 'Escape') { e.preventDefault(); setMentionIdx(0); return; }
+            }
             if (slashOpen) {
               const n = skills.filter((sk) => {
                 const kw = (slash?.[1] || '').toLowerCase();

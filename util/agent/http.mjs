@@ -11,6 +11,7 @@ import { sseFrame } from './events.mjs';
 import { GoalStore, GoalConflictError } from './goal/store.mjs';
 import { applyUserGoalAction, GOAL_BAD_INPUT_CODES } from './goal/actions.mjs';
 import { loadSkills, findSkill, skillInvocationText } from './skills.mjs';
+import { searchWorkspaceFiles } from './files.mjs';
 import { PERMISSION_MODES, TITLE_MODES, experimentalEnabled } from '../config.mjs';
 import { McpRegistry } from '../mcp/registry.mjs';
 
@@ -197,6 +198,13 @@ export function createAgentApi(deps) {
       return json(res, 200, r);
     }    // ---------- Goal REST 面：一会话一目标；用户操作的优先级永远高于模型提案 ----------
     // GET 走路径带 sessionId（web.mjs 委派时已剥掉 query）；POST 与 turn 一致从 body 取
+    // 输入区 @ 提及：只读工作目录内文件名搜索（web.mjs 委派时已剥 query，这里从 req.url 解析）
+    if (req.method === 'GET' && url === '/api/files/search') {
+      const qs = new URL(req.url, 'http://localhost').searchParams;
+      const got = sessions.get(String(qs.get('sessionId') || ''));
+      if (!got) return json(res, 404, { error: { message: '会话不存在或已删除' } });
+      return json(res, 200, { files: searchWorkspaceFiles(got.meta.workspace, qs.get('q') || '') });
+    }
     const goalGetMatch = GOAL_GET_RE.exec(url);
     if (goalGetMatch && req.method === 'GET') {
       if (!sessions.get(goalGetMatch[1])) return json(res, 404, { error: { message: '会话不存在或已删除' } });

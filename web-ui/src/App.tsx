@@ -364,6 +364,7 @@ export default function App() {
           planMode={planOn}
           onPlanMode={changePlan}
           skills={skills}
+          sessionId={currentId}
           disabled={!current}
         />
       </main>
