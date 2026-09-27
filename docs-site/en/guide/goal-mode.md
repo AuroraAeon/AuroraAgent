@@ -1,0 +1,97 @@
+# Goal Mode
+
+Goal mode attaches a **cross-round session goal** to a conversation: the model advances, verifies, and continues on its own until the goal is complete, blocked, or out of budget — and you can pause, resume, or re-budget at any time. The semantics mirror MiniMax-code's thread-goal capability, re-implemented with zero dependencies for a local single-user tool (`util/agent/goal/`).
+
+## When to use it
+
+- Multi-round tool work you do not want to babysit round by round: "keep working until this repo's tests are green"
+- Independent completion verdicts instead of the model grading its own homework
+- Hard rails on autonomous progress: token budget, round budget, active time, and no-progress breakers
+
+Not for one-shot questions. The model only calls `create_goal` when you explicitly ask it to watch a goal — it never infers goals from ordinary tasks.
+
+## Three-party authority
+
+| Party | Powers |
+| --- | --- |
+| Model | `update_goal` proposes `complete` / `blocked`; changes `token_budget` only in a round where you explicitly asked, with a fresh `get_goal` snapshot |
+| User | Every transition except re-activating an exhausted goal: pause, stop, resume `paused` / `blocked` / `usage_limited` |
+| System | Ledger-bound: auto-transitions to `budget_limited` when `tokensUsed >= tokenBudget` |
+
+At most one goal per session (`<dataDir>/goals/<sessionId>.json`, atomic write); a new goal replaces the old one only after it is `complete`.
+
+## The six-state machine
+
+`active` / `paused` / `blocked` / `complete` / `budget_limited` / `usage_limited`.
+
+- **Terminal states** (`complete` / `blocked` / `budget_limited` / `usage_limited`) stop auto-continuation. Whether they can resume is a separate question: `complete` is terminal for good — no transition out is allowed; resuming `complete` / `budget_limited` to active is always rejected with 409
+- Every transition carries a `statusReason` from a closed set (e.g. `complete(verifier_met)`, `paused(no_progress)`, `budget_limited(token)`), shown verbatim in the terminal and the web UI
+
+## Model-side tools
+
+Names and schemas match codex / minimax-code so models need zero learning time; collected in Standard / Ultimate only, not in Minimal.
+
+| Tool | Purpose |
+| --- | --- |
+| `create_goal(objective, token_budget?)` | create a goal; fails if an unfinished goal exists |
+| `update_goal(mode?, status?, summary?, token_budget?, expected_goal_id?, expected_updated_at?)` | propose a terminal state, or (only when explicitly requested) change the budget |
+| `get_goal()` | read the current goal: status, timestamps, usage, budget |
+
+`update_goal` keeps two modes strictly separate: the default proposal mode (`status` proposes `complete` / `blocked` with a `summary`); budget mode must immediately follow a `get_goal` snapshot and pass only `token_budget` + `expected_goal_id` + `expected_updated_at` (CAS epoch check, stale snapshot → 409). Mixing fields is rejected; `null` fillers are exempt.
+
+## Budget and breakers
+
+- **Token budget**: `tokensUsed` accumulates through the usage ledger each round; on exhaustion the goal moves to `budget_limited(token)` and a single tool-free wrap-up round runs — summarizing what was done, what was not, and why it stopped, plus how to re-budget and continue
+- **Round / time budgets**: `goal.mainTurns` (continuation rounds) and `goal.activeSeconds` (in-turn active seconds) move the goal to `budget_limited(main_turn)` / `budget_limited(active_time)`; `graceSteps` is the grace period after exhaustion (default 1)
+- **Re-arming**: raising or clearing `token_budget` restores a `budget_limited(token)` goal to `active` (model side via CAS budget mode, user side via `/goal budget`)
+- **Dual breakers**: a repeated normalized reply fingerprint (`noProgressStreak`) and consecutive tool-free rounds (`noToolStreak`) share the threshold `goal.repeatedReplyLimit` (default 3) and never accumulate together; either trips the goal into `paused(no_progress)`
+
+## Verification tiers
+
+`goal.verification`: `none` (default) / `evaluator` / `subagent`.
+
+- **evaluator**: one low-temperature request through the same route with a small fast model, verdict `met` / `not_met` / `impossible` / `inconclusive` (`goal.evaluatorModel` required; maxTokens 4096, 60s timeout, retries capped at 1); the model's own `summary` is always submitted as untrusted data
+- **subagent**: an independent read-only profile (`goal-verifier-readonly`) dispatched through the sub-agent system
+- **Evidence shape** `goal.evidence`: `brief` (default) / `transcript`
+- **Settlement**: `met` → `complete(verifier_met)`; `repeatedNotMetLimit` (default 5) consecutive `not_met` → `blocked(verifier_impossible)`; a broken verifier → `paused(verifier_unavailable)`, never a silent pass
+
+No implicit routing: evaluator only runs when `goal.evaluatorModel` is explicitly configured.
+
+## Auto-continuation
+
+Adapted to the single-SSE-turn model with no queue subsystem: within a turn, when the model stops calling tools while the goal is still `active`, with no terminal proposal and no budget / breaker trip, a goal-continuation system reminder extends the round (capped by both the harness round limit and the goal's main-turn budget). A new user message ends the continuation; the goal state carries into your next turn. While waiting for permission, plan approval, or verification, `goal_wait_changed` (`executionWait`) is emitted so both clients render "waiting" instead of "stuck".
+
+## User-side operations
+
+Terminal `/goal` (no argument shows status):
+
+```bash
+/goal                    # current goal: status / usage / budget
+/goal pause              # pause (active → paused)
+/goal resume             # resume (paused / blocked / usage_limited → active)
+/goal stop               # stop
+/goal budget 50000       # set the token budget (stale epoch → 409; can re-arm budget_limited)
+/goal budget clear       # clear the cap
+```
+
+Web: the GoalBanner above the conversation shows the status chip, usage, and budget with pause / resume / stop buttons. The REST surface is `GET /api/agent/goal/:id` and `POST /api/agent/goal/{pause,resume,stop,budget}`; creating a second goal while one is unfinished returns 409 `GOAL_STATUS_CONFLICT`.
+
+Event protocol (shared SSE): `goal_created` / `goal_status_changed` / `goal_usage_updated` / `goal_wait_changed`.
+
+## Configuration
+
+The `goal` section of `auroraagent.config.json` (per-leaf fallback + clamping + startup warning — one bad value never disables the whole mode):
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `verification` | `none` | tier: `none` / `evaluator` / `subagent` |
+| `evaluatorModel` | empty | required for evaluator; setting it implies evaluator |
+| `evidence` | `brief` | evidence shape: `brief` / `transcript` |
+| `repeatedReplyLimit` | 3 | shared breaker threshold |
+| `repeatedNotMetLimit` | 5 | consecutive `not_met` before `blocked(verifier_impossible)` |
+| `graceSteps` | 1 | grace rounds after round / time exhaustion (0–3) |
+| `mainTurns` | 0 | continuation round cap, 0 = unlimited |
+| `activeSeconds` | 0 | in-turn active seconds cap, 0 = unlimited |
+| `evaluatorMaxTokens` | 4096 | evaluator per-request cap |
+| `evaluatorTimeoutSeconds` | 60 | evaluator timeout |
+| `evaluatorMaxRetries` | 1 | evaluator retry cap |

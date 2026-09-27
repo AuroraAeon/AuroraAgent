@@ -41,6 +41,7 @@ export default defineConfig({
               items: [
                 { text: '快速开始', link: '/zh/guide/quick-start' },
                 { text: 'Agent Loop 架构', link: '/zh/guide/agent-loop' },
+                { text: 'Goal 目标模式', link: '/zh/guide/goal-mode' },
                 { text: '网页工作台', link: '/zh/guide/web-ui' },
                 { text: '终端 TUI', link: '/zh/guide/terminal' },
                 { text: '技能系统', link: '/zh/guide/skills' },
@@ -80,6 +81,7 @@ export default defineConfig({
               items: [
                 { text: 'Quick Start', link: '/en/guide/quick-start' },
                 { text: 'Agent Loop Architecture', link: '/en/guide/agent-loop' },
+                { text: 'Goal Mode', link: '/en/guide/goal-mode' },
                 { text: 'Web Workbench', link: '/en/guide/web-ui' },
                 { text: 'Terminal TUI', link: '/en/guide/terminal' },
                 { text: 'Skills', link: '/en/guide/skills' },

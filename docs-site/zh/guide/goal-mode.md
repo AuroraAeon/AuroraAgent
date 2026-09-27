@@ -1,0 +1,99 @@
+# Goal 模式
+
+Goal 模式给会话挂一个**跨轮次存续的目标**：模型自主推进、验证、续跑，直到完成、受阻或预算耗尽，中途你随时可以暂停、恢复、改预算或叫停。语义对齐 MiniMax-code 的 thread-goal 能力，按本地单用户场景零依赖落地（`util/agent/goal/`）。
+
+## 什么时候用
+
+- 任务需要很多轮工具调用，你不想每轮盯：「盯着把这个仓库的测试全部修绿」
+- 需要独立的完成度判定，而不是模型自己说完成就算完成
+- 需要给自动推进加硬闸：token 预算、轮次预算、活跃时长、无进展熔断
+
+不适合：一轮能答完的提问（直接对话即可）；模型只在「用户明确要求盯着目标」时才该 `create_goal`，不会从普通任务里推断目标。
+
+## 三方权限
+
+状态语义由三方共同推进，权限刻意不对称：
+
+| 角色 | 能做什么 |
+| --- | --- |
+| 模型 | `update_goal` 提案 `complete` / `blocked`；仅在用户显式要求改预算的轮次里，带新鲜 `get_goal` 快照改 `token_budget` |
+| 用户 | 除「把预算或工作量已耗尽的目标恢复成 active」之外的全部迁移：暂停、停止、恢复 `paused` / `blocked` / `usage_limited` |
+| 系统 | 记账绑定：`tokensUsed >= tokenBudget` 时自动迁到 `budget_limited` |
+
+一会话至多一个目标（`<数据目录>/goals/<sessionId>.json` 原子落盘）；仅当旧目标 `complete` 时才允许替换。
+
+## 六态状态机
+
+`active` / `paused` / `blocked` / `complete` / `budget_limited` / `usage_limited`。
+
+- **终态**（`complete` / `blocked` / `budget_limited` / `usage_limited`）停止自动续跑；能否恢复是另一回事——`complete` 是终态中的终态，任何迁移都不允许；对 `complete` / `budget_limited` 恢复 active 一律 409 拒绝
+- 每次迁移都带 `statusReason`（闭集，如 `complete(verifier_met)` / `paused(no_progress)` / `budget_limited(token)`），终端与网页原样展示
+
+## 模型侧三工具
+
+名字与 schema 对齐 codex / minimax-code，模型对这套工具有先验，零学习成本；仅 Standard / Ultimate 模式收录，Minimal 不收录。
+
+| 工具 | 作用 |
+| --- | --- |
+| `create_goal(objective, token_budget?)` | 建立目标；已存在未完成目标时失败 |
+| `update_goal(mode?, status?, summary?, token_budget?, expected_goal_id?, expected_updated_at?)` | 提案终态，或（仅用户显式要求时）改预算 |
+| `get_goal()` | 读当前目标：状态、时间戳、用量、预算 |
+
+`update_goal` 的两个模式刻意分开：默认是「提案模式」（`status` 提案 `complete` / `blocked`，带 `summary`）；预算模式必须紧邻一次 `get_goal` 快照调用，只传 `token_budget` + `expected_goal_id` + `expected_updated_at`（CAS 纪元校验，陈旧快照 409）。混合传参一律拒绝；`null` 填充豁免。
+
+## 预算与熔断
+
+- **token 预算**：每轮结束经用量账本累计 `tokensUsed`；触顶自动转 `budget_limited(token)`，并追加唯一一个无工具的收尾轮——只总结「已完成 / 未完成 / 为何停止」，并告知可经 `update_goal` 调整预算后续跑
+- **轮次 / 时长预算**：`goal.mainTurns`（续跑轮次上限）与 `goal.activeSeconds`（轮内活跃秒数）触顶转 `budget_limited(main_turn)` / `budget_limited(active_time)`；`graceSteps` 是触顶后的宽限轮数（默认 1）
+- **重新武装**：抬高或清零 `token_budget` 可把 `budget_limited(token)` 恢复为 `active`（模型侧走 CAS 预算模式，用户侧走 `/goal budget`）
+- **双熔断**：归一化回复指纹连续重复（`noProgressStreak`）与「连续无工具提交轮」（`noToolStreak`）共享阈值 `goal.repeatedReplyLimit`（默认 3），互不累加；任一触发转 `paused(no_progress)`
+
+## 验证三档
+
+`goal.verification`：`none`（默认，不验证）/ `evaluator` / `subagent`。
+
+- **evaluator**：经同一路由用小快模型低温一次请求裁决 `met` / `not_met` / `impossible` / `inconclusive`（`goal.evaluatorModel` 必填，`maxTokens` 4096、超时 60s、重试封顶 1）；模型的 `summary` 一律作不可信数据提交
+- **subagent**：经子代理系统派发只读 profile（`goal-verifier-readonly`）独立核查
+- **证据形态** `goal.evidence`：`brief`（默认）/ `transcript`
+- **结算**：`met` → `complete(verifier_met)`；`not_met` 连续 `goal.repeatedNotMetLimit`（默认 5）次 → `blocked(verifier_impossible)`；验证器自身不可用 → `paused(verifier_unavailable)`，不静默放行
+
+本地工具不做隐式路由推导：只有显式配置 `goal.evaluatorModel` 才走 evaluator。
+
+## 自动续跑
+
+适配单 SSE turn 模型，不建队列子系统：turn 内模型不再要求工具、而目标仍 `active`、无终态提案、未触预算 / 熔断时，注入 goal-continuation 系统提醒续轮（受 harness 轮次上限与 goal 主轮预算双重封顶）。你发新消息即收尾，目标状态延续到下一次用户 turn。等待授权 / 计划批准 / 验证时发布 `goal_wait_changed`（`executionWait`），两端渲染「等待中」而非「卡住」。
+
+## 用户面操作
+
+终端 `/goal`（无参看状态）：
+
+```bash
+/goal                    # 查看当前目标：状态 / 用量 / 预算
+/goal pause              # 暂停（active → paused）
+/goal resume             # 恢复（paused / blocked / usage_limited → active）
+/goal stop               # 停止
+/goal budget 50000       # 设 token 预算（纪元不符 409；可重新武装 budget_limited）
+/goal budget clear       # 清除预算上限
+```
+
+网页：会话顶部 GoalBanner 展示状态芯片 + 用量 + 预算，暂停 / 恢复 / 停止即点即走。REST 面对应 `GET /api/agent/goal/:id` 与 `POST /api/agent/goal/{pause,resume,stop,budget}`，未完成目标存在时再创建回 409 `GOAL_STATUS_CONFLICT`。
+
+事件协议（两端共用 SSE）：`goal_created` / `goal_status_changed` / `goal_usage_updated` / `goal_wait_changed`。
+
+## 配置
+
+`auroraagent.config.json` 的 `goal` 段（单叶损坏独立回退 + 钳制 + 启动告警，一个错值不让整个模式失效）：
+
+| 字段 | 默认 | 说明 |
+| --- | --- | --- |
+| `verification` | `none` | 验证档位：`none` / `evaluator` / `subagent` |
+| `evaluatorModel` | 空 | evaluator 档必填；填了即隐含启用 evaluator |
+| `evidence` | `brief` | 验证证据形态：`brief` / `transcript` |
+| `repeatedReplyLimit` | 3 | 双熔断共享阈值 |
+| `repeatedNotMetLimit` | 5 | `not_met` 连续次数转 `blocked(verifier_impossible)` |
+| `graceSteps` | 1 | 轮次 / 时长触顶后的宽限轮数（0–3） |
+| `mainTurns` | 0 | 续跑轮次上限，0 = 不限 |
+| `activeSeconds` | 0 | 轮内活跃秒数上限，0 = 不限 |
+| `evaluatorMaxTokens` | 4096 | evaluator 单次请求上限 |
+| `evaluatorTimeoutSeconds` | 60 | evaluator 超时 |
+| `evaluatorMaxRetries` | 1 | evaluator 重试封顶 |
