@@ -5,7 +5,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadConfig, saveConfig, experimentalEnabled, PERMISSION_MODES, DEFAULT_PERMISSION_MODE } from '../util/config.mjs';
+import { loadConfig, saveConfig, experimentalEnabled, PERMISSION_MODES, DEFAULT_PERMISSION_MODE, TITLE_MODES, DEFAULT_TITLE_MODE } from '../util/config.mjs';
 
 export async function runConfigTests(test, assert, eq) {
   console.log('\n配置层单元测试');
@@ -48,6 +48,23 @@ export async function runConfigTests(test, assert, eq) {
     try {
       writeFileSync(join(dir, 'auroraagent.config.json'), JSON.stringify({ permissionMode: 'bogus' }));
       eq(loadConfig().permissionMode, DEFAULT_PERMISSION_MODE);
+    } finally {
+      if (prev === undefined) delete process.env.AURORAAGENT_DATA_DIR; else process.env.AURORAAGENT_DATA_DIR = prev;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await test('config: titleMode 缺省本地、round-trip 保留、非法值回退', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aurora-cfg-'));
+    const prev = process.env.AURORAAGENT_DATA_DIR;
+    process.env.AURORAAGENT_DATA_DIR = dir;
+    try {
+      eq(loadConfig().titleMode, DEFAULT_TITLE_MODE, '缺省应为本地推导');
+      eq(TITLE_MODES.join('|'), 'local|model');
+      saveConfig({ model: 'm', thinking: true, temperature: 0.5, maxTokens: 100, permissionMode: 'never_ask', planMode: false, titleMode: 'model', keyIsOverride: true });
+      eq(loadConfig().titleMode, 'model', '保存后应读回模型总结');
+      writeFileSync(join(dir, 'auroraagent.config.json'), JSON.stringify({ titleMode: 'bogus' }));
+      eq(loadConfig().titleMode, DEFAULT_TITLE_MODE, '非法值应回退缺省');
     } finally {
       if (prev === undefined) delete process.env.AURORAAGENT_DATA_DIR; else process.env.AURORAAGENT_DATA_DIR = prev;
       rmSync(dir, { recursive: true, force: true });

@@ -16,6 +16,10 @@ export const PRICE = { input: 2, output: 8 };
 export const PERMISSION_MODES = ['always_ask', 'ask_when_needed', 'never_ask'];
 export const DEFAULT_PERMISSION_MODE = 'ask_when_needed';
 
+/** 会话标题生成方式：local 本地推导（零成本，缺省）/ model 调模型总结（每新会话多一次小请求） */
+export const TITLE_MODES = ['local', 'model'];
+export const DEFAULT_TITLE_MODE = 'local';
+
 /** 实验特性目录：AURORAAGENT_EXPERIMENTAL_<NAME> 单开；AURORAAGENT_EXPERIMENTAL_FLAG 全开。缺省关。 */
 export const EXPERIMENTAL_FLAGS = ['MCP'];
 export function experimentalEnabled(name) {
@@ -81,6 +85,7 @@ export function loadConfig() {
     maxTokens: saved.maxTokens ?? 32768,
     permissionMode: PERMISSION_MODES.includes(saved.permissionMode) ? saved.permissionMode : DEFAULT_PERMISSION_MODE,
     planMode: saved.planMode === true,
+    titleMode: TITLE_MODES.includes(saved.titleMode) ? saved.titleMode : DEFAULT_TITLE_MODE,
   };
 }
 
@@ -93,6 +98,7 @@ export function saveConfig(cfg) {
     maxTokens: cfg.maxTokens,
     permissionMode: PERMISSION_MODES.includes(cfg.permissionMode) ? cfg.permissionMode : DEFAULT_PERMISSION_MODE,
     planMode: cfg.planMode === true,
+    titleMode: TITLE_MODES.includes(cfg.titleMode) ? cfg.titleMode : DEFAULT_TITLE_MODE,
   };
   if (!cfg.keyIsOverride) out.apiKey = cfg.apiKey;
   writeFileSync(join(resolveDataDir(), CONFIG_FILE), JSON.stringify(out, null, 2) + '\n');
