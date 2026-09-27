@@ -2265,6 +2265,124 @@ await test('Agent turn：USE_GOAL_VERIFY_NOTMET 连续未达到阈值转 blocked
   assert(goalFile.lastVerification.notMetStreak >= 5);
 });
 
+// ---------- Goal REST 面：/api/agent/goal*（用户操作优先级永远高于模型提案） ----------
+await test('Goal REST：创建 / 查询 / 空白目标 400 / 会话不存在 404 / 未完成目标 409', async () => {
+  const s = await createAgentSession();
+  const miss = await (await fetch(`${AGENT}/goal/${s.id}`)).json();
+  eq(miss.goal, null, '无目标应回 null');
+  const empty = await fetch(`${AGENT}/goal`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, objective: '   ' }),
+  });
+  eq(empty.status, 400, '空白目标 400');
+  const badSession = await fetch(`${AGENT}/goal`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: '00000000-0000-0000-0000-000000000000', objective: 'x' }),
+  });
+  eq(badSession.status, 404, '会话不存在 404');
+  const created = await (await fetch(`${AGENT}/goal`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, objective: '把 README 安装章节改写', tokenBudget: 5000 }),
+  })).json();
+  eq(created.goal.objective, '把 README 安装章节改写');
+  eq(created.goal.status, 'active');
+  eq(created.goal.tokenBudget, 5000);
+  const again = await fetch(`${AGENT}/goal`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, objective: '第二个目标' }),
+  });
+  eq(again.status, 409, '未完成目标存在时再创建 409');
+  eq((await again.json()).error.code, 'GOAL_STATUS_CONFLICT');
+  const got = await (await fetch(`${AGENT}/goal/${s.id}`)).json();
+  eq(got.goal.goalId, created.goal.goalId, '查询应命中同一目标');
+});
+
+await test('Goal REST：pause / resume / stop 语义与 409 边界', async () => {
+  const s = await createAgentSession();
+  const mk = async () => (await (await fetch(`${AGENT}/goal`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, objective: '目标甲' }),
+  })).json()).goal;
+  const g1 = await mk();
+  const paused = await (await fetch(`${AGENT}/goal/pause`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id }),
+  })).json();
+  eq(paused.goal.status, 'paused');
+  eq(paused.goal.statusReason, 'paused(user_requested)');
+  const resumed = await (await fetch(`${AGENT}/goal/resume`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id }),
+  })).json();
+  eq(resumed.goal.status, 'active');
+  eq(resumed.goal.statusReason, null, '恢复后原因清零');
+  const stopped = await (await fetch(`${AGENT}/goal/stop`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id }),
+  })).json();
+  eq(stopped.goal.status, 'complete');
+  eq(stopped.goal.statusReason, 'complete(user_requested)');
+  const stopAgain = await fetch(`${AGENT}/goal/stop`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id }),
+  });
+  eq(stopAgain.status, 409, '已完成目标再停止 409');
+  const resumeDone = await fetch(`${AGENT}/goal/resume`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id }),
+  });
+  eq(resumeDone.status, 409, 'complete 恢复 active 一律 409');
+  const g2 = await mk();
+  assert(g2.goalId !== g1.goalId, '完成后应允许创建新目标（替换语义）');
+  const noGoal = await fetch(`${AGENT}/goal/pause`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: (await createAgentSession()).id }),
+  });
+  eq(noGoal.status, 404, '无目标时操作 404');
+});
+
+await test('Goal REST：budget 纪元不符 409 GOAL_STALE，抬高预算重新武装 budget_limited(token)', async () => {
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_GOAL_BUDGET 盯着把测试基线扩展到 300 个' }),
+  });
+  const all = await drainAgentStream(openAgentStream(resp));
+  assert(all.find((e) => e.type === 'goal_status_changed' && e.goal.status === 'budget_limited'), '应先触顶');
+  const cur = (await (await fetch(`${AGENT}/goal/${s.id}`)).json()).goal;
+  eq(cur.status, 'budget_limited');
+  eq(cur.statusReason, 'budget_limited(token)');
+  const resumeLimited = await fetch(`${AGENT}/goal/resume`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id }),
+  });
+  eq(resumeLimited.status, 409, '预算耗尽不能直接恢复：须先抬高或清除预算');
+  const stale = await fetch(`${AGENT}/goal/budget`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, tokenBudget: 100000, expectedGoalId: cur.goalId, expectedUpdatedAt: cur.updatedAt + 1 }),
+  });
+  eq(stale.status, 409, '纪元不符 409');
+  eq((await stale.json()).error.code, 'GOAL_STALE');
+  const badBudget = await fetch(`${AGENT}/goal/budget`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, tokenBudget: -3, expectedGoalId: cur.goalId, expectedUpdatedAt: cur.updatedAt }),
+  });
+  eq(badBudget.status, 400, '负预算 400');
+  const raised = await (await fetch(`${AGENT}/goal/budget`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, tokenBudget: 100000, expectedGoalId: cur.goalId, expectedUpdatedAt: cur.updatedAt }),
+  })).json();
+  eq(raised.goal.status, 'active', '抬高到已用之上应重新武装');
+  eq(raised.goal.statusReason, null, '重新武装后原因清零');
+  eq(raised.goal.tokenBudget, 100000);
+  const cleared = await (await fetch(`${AGENT}/goal/budget`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, tokenBudget: null, expectedGoalId: raised.goal.goalId, expectedUpdatedAt: raised.goal.updatedAt }),
+  })).json();
+  eq(cleared.goal.tokenBudget, null, '清零应移除上限');
+  eq(cleared.goal.status, 'active');
+});
+
 await test('Agent turn：计划模式驳回后不执行', async () => {
   const s = await createAgentSession();
   const resp = await fetch(`${AGENT}/turn`, {
