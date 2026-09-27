@@ -6,7 +6,7 @@
 import http from 'node:http';
 
 export function startMock(port = 18901) {
-  const state = { requests: [], lastChatBody: null, lastChatMeta: null, flakyDone: false };
+  const state = { requests: [], lastChatBody: null, lastChatMeta: null, flakyDone: false, toolCallSeq: 0 };
   const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (d) => { body += d; });
@@ -120,9 +120,11 @@ export function startMock(port = 18901) {
           req.socket.destroy();
           return;
         }
+        // 工具调用 id 每次递增（对齐真实上游：同一会话内不复用 tool_call id）
+        const callId = 'call_mock_' + (++state.toolCallSeq);
         const frames = isToolRound ? [
           { id: 'x', choices: [{ index: 0, delta: { reasoning_content: '需要调用工具，' } }], lastOne: false },
-          { id: 'x', choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_mock_1', type: 'function', function: { name: toolName, arguments: JSON.stringify(toolArgs).slice(0, 8) } }] } }], lastOne: false },
+          { id: 'x', choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: callId, type: 'function', function: { name: toolName, arguments: JSON.stringify(toolArgs).slice(0, 8) } }] } }], lastOne: false },
           { id: 'x', choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: JSON.stringify(toolArgs).slice(8) } }] } }], lastOne: false },
           { id: 'x', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }], lastOne: false,
             usage: { prompt_tokens: 20, completion_tokens: 15, total_tokens: 35, completion_tokens_details: { reasoning_tokens: 42 } } },
@@ -135,7 +137,7 @@ export function startMock(port = 18901) {
         ];
         if (!j.stream) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          const msg = isToolRound ? { role: 'assistant', content: '', tool_calls: [{ id: 'call_mock_1', type: 'function', function: { name: toolName, arguments: JSON.stringify(toolArgs) } }] } : { role: 'assistant', content: answer };
+          const msg = isToolRound ? { role: 'assistant', content: '', tool_calls: [{ id: callId, type: 'function', function: { name: toolName, arguments: JSON.stringify(toolArgs) } }] } : { role: 'assistant', content: answer };
           return res.end(JSON.stringify({ choices: [{ message: msg, finish_reason: isToolRound ? 'tool_calls' : 'stop' }], usage: frames[3].usage }));
         }
         res.writeHead(200, { 'Content-Type': 'text/event-stream' });
