@@ -129,7 +129,28 @@
 
 新列表组件**必须复用 `SearchableList`**（光标 / 搜索 / 翻页），并手工对齐本文件第 3–6 节的布局、键位、文案。
 
-## 9. 新增 / 改造 dialog 自查清单
+## 9. OSC 终端标题
+
+- 序列：OSC 0（`\x1b]0;标题\x07`），同时设窗口与图标标题；实现在 `util/tui/title.mjs`（`buildTerminalTitle` / `oscTitle` / `clearTitle`）。
+- 拼装：按 `tui.terminalTitle` 项序取 `state`（状态词）/ `session`（会话名）/ `app`（`AuroraAgent`）三段，` | ` 连接，例「生成中 | 新会话 | AuroraAgent」。
+- **置空项序 = 关闭**：`buildTerminalTitle` 返回 `null`，调用方不写任何序列；配置经 `GET/POST /api/settings/tui` 读写。
+- 生命周期：会话切换 / 生成态变化 / 侧边对话切换实时重设；**退出与挂起必须清空**（`clearTitle`），恢复后由调用方按当前状态重设。
+- 注入防护：会话名等动态段写入前剥离 ESC / BEL / 换行（`oscTitle` 内建）。
+
+## 10. 系统通知
+
+- 三通道：OSC9（`\x1b]9;正文\x07`）/ OSC777（`\x1b]777;notify;标题;正文\x07`）/ bel（`\x07`）；实现在 `util/tui/notify.mjs`（`writeNotification` / `createNotifier`）。
+- 配置 `tui.notifications`：`when`（`unfocused` / `always` / `never`）× `method`（`auto` / `osc9` / `osc777` / `bel`）× `events`（`turn-complete` / `turn-failed` / `permission-required` / `question-required`）各自独立容错。
+- `auto` 依 `TERM_PROGRAM` 择 OSC777 终端列表，否则 OSC9；`unfocused` 经 `osascript` 200ms 超时尽力探测焦点（结果缓存 3s），**失败按未聚焦处理**——宁可多响不漏响。
+- 通知异步发送、fire-and-forget，不阻塞渲染；标题与正文同样剥离 ESC / BEL / 换行并截断（80 / 200 字符）。
+
+## 11. footer 状态栏与目标芯片
+
+- footer 是单行纯渲染（`util/tui/footer.mjs`）：`模型 · 模式 · 思考 · 权限 [· 计划 · 标题 · 目标 · 生成态 · tokens/费用]`，方括号为可选段，超宽时**从右到左**逐段裁剪（ANSI 不计宽）。
+- **目标芯片**：有 `active` 目标时插入 `目标` 段（`accent` token），值形如 `12.5K / 50.0K · 2m30s`（tokens 用量 / 预算 · 活跃时长；无预算时省略 `/ 预算`，时长 `Ns` / `Nm` / `Nms` 短形态），与 turn 渲染器同源（`goal/budget.mjs` 的 `goalUsageChip`）。
+- 状态词进 OSC 标题的 `state` 段：就绪 / 生成中 / 侧边对话。
+
+## 12. 新增 / 改造 dialog 自查清单
 
 - [ ] 头部按第 3 节：顶部一条 `─`、标题（+`(type to search)` 后缀）、hint、空行、`Search:` 行、列表、底部一条 `─`；标题下**无**内层 `─`。
 - [ ] hint 整行 `textMuted`，**不**做键位高亮；键位首字母大写、描述词小写、` · ` 分隔。

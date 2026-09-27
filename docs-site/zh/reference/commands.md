@@ -13,12 +13,16 @@
 | `npm run service` / `service:status` / `service:remove` | LaunchAgent 安装 / 状态 / 卸载 |
 | `npm run publish` | 构建前端 + 打 `.app` + 重启服务（仅限 Bundle 外源码目录） |
 | `npm run color` | 纯色识别回归测试（真实调用） |
-| `npm run docs:dev` / `docs:build` | 文档站开发 / 构建 |
+| `npm run docs:dev` / `docs:build` / `docs:notes` | 文档站开发 / 构建 / 生成发布笔记 |
+| `npm run bench` / `bench:smoke` / `bench:full` | 性能基准（basic / smoke / full 三套件，本地回归参考，非门禁） |
 
 ## 终端斜杠命令
 
-`/new` `/sessions` `/model` `/harness` `/think` `/temp` `/max` `/key` `/plan` `/mcp` `/help` `/quit`；每个技能自动生成 `/<技能名>`。
+`/new` `/sessions` `/model` `/harness` `/think` `/temp` `/max` `/key` `/plan` `/goal` `/btw` `/mcp` `/help` `/quit`；每个技能自动生成 `/<技能名>`。
+
+- `/goal`（无参看状态）/ `/goal pause|resume|stop` / `/goal budget <正整数>|clear`：目标模式用户面操作，详见 [Goal 模式指南](/zh/guide/goal-mode)
+- `/btw <问题>`：侧边对话，继承当前会话历史开聊，不落盘不进会话列表；`Ctrl+/` 切换、空提示符 `Ctrl+C` 丢弃
 
 ## 运行时工具（模型侧）
 
-`read_file` `list_dir` `grep` `glob` `web_fetch` `write_file` `edit_file` `shell` `todo` `skill` `task`（子代理）；MCP 工具以 `mcp__<服务器>__<工具>` 加入。
+`read_file` `list_dir` `grep` `glob` `web_fetch` `write_file` `edit_file` `shell` `todo` `skill` `task`（子代理）`create_goal` `update_goal` `get_goal`（目标模式，仅 Standard / Ultimate）；MCP 工具以 `mcp__<服务器>__<工具>` 加入。

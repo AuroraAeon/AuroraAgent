@@ -13,12 +13,16 @@
 | `npm run service` / `service:status` / `service:remove` | LaunchAgent install / status / remove |
 | `npm run publish` | build frontend + `.app` + restart service (source dir outside the bundle only) |
 | `npm run color` | solid-color regression (real calls) |
-| `npm run docs:dev` / `docs:build` | docs site dev / build |
+| `npm run docs:dev` / `docs:build` / `docs:notes` | docs site dev / build / generate release notes |
+| `npm run bench` / `bench:smoke` / `bench:full` | performance benchmarks (basic / smoke / full suites; local regression reference, not a gate) |
 
 ## Terminal slash commands
 
-`/new` `/sessions` `/model` `/harness` `/think` `/temp` `/max` `/key` `/plan` `/mcp` `/help` `/quit`; every skill gets `/<skill-name>`.
+`/new` `/sessions` `/model` `/harness` `/think` `/temp` `/max` `/key` `/plan` `/goal` `/btw` `/mcp` `/help` `/quit`; every skill gets `/<skill-name>`.
+
+- `/goal` (no argument shows status) / `/goal pause|resume|stop` / `/goal budget <positive int>|clear`: goal-mode user operations, see the [Goal Mode guide](/en/guide/goal-mode)
+- `/btw <question>`: side conversation that inherits the current session history, never persisted and absent from the session list; `Ctrl+/` toggles, `Ctrl+C` on an empty side prompt discards
 
 ## Runtime tools (model side)
 
-`read_file` `list_dir` `grep` `glob` `web_fetch` `write_file` `edit_file` `shell` `todo` `skill` `task`; MCP tools join as `mcp__<server>__<tool>`.
+`read_file` `list_dir` `grep` `glob` `web_fetch` `write_file` `edit_file` `shell` `todo` `skill` `task` `create_goal` `update_goal` `get_goal` (goal mode, Standard / Ultimate only); MCP tools join as `mcp__<server>__<tool>`.

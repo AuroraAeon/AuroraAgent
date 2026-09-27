@@ -8,7 +8,36 @@
 
 ## Config fields
 
-`apiKey` / `model` / `thinking` / `temperature` / `maxTokens` / `permissionMode` / `planMode`.
+`apiKey` / `model` / `thinking` / `temperature` / `maxTokens` / `permissionMode` / `planMode` / `titleMode` / `goal` / `tui`.
+
+### goal section (goal mode)
+
+Per-leaf fallback + clamping + startup warning. Full semantics: [Goal Mode guide](/en/guide/goal-mode).
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `verification` | `none` | tier: `none` / `evaluator` / `subagent` |
+| `evaluatorModel` | empty | required for evaluator; setting it implies evaluator |
+| `evidence` | `brief` | evidence shape: `brief` / `transcript` |
+| `repeatedReplyLimit` | 3 | shared breaker threshold |
+| `repeatedNotMetLimit` | 5 | consecutive `not_met` before `blocked(verifier_impossible)` |
+| `graceSteps` | 1 | grace rounds after round / time exhaustion (0–3) |
+| `mainTurns` | 0 | continuation round cap, 0 = unlimited |
+| `activeSeconds` | 0 | in-turn active seconds cap, 0 = unlimited |
+| `evaluatorMaxTokens` | 4096 | evaluator per-request token cap |
+| `evaluatorTimeoutSeconds` | 60 | evaluator timeout (seconds) |
+| `evaluatorMaxRetries` | 1 | evaluator retry cap |
+
+### tui section (terminal preferences)
+
+Read and written via `GET/POST /api/settings/tui` (Settings dialog, "Terminal" panel); the terminal reads it once at startup, so changes apply on next launch.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `terminalTitle` | `['state','session','app']` | OSC title item order (deduplicated, order preserved); `[]` disables |
+| `notifications.when` | `unfocused` | `unfocused` / `always` / `never` |
+| `notifications.method` | `auto` | `auto` / `osc9` / `osc777` / `bel` |
+| `notifications.events` | all four | `turn-complete` / `turn-failed` / `permission-required` / `question-required` |
 
 ## Environment variables
 
