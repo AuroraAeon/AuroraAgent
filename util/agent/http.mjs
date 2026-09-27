@@ -251,8 +251,10 @@ export function createAgentApi(deps) {
       }
       const cur = goals.get(sessionId);
       if (!cur) return json(res, 404, { error: { message: '当前会话没有目标', code: 'GOAL_NOT_FOUND' } });
-      // budget 的纪元门在 HTTP 层：goalId 与 updatedAt 都必须来自一次新鲜的 get_goal 快照
-      if (action === 'budget') {
+      // 纪元门在 HTTP 层：goalId 与 updatedAt 都必须来自一次新鲜的 get_goal 快照。
+      // budget 路由与「edit 随文携带 tokenBudget」（/goal <目标> budget=50K）同规约
+      const touchesBudget = action === 'budget' || (action === 'edit' && body.tokenBudget !== undefined);
+      if (touchesBudget) {
         const tb = body.tokenBudget === null ? null : body.tokenBudget;
         if (tb !== null && (!Number.isInteger(tb) || tb <= 0)) return json(res, 400, { error: { message: 'tokenBudget 需为正整数或 null（清除上限）' } });
         if (String(body.expectedGoalId || '') !== cur.goalId || !Number.isInteger(body.expectedUpdatedAt)) {

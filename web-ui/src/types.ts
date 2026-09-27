@@ -118,7 +118,8 @@ export type MsgPart = { kind: 'text'; text: string } | ({ kind: 'tool' } & ToolV
 export type MsgView =
   | { kind: 'user'; key: string; text: string; at?: string }
   | { kind: 'assistant'; key: string; parts: MsgPart[]; thinking: string; usage: { inputTokens: number; outputTokens: number; cost: number } | null; at?: string }
-  | { kind: 'system'; key: string; text: string };
+  | { kind: 'system'; key: string; text: string }
+  | { kind: 'notice'; key: string; text: string };
 
 /** 进行中的 turn（流式渲染，与历史投影共用 parts 时间线与 ToolCard） */
 export type PlanView = { text: string; decided: 'pending' | 'approved' | 'rejected' };

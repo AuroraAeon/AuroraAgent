@@ -56,9 +56,19 @@ export const createGoal = (sessionId: string, objective: string, tokenBudget?: n
     method: 'POST',
     body: JSON.stringify({ sessionId, objective, ...(tokenBudget === undefined ? {} : { tokenBudget }) }),
   });
-/** 改写未完成目标的目标文本（空白 400 GOAL_BAD_OBJECTIVE / 已完成 409） */
-export const editGoal = (sessionId: string, objective: string) =>
-  api<{ goal: GoalState }>('/api/agent/goal/edit', { method: 'POST', body: JSON.stringify({ sessionId, objective }) });
+/**
+ * 改写未完成目标的目标文本（空白 400 GOAL_BAD_OBJECTIVE / 已完成 409）。
+ * 随文携带 tokenBudget 时一并改预算（epoch 不符 409 GOAL_STALE，与 budget 路由同规约）。
+ */
+export const editGoal = (sessionId: string, objective: string, tokenBudget?: number | null, epoch?: { expectedGoalId: string; expectedUpdatedAt: number }) =>
+  api<{ goal: GoalState }>('/api/agent/goal/edit', {
+    method: 'POST',
+    body: JSON.stringify({
+      sessionId, objective,
+      ...(tokenBudget === undefined ? {} : { tokenBudget }),
+      ...(epoch || {}),
+    }),
+  });
 /** 移除目标（幂等：没有目标也回 200，cleared=false） */
 export const clearGoal = (sessionId: string) =>
   api<{ cleared: boolean }>('/api/agent/goal/clear', { method: 'POST', body: JSON.stringify({ sessionId }) });

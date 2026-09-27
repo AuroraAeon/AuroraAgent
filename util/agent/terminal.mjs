@@ -277,7 +277,7 @@ export async function runTerminal({ argv = [] } = {}) {
       case 'create': {
         try {
           const existed = Boolean(cur) && cur.status !== 'complete';
-          const g = setUserGoalObjective(goals, meta.id, intent.objective, intent.tokenBudget);
+          const g = setUserGoalObjective(goals, meta.id, intent.objective, intent.tokenBudget, { expectedUpdatedAt: cur?.updatedAt });
           const budgetNote = intent.tokenBudget != null ? ` · 预算 ${intent.tokenBudget} tokens` : '';
           console.log(p.dim(`✓ ${existed ? '目标文本已更新' : '新目标已设立'}${budgetNote}：${truncate(g.objective, 60)}`));
         } catch (e) { console.log(p.warning(e.message)); }

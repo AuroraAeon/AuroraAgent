@@ -3,8 +3,8 @@
  * 权限模型见 types.mjs 头注——用户可暂停 active、任意状态停止、恢复
  * paused/blocked/usage_limited；complete / budget_limited 恢复 active 一律拒绝；
  * 预算或工作量耗尽的目标只能靠「抬高 / 清除 token 预算」重新武装。
- * 另提供「设置目标文本」（create-or-edit，/goal <objective> 与网页 Composer 共用）
- * 与「移除目标」（clear，幂等）两个非状态迁移操作。
+ * 另提供「设置目标文本」（create-or-edit，/goal <objective> 与网页 Composer 共用，
+ * 可随文携带 tokenBudget 一并改预算）与「移除目标」（clear，幂等）两个非状态迁移操作。
  * 所有拒绝都抛 GoalConflictError（message 说清原因 + code 供上层映射状态码）。
  */
 import { canTransition, GOAL_STATUS_LABELS } from './types.mjs';
@@ -41,14 +41,22 @@ export function applyUserGoalAction(store, sessionId, action, { tokenBudget, exp
       const text = String(objective || '').trim().slice(0, 2000);
       if (!text) throw new GoalConflictError('目标内容不能为空：/goal <你想达成的目标>', 'GOAL_BAD_OBJECTIVE');
       if (cur.status === 'complete') conflict('已完成的目标不能改写：请用 /goal <新目标内容> 创建新目标');
-      return store.update(sessionId, (g) => ({ ...g, objective: text }));
+      if (tokenBudget !== undefined && tokenBudget !== null && (!Number.isInteger(tokenBudget) || tokenBudget <= 0)) {
+        throw new GoalConflictError('tokenBudget 需为正整数或 null（清除上限）', 'GOAL_BAD_BUDGET');
+      }
+      // 随文携带 budget= 时一并走预算变更（保留重新武装语义）；未传入则不碰预算
+      return store.update(sessionId, (g) => ({
+        ...g,
+        objective: text,
+        ...(tokenBudget === undefined ? {} : rearmAfterBudgetRaise(g, tokenBudget)),
+      }), { expectedUpdatedAt });
     }
     case 'budget': {
       const tb = tokenBudget === undefined ? null : tokenBudget;
       if (tb !== null && (!Number.isInteger(tb) || tb <= 0)) {
         throw new GoalConflictError('tokenBudget 需为正整数或 null（清除上限）', 'GOAL_BAD_BUDGET');
       }
-      return store.update(sessionId, (g) => rearmAfterBudgetRaise(g, tb), { expectedUpdatedAt });
+      return store.update(sessionId, (g) => ({ ...g, ...rearmAfterBudgetRaise(g, tb) }), { expectedUpdatedAt });
     }
     default:
       throw new GoalConflictError(`未知操作：${action}`, 'GOAL_BAD_ACTION');
@@ -62,17 +70,21 @@ export function applyUserGoalAction(store, sessionId, action, { tokenBudget, exp
  * tokenBudget 传入（含 null）时一并走预算变更（保留重新武装语义）。
  * @returns 变更后的 goal
  */
-export function setUserGoalObjective(store, sessionId, objective, tokenBudget) {
+export function setUserGoalObjective(store, sessionId, objective, tokenBudget, { expectedUpdatedAt } = {}) {
   const text = String(objective || '').trim().slice(0, 2000);
   if (!text) throw new GoalConflictError('目标内容不能为空：/goal <你想达成的目标>', 'GOAL_BAD_OBJECTIVE');
+  if (tokenBudget !== undefined && tokenBudget !== null && (!Number.isInteger(tokenBudget) || tokenBudget <= 0)) {
+    throw new GoalConflictError('tokenBudget 需为正整数或 null（清除上限）', 'GOAL_BAD_BUDGET');
+  }
   const cur = store.get(sessionId);
   if (!cur || cur.status === 'complete') {
     return store.create(sessionId, { objective: text, tokenBudget: tokenBudget === undefined ? null : tokenBudget });
   }
-  return store.update(sessionId, (g) => {
-    const next = { ...g, objective: text };
-    return tokenBudget === undefined ? next : { ...next, ...rearmAfterBudgetRaise(g, tokenBudget) };
-  });
+  return store.update(sessionId, (g) => ({
+    ...g,
+    objective: text,
+    ...(tokenBudget === undefined ? {} : rearmAfterBudgetRaise(g, tokenBudget)),
+  }), { expectedUpdatedAt });
 }
 
 /** 移除目标（/goal clear）：幂等，没有目标时 cleared=false（不抛错） */

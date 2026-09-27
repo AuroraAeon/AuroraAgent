@@ -166,12 +166,16 @@ export async function runGoalTests(test, assert, eq) {
     const cleared = rearmAfterBudgetRaise(limited, null);
     eq(cleared.status, 'active');
     eq(cleared.tokenBudget, null, '清零同样重新武装');
-    const tooLow = rearmAfterBudgetRaise(limited, 100);
+    const tooLow = { ...limited, ...rearmAfterBudgetRaise(limited, 100) };
     eq(tooLow.status, 'budget_limited', '压低到已用额度之下不重新武装');
+    eq(tooLow.tokenBudget, 100, '预算值仍被记录（只是不解除触顶）');
     const turnOut = { ...limited, statusReason: 'budget_limited(main_turn)' };
-    eq(rearmAfterBudgetRaise(turnOut, 999).status, 'budget_limited', '主轮耗尽不能靠改 token 预算恢复');
+    eq({ ...turnOut, ...rearmAfterBudgetRaise(turnOut, 999) }.status, 'budget_limited', '主轮耗尽不能靠改 token 预算恢复');
     const active = createGoalState({ sessionId: 's', objective: 'x' });
     eq(rearmAfterBudgetRaise(active, 50).tokenBudget, 50, 'active 目标正常改预算');
+    // 增量返回：不夹带旧 goal 字段，与目标文本等其他变更复合时不会覆盖
+    eq(raised.objective, undefined, '增量不应夹带旧 objective');
+    eq(Object.keys(raised).sort().join(','), 'status,statusReason,tokenBudget', '重新武装增量仅三字段');
   });
 
   await test('goal: goalUsageChip 形态（K 缩写 · 时分秒）', () => {
@@ -619,6 +623,7 @@ export async function runGoalTests(test, assert, eq) {
     const rearmed = setUserGoalObjective(store, 'obj1', '继续推进', 100);
     eq(rearmed.status, 'active', '抬高预算应重新武装');
     eq(rearmed.tokenBudget, 100);
+    eq(rearmed.objective, '继续推进', '随文预算不得覆盖新目标文本（增量复合回归）');
     // 空白拒绝与已完成拒绝
     let blankErr = null;
     try { setUserGoalObjective(store, 'obj2', '  '); } catch (e) { blankErr = e; }
@@ -632,6 +637,33 @@ export async function runGoalTests(test, assert, eq) {
     assert(fresh.goalId !== created.goalId, '新目标应是新 goalId');
   });
 
+
+  await test('goal: edit 动作随文携带 tokenBudget（含纪元校验与重新武装）', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'goal-editbud-'));
+    const store = new GoalStore(dir);
+    const g0 = store.create('eb1', { objective: '初版', tokenBudget: 100 });
+    const edited = applyUserGoalAction(store, 'eb1', 'edit', { objective: '二版', tokenBudget: 200 });
+    eq(edited.objective, '二版');
+    eq(edited.tokenBudget, 200, 'edit 应一并应用预算');
+    let stale = null;
+    try { applyUserGoalAction(store, 'eb1', 'edit', { objective: '三版', tokenBudget: 300, expectedUpdatedAt: g0.updatedAt }); } catch (e) { stale = e; }
+    assert(stale && stale.code === 'GOAL_STALE', 'edit 带预算应校验纪元');
+    const ok = applyUserGoalAction(store, 'eb1', 'edit', { objective: '三版', tokenBudget: 300, expectedUpdatedAt: edited.updatedAt });
+    eq(ok.objective, '三版');
+    eq(ok.tokenBudget, 300);
+    store.update('eb1', (g) => applyUsage(g, { tokens: 500 }));
+    store.update('eb1', (g) => {
+      const br = budgetBreach(g);
+      return br ? { ...g, status: 'budget_limited', statusReason: br.reason } : g;
+    });
+    eq(store.get('eb1').status, 'budget_limited');
+    const rearmed = applyUserGoalAction(store, 'eb1', 'edit', { objective: '四版', tokenBudget: 900 });
+    eq(rearmed.status, 'active', 'edit 抬高预算应重新武装');
+    eq(rearmed.objective, '四版', '重新武装不应丢目标文本');
+    let bad = null;
+    try { applyUserGoalAction(store, 'eb1', 'edit', { objective: '五版', tokenBudget: -1 }); } catch (e) { bad = e; }
+    assert(bad && bad.code === 'GOAL_BAD_BUDGET', 'edit 坏预算应 400 类拒绝');
+  });
   await test('goal: clearUserGoal 幂等移除', () => {
     const dir = mkdtempSync(join(tmpdir(), 'goal-clear-'));
     const store = new GoalStore(dir);

@@ -1580,11 +1580,16 @@ try {
     assert(app.includes('goalAction(currentId, action)') && app.includes('onGoalAction={decideGoal}'), 'App 应接线目标动作回传');
     assert(app.includes('handleGoalCommand') && app.includes('onGoalCommand={handleGoalCommand}'), 'App 应接线 /goal 命令处理');
     assert(app.includes('parseGoalCommand(rawArgs)') && app.includes('createGoal(currentId'), 'App 应走共享解析器并区分创建与改写');
+    assert(app.includes("kind: 'notice'") && !app.includes("kind: 'system', key: `g"), 'goal 命令输出应走 notice 消息（不套压缩摘要前缀）');
+    const msg = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Message.tsx'), 'utf8');
+    assert(msg.includes("msg.kind === 'notice'") && msg.includes('row-notice'), 'Message 应渲染 notice 行');
+    assert(/msg\.kind === 'notice'[\s\S]{0,200}\{msg\.text\}/.test(msg), 'notice 行应直出文本（不套压缩摘要前缀）');
     const cv = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ChatView.tsx'), 'utf8');
     assert(cv.includes('<GoalBanner goal={goal}'), 'ChatView 应挂载目标横幅');
     const composerSrc = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Composer.tsx'), 'utf8');
     assert(composerSrc.includes('onGoalCommand') && composerSrc.includes("/^\\/goal(\\s|$)/"), 'Composer 应拦截 /goal 命令');
     assert(composerSrc.includes('goalPrefill') && composerSrc.includes('lastPrefillNonce'), 'Composer 应支持 edit 回填（nonce 去重）');
+    assert(composerSrc.includes('Enter 不拦截，落到下方统一提交'), '技能调色板无匹配时不应吞掉 /goal 命令的 Enter');
     const api = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'api.ts'), 'utf8');
     assert(api.includes('/api/agent/goal/${sessionId}') && api.includes('/api/agent/goal/${action}'), 'api 客户端应覆盖 goal 读与动作');
     assert(api.includes('createGoal') && api.includes('editGoal') && api.includes('clearGoal'), 'api 客户端应覆盖设立 / 改写 / 移除');
@@ -2788,6 +2793,47 @@ await test('Goal REST：edit 改写目标文本（空白 400 / 已完成 409）�
     body: JSON.stringify({ sessionId: s2.id }),
   })).json();
   eq(clearDone.cleared, true, '已完成目标可 clear');
+});
+
+await test('Goal REST：edit 随文携带 tokenBudget（新鲜快照生效 / 纪元不符 409 GOAL_STALE）', async () => {
+  const s = await createAgentSession();
+  const created = (await (await fetch(`${AGENT}/goal`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, objective: '初版目标', tokenBudget: 1000 }),
+  })).json()).goal;
+  // 新鲜快照：文本与预算一并改写
+  const edited = await (await fetch(`${AGENT}/goal/edit`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sessionId: s.id, objective: '二版目标', tokenBudget: 5000,
+      expectedGoalId: created.goalId, expectedUpdatedAt: created.updatedAt,
+    }),
+  })).json();
+  eq(edited.goal.objective, '二版目标');
+  eq(edited.goal.tokenBudget, 5000, 'edit 应一并应用随文预算');
+  // 陈旧纪元：409 GOAL_STALE
+  const stale = await fetch(`${AGENT}/goal/edit`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sessionId: s.id, objective: '三版目标', tokenBudget: 9000,
+      expectedGoalId: created.goalId, expectedUpdatedAt: created.updatedAt,
+    }),
+  });
+  eq(stale.status, 409, 'edit 带预算纪元不符 409');
+  eq((await stale.json()).error.code, 'GOAL_STALE');
+  // 缺快照字段同样 409
+  const noEpoch = await fetch(`${AGENT}/goal/edit`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, objective: '三版目标', tokenBudget: 9000 }),
+  });
+  eq(noEpoch.status, 409, 'edit 带预算缺快照字段 409');
+  // 不带 tokenBudget 的纯文本 edit 不受纪元门限制
+  const textOnly = await (await fetch(`${AGENT}/goal/edit`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, objective: '纯文本改写' }),
+  })).json();
+  eq(textOnly.goal.objective, '纯文本改写');
+  eq(textOnly.goal.tokenBudget, 5000, '纯文本 edit 不动预算');
 });
 
 await test('Goal REST：budget 纪元不符 409 GOAL_STALE，抬高预算重新武装 budget_limited(token)', async () => {

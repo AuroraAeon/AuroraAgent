@@ -36,16 +36,19 @@ export function budgetBreach(goal, limits = {}) {
 /**
  * 受守卫的 token 预算变更：仅抬高到已用额度之上、或清零，才能把
  * budget_limited(token) 重新武装回 active。主轮与活跃时间耗尽不能靠改 token 预算恢复。
+ * 返回**增量**（status / statusReason / tokenBudget 中实际变化的项），调用方与目标文本等
+ * 其他字段变更复合时不会被旧值覆盖：{ ...goal, ...rearmAfterBudgetRaise(goal, tb) }。
  */
 export function rearmAfterBudgetRaise(goal, tokenBudget) {
   const cleared = tokenBudget === null;
   const raised = Number.isInteger(tokenBudget) && tokenBudget > goal.tokensUsed;
   // 仅 token 触顶可经「抬高到已用之上 / 清零」重新武装；主轮与活跃时间耗尽不认 token 预算
   const tokenLimited = goal.status === 'budget_limited' && goal.statusReason === 'budget_limited(token)';
+  const nextBudget = cleared ? null : Number.isInteger(tokenBudget) && tokenBudget > 0 ? tokenBudget : goal.tokenBudget;
   if (tokenLimited && (cleared || raised)) {
-    return { ...goal, status: 'active', statusReason: null, tokenBudget: cleared ? null : tokenBudget };
+    return { status: 'active', statusReason: null, tokenBudget: nextBudget };
   }
-  return { ...goal, tokenBudget: cleared ? null : Number.isInteger(tokenBudget) && tokenBudget > 0 ? tokenBudget : goal.tokenBudget };
+  return { tokenBudget: nextBudget };
 }
 
 /** footer / banner 共用的用量摘要：'12.5K · 2m' 形态；无预算时刻度只显示已用与时长 */

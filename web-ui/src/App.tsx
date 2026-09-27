@@ -242,7 +242,7 @@ export default function App() {
   useEffect(() => {
     const cur = goal ? { id: goal.goalId, status: goal.status } : null;
     if (goal && cur && prevGoal.current && cur.id === prevGoal.current.id && cur.status === 'complete' && prevGoal.current.status !== 'complete') {
-      setMessages((m) => [...m, { kind: 'system', key: `gr${goal.updatedAt}`, text: formatGoalReceipt(goal) }]);
+      setMessages((m) => [...m, { kind: 'notice', key: `gr${goal.updatedAt}`, text: formatGoalReceipt(goal) }]);
     }
     prevGoal.current = cur;
   }, [goal]);
@@ -250,7 +250,7 @@ export default function App() {
   /** /goal 斜杠命令：解析与终端 REPL 共用 command.mjs 单一事实源；执行走 /api/agent/goal* REST 面 */
   const handleGoalCommand = (rawArgs: string) => {
     if (!currentId) return;
-    const push = (text: string) => setMessages((m) => [...m, { kind: 'system', key: `g${Date.now()}`, text }]);
+    const push = (text: string) => setMessages((m) => [...m, { kind: 'notice', key: `g${Date.now()}`, text }]);
     const fail = (e: unknown) => setError(`目标操作失败：${e instanceof Error ? e.message : String(e)}`);
     const intent = parseGoalCommand(rawArgs);
     // 有未完成目标时「设立」语义变为「改写目标文本」（与 MiniMax 客户端 setObjective 一致；创建的严格 409 由服务端守）
@@ -276,7 +276,10 @@ export default function App() {
         clearGoal(currentId).then((r) => { setGoal(null); push(r.cleared ? '目标已移除' : '当前会话没有目标'); }).catch(fail);
         return;
       case 'create':
-        (unfinished ? editGoal(currentId, intent.objective) : createGoal(currentId, intent.objective, intent.tokenBudget))
+        // 改写路径同样携带 budget= 与纪元快照（/goal <目标> budget=50K 对已有目标也生效）
+        (unfinished
+          ? editGoal(currentId, intent.objective, intent.tokenBudget, goal ? { expectedGoalId: goal.goalId, expectedUpdatedAt: goal.updatedAt } : undefined)
+          : createGoal(currentId, intent.objective, intent.tokenBudget))
           .then((r) => {
             setGoal(r.goal);
             push(`${unfinished ? '目标文本已更新' : '新目标已设立'}：${intent.objective}${intent.tokenBudget != null ? ` · 预算 ${intent.tokenBudget} tokens` : ''}`);

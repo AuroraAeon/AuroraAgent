@@ -446,12 +446,19 @@ export function Composer({
               if (e.key === 'ArrowDown') { e.preventDefault(); setSkillIdx((i) => (n ? (i + 1) % n : 0)); return; }
               if (e.key === 'ArrowUp') { e.preventDefault(); setSkillIdx((i) => (n ? (i - 1 + n) % n : 0)); return; }
               if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
-                e.preventDefault();
                 const kw = (slash?.[1] || '').toLowerCase();
                 const shown = skills.filter((sk) => !kw || sk.name.toLowerCase().includes(kw) || sk.description.toLowerCase().includes(kw));
                 const pick = shown[Math.min(skillIdx, shown.length - 1)];
-                if (pick) { setText(`/${pick.name} `); setSkillIdx(0); taRef.current?.focus(); }
-                return;
+                if (pick) {
+                  e.preventDefault();
+                  setText(`/${pick.name} `);
+                  setSkillIdx(0);
+                  taRef.current?.focus();
+                  return;
+                }
+                // 无匹配技能：Tab 无可插入直接忽略；Enter 不拦截，落到下方统一提交
+                // （/goal 等斜杠命令与未知 /xxx 输入都应当能直接发出）
+                if (e.key === 'Tab') e.preventDefault();
               }
               if (e.key === 'Escape') { e.preventDefault(); setText(''); return; }
             }

@@ -1,7 +1,7 @@
 /** 单条消息渲染：用户 / 助手（思考 + 正文 + 工具 + 用量脚注）/ 系统（压缩提示）。 */
 import { useState } from 'react';
 import { Markdown } from '../markdown';
-import { IconAlert, IconBulb, IconChevronDown, IconChevronRight, IconPerson, IconSpark } from '../icons';
+import { IconAlert, IconBulb, IconChevronDown, IconChevronRight, IconPerson, IconSpark, IconTag } from '../icons';
 import type { MsgView } from '../types';
 
 import { ToolCard } from './ToolCard';
@@ -43,6 +43,14 @@ export function Message({ msg, onDecide }: Props) {
       <div className="row-system">
         <IconAlert size={13} />
         <span>已折叠早期对话为摘要：{msg.text}</span>
+      </div>
+    );
+  }
+  if (msg.kind === 'notice') {
+    return (
+      <div className="row-notice">
+        <IconTag size={13} />
+        <span>{msg.text}</span>
       </div>
     );
   }

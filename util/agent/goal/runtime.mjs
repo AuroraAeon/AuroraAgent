@@ -104,7 +104,7 @@ export function createGoalRuntime({
           }
           const tb = args.token_budget === null ? null : args.token_budget;
           try {
-            const next = goalStore.update(sessionId, (g) => rearmAfterBudgetRaise(g, tb), { expectedUpdatedAt: args.expected_updated_at });
+            const next = goalStore.update(sessionId, (g) => ({ ...g, ...rearmAfterBudgetRaise(g, tb) }), { expectedUpdatedAt: args.expected_updated_at });
             emitStatus(next);
             const resumed = cur.status !== 'active' && next.status === 'active';
             return `token 预算已更新为 ${next.tokenBudget == null ? '无上限' : next.tokenBudget}${resumed ? '，目标已恢复进行中' : ''}。本次更新不结束当前轮。`;
