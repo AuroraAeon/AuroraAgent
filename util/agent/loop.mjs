@@ -13,6 +13,8 @@ import { consumeAgentStream } from '../stream.mjs';
 import { resolveTool, toolResource } from './tools.mjs';
 import { PermissionPolicy, defaultRules } from './policy.mjs';
 import { createSpawner } from './swarm.mjs';
+import { deriveTitle } from './title.mjs';
+import { DEFAULT_SESSION_NAME } from './session.mjs';
 import { PLAN_MAX_ROUNDS, PLAN_MODE_PROMPT, planExecutionNote, planToolNames } from './plan.mjs';
 import { assembleMessages, needsCompaction, planCompaction, compactionMessages, contextWindowOf } from './context.mjs';
 
@@ -52,6 +54,15 @@ export async function runAgentTurn(ctx) {
 
   store.append(sessionId, { t: 'user', text: input });
   store.patch(sessionId, { turns: (session.turns || 0) + 1 });
+  // 首条消息自动总结标题：会话仍是默认名时按用户输入推导简短标题（本地推导，不调模型、零成本）
+  if (!session.name || session.name === DEFAULT_SESSION_NAME) {
+    const title = deriveTitle(input);
+    if (title) {
+      store.patch(sessionId, { name: title });
+      session.name = title; // 同步内存引用，本轮内读取保持一致
+      emit('session_renamed', { sessionId, name: title });
+    }
+  }
   let records = store.records(sessionId);
   emit('turn_started', { sessionId, turnId, turnIndex: (session.turns || 0) + 1, userInput: input, model, provider: provider.id, harness: harness.id });
 

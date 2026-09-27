@@ -869,13 +869,13 @@ const toolFrames = (name, args) => [
 ];
 
 /** 一次性 loop 运行环境：临时数据目录 + stub fetch + 事件收集 */
-async function runLoopOnce({ framesByCall, harness = getHarness('standard'), permission = 'allow', seedRecords = [], providerExtra = {}, input = '开始', planMode = false, planDecision = 'approve' }) {
+async function runLoopOnce({ framesByCall, harness = getHarness('standard'), permission = 'allow', seedRecords = [], providerExtra = {}, input = '开始', planMode = false, planDecision = 'approve', sessionName = '' }) {
   const dir = mkdtempSync(join(tmpdir(), 'mt-loop-'));
   const ws = join(dir, 'workspace');
   mkdirSync(ws, { recursive: true });
   const store = new SessionStore(dir);
   const usage = new UsageLedger(dir);
-  const session = store.create({ model: 'm1', harness: harness.id, workspace: ws });
+  const session = store.create({ name: sessionName, model: 'm1', harness: harness.id, workspace: ws });
   for (const r of seedRecords) store.append(session.id, r);
   const events = [];
   const requests = [];
@@ -989,6 +989,39 @@ await test('Loop：无工具轮直接出终稿并记账', async () => {
   eq(usage.read().length, 1, '账本应记 1 条');
   eq(usage.read()[0].kind, 'agent');
   eq(requests[0].body.tools, undefined, 'minimal 模式不应带 tools');
+});
+
+await test('Loop：首条消息自动总结会话标题并推送 session_renamed', async () => {
+  const { store, events } = await runLoopOnce({
+    framesByCall: [textFrames('好的，我来看一下')],
+    input: '帮我把 README 的安装章节改写一下',
+    harness: getHarness('minimal'),
+  });
+  const meta = store.list()[0];
+  eq(meta.name, '帮我把 README 的安装章…', '默认名会话应按首条消息总结出标题');
+  const renamed = events.find((e) => e.type === 'session_renamed');
+  assert(renamed && renamed.name === meta.name && renamed.sessionId === meta.id, '应推送 session_renamed 事件');
+});
+
+await test('Loop：已命名会话不被自动标题覆盖', async () => {
+  const { store, events } = await runLoopOnce({
+    framesByCall: [textFrames('好的')],
+    input: '帮我把 README 的安装章节改写一下',
+    harness: getHarness('minimal'),
+    sessionName: '用户自己起的名字',
+  });
+  eq(store.list()[0].name, '用户自己起的名字', '用户改名应保留');
+  assert(!events.some((e) => e.type === 'session_renamed'), '已命名会话不应推送改名事件');
+});
+
+await test('Loop：提炼不出内容时保留默认名', async () => {
+  const { store, events } = await runLoopOnce({
+    framesByCall: [textFrames('好的')],
+    input: '。。。',
+    harness: getHarness('minimal'),
+  });
+  eq(store.list()[0].name, '新会话', '纯标点输入不强行起标题');
+  assert(!events.some((e) => e.type === 'session_renamed'), '无标题可提炼时不推送事件');
 });
 
 await test('Loop：工具轮经权限允许后执行并回填结果', async () => {
@@ -1771,6 +1804,28 @@ await test('PATCH /api/agent/sessions/:id 切换模式 / 改名 / 换模型', as
   eq(detail.meta.harness, 'ultimate', '失败的 PATCH 不应改动会话');
   eq((await fetch(`${AGENT}/sessions/nope`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 404, '未知会话 404');
   await fetch(`${AGENT}/sessions/${s.id}`, { method: 'DELETE' });
+});
+
+await test('Agent turn：首条消息自动总结会话标题并落元信息', async () => {
+  const created = await (await fetch(`${AGENT}/sessions`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+  })).json();
+  const s = created.session;
+  eq(s.name, '新会话', '新建会话应带默认名');
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: '帮我把 README 的安装章节改写一下' }),
+  });
+  const all = await drainAgentStream(openAgentStream(resp));
+  const renamed = all.find((e) => e.type === 'session_renamed');
+  assert(renamed && renamed.name === '帮我把 README 的安装章…', '应推送自动总结出的标题');
+  assert(all.find((e) => e.type === 'turn_completed'), '应以 turn_completed 收尾');
+  const detail = await (await fetch(`${AGENT}/sessions/${s.id}`)).json();
+  eq(detail.meta.name, '帮我把 README 的安装章…', '标题应落会话元信息');
+  const list = await (await fetch(`${AGENT}/sessions`)).json();
+  const row = list.sessions.find((x) => x.id === s.id);
+  eq(row.name, '帮我把 README 的安装章…', '会话列表应同步新标题');
+  assert(row.preview.includes('帮我把 README'), '预览仍取首条用户消息');
 });
 
 await test('Agent turn：只读工具默认放行，无需确认即执行', async () => {

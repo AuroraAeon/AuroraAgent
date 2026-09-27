@@ -12,6 +12,9 @@ import { DEFAULT_PERMISSION_MODE, PERMISSION_MODES } from '../config.mjs';
 
 const META_SUFFIX = '.meta.json';
 
+/** 新建会话的默认名：仍是这个名字时，首条消息可自动总结出标题（title.mjs） */
+export const DEFAULT_SESSION_NAME = '新会话';
+
 export class SessionStore {
   constructor(dataDir, { warn = () => {} } = {}) {
     this.dir = join(dataDir, 'sessions');
@@ -26,7 +29,7 @@ export class SessionStore {
     const now = new Date().toISOString();
     const meta = {
       id,
-      name: name || '新会话',
+      name: name || DEFAULT_SESSION_NAME,
       model,
       provider,
       harness,

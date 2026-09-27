@@ -7,6 +7,7 @@
 /** 全部事件类型（前端 switch 与测试断言共享这份清单） */
 export const EVENT_TYPES = [
   'session_created',
+  'session_renamed',
   'turn_started',
   'model_round_started',
   'text_chunk',
