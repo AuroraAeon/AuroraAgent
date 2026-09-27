@@ -264,7 +264,9 @@ export default function App() {
         push(GOAL_COMMAND_HELP);
         return;
       case 'error':
+        // 解析失败不回撤输入：原样回填便于就地修改（对齐 MiniMax 的 retained 语义）
         push(intent.message);
+        setGoalPrefill({ text: `/goal ${rawArgs}`, nonce: Date.now() });
         return;
       case 'edit':
         if (!goal) { push('当前会话没有目标'); return; }
