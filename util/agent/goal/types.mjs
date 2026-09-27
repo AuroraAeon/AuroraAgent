@@ -108,6 +108,14 @@ export function normalizeGoalState(raw) {
   };
 }
 
+/** 用户面文案：等待原因 → 中文标签（终端 / 网页同源；goal_wait_changed 的 reason 用） */
+export const GOAL_WAIT_LABELS = {
+  permission: '等待授权',
+  plan: '等待计划批准',
+  verification: '独立验证中',
+  unknown: '等待中',
+};
+
 /** 用户面文案：状态 → 中文标签（终端 / 网页同源） */
 export const GOAL_STATUS_LABELS = {
   active: '进行中',

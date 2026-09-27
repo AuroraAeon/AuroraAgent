@@ -11,6 +11,7 @@ import {
   createGoalState, normalizeGoalState, canTransition, GOAL_STATUS_LABELS,
 } from '../util/agent/goal/types.mjs';
 import { GoalStore, GoalConflictError } from '../util/agent/goal/store.mjs';
+import { applyUserGoalAction, GOAL_BAD_INPUT_CODES } from '../util/agent/goal/actions.mjs';
 import { resolveUpdateGoalMode, hasUpdateGoalTokenBudgetIntent } from '../util/agent/goal/tools.mjs';
 import { parseGoalConfig, GOAL_CONFIG_DEFAULTS, goalLimits } from '../util/agent/goal/config.mjs';
 import { applyUsage, budgetBreach, rearmAfterBudgetRaise, goalUsageChip } from '../util/agent/goal/budget.mjs';
@@ -242,6 +243,59 @@ export async function runGoalTests(test, assert, eq) {
     const raw = JSON.parse(readFileSync(join(dir, 'goals', 's4.json'), 'utf8'));
     eq(raw.objective, '原子性');
     eq(existsSync(join(dir, 'goals', 's4.json.tmp')), false, '不应残留临时文件');
+  });
+
+  await test('goal: applyUserGoalAction——REST 与终端共用的用户面迁移与拒绝', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'goal-actions-'));
+    const store = new GoalStore(dir);
+    store.create('sA', { objective: '用户面操作' });
+    const paused = applyUserGoalAction(store, 'sA', 'pause');
+    eq(paused.status, 'paused');
+    eq(paused.statusReason, 'paused(user_requested)');
+    eq(paused.executionWait, null, '暂停应清除陈旧等待');
+    const resumed = applyUserGoalAction(store, 'sA', 'resume');
+    eq(resumed.status, 'active');
+    const stopped = applyUserGoalAction(store, 'sA', 'stop');
+    eq(stopped.status, 'complete');
+    eq(stopped.statusReason, 'complete(user_requested)');
+    for (const act of ['pause', 'resume', 'stop']) {
+      let err = null;
+      try { applyUserGoalAction(store, 'sA', act); } catch (e) { err = e; }
+      assert(err instanceof GoalConflictError, `${act} 对 complete 应抛冲突`);
+      eq(err.code, 'GOAL_STATUS_CONFLICT');
+    }
+    // 无目标：GOAL_NOT_FOUND
+    let nf = null;
+    try { applyUserGoalAction(store, 'sB', 'pause'); } catch (e) { nf = e; }
+    eq(nf.code, 'GOAL_NOT_FOUND');
+    // 坏预算入参：GOAL_BAD_BUDGET（上层映射 400）
+    let bad = null;
+    try { applyUserGoalAction(store, 'sA', 'budget', { tokenBudget: -1 }); } catch (e) { bad = e; }
+    eq(bad.code, 'GOAL_BAD_BUDGET');
+    assert(GOAL_BAD_INPUT_CODES.includes(bad.code), '坏入参 code 应登记在案');
+  });
+
+  await test('goal: applyUserGoalAction budget——纪元 CAS 与重新武装', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'goal-actions-budget-'));
+    const store = new GoalStore(dir);
+    store.create('sC', { objective: '预算操作', tokenBudget: 10 });
+    // 手工模拟触顶：直接改文件比跑真实轮次便宜（状态迁移逻辑由 e2e 覆盖）
+    const g = store.get('sC');
+    store.update('sC', (x) => ({ ...x, tokensUsed: 50, status: 'budget_limited', statusReason: 'budget_limited(token)' }));
+    let stale = null;
+    try { applyUserGoalAction(store, 'sC', 'budget', { tokenBudget: 100, expectedUpdatedAt: g.updatedAt }); } catch (e) { stale = e; }
+    eq(stale.code, 'GOAL_STALE', '纪元不符应抛 GOAL_STALE');
+    const cur = store.get('sC');
+    const raised = applyUserGoalAction(store, 'sC', 'budget', { tokenBudget: 100, expectedUpdatedAt: cur.updatedAt });
+    eq(raised.status, 'active', '抬高到已用之上应重新武装');
+    eq(raised.tokenBudget, 100);
+    const cleared = applyUserGoalAction(store, 'sC', 'budget', { tokenBudget: null, expectedUpdatedAt: raised.updatedAt });
+    eq(cleared.tokenBudget, null, '清零应移除上限');
+    eq(cleared.status, 'active');
+    // 未知操作：GOAL_BAD_ACTION
+    let unknown = null;
+    try { applyUserGoalAction(store, 'sC', 'destroy'); } catch (e) { unknown = e; }
+    eq(unknown.code, 'GOAL_BAD_ACTION');
   });
 
   await test('goal: 运行时工具——创建 / 提案 / 快照与混合模式拒绝', () => {

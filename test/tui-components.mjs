@@ -79,5 +79,9 @@ export async function runTuiComponentTests(test, assert, eq) {
     assert(modelTitle.includes('标题') && modelTitle.includes('模型总结'), '模型总结标题时应显示标题段');
     const localTitle = strip(renderFooter({ model: 'LongCat-2.5', harness: 'Standard', thinking: true, permissionMode: 'ask_when_needed', titleMode: 'local' }, p, 100));
     assert(!localTitle.includes('标题'), '本地推导不应显示标题段');
+    const goal = strip(renderFooter({ model: 'LongCat-2.5', harness: 'Standard', thinking: true, permissionMode: 'ask_when_needed', goal: '12.5K / 5000 · 2m30s' }, p, 100));
+    assert(goal.includes('目标') && goal.includes('12.5K / 5000 · 2m30s'), '有进行中目标时应显示目标段');
+    const noGoal = strip(renderFooter({ model: 'LongCat-2.5', harness: 'Standard', thinking: true, permissionMode: 'ask_when_needed' }, p, 100));
+    assert(!noGoal.includes('目标'), '无目标时不应显示目标段');
   });
 }

@@ -9,8 +9,7 @@ import { runAgentTurn } from './loop.mjs';
 import { getHarness, harnessSummaries } from './harness.mjs';
 import { sseFrame } from './events.mjs';
 import { GoalStore, GoalConflictError } from './goal/store.mjs';
-import { canTransition, GOAL_STATUS_LABELS } from './goal/types.mjs';
-import { rearmAfterBudgetRaise } from './goal/budget.mjs';
+import { applyUserGoalAction, GOAL_BAD_INPUT_CODES } from './goal/actions.mjs';
 import { loadSkills, findSkill, skillInvocationText } from './skills.mjs';
 import { PERMISSION_MODES, TITLE_MODES, experimentalEnabled } from '../config.mjs';
 import { McpRegistry } from '../mcp/registry.mjs';
@@ -228,39 +227,25 @@ export function createAgentApi(deps) {
       if (!sessions.get(sessionId)) return json(res, 404, { error: { message: '会话不存在或已删除' } });
       const cur = goals.get(sessionId);
       if (!cur) return json(res, 404, { error: { message: '当前会话没有目标', code: 'GOAL_NOT_FOUND' } });
-      const conflict = (message) => json(res, 409, { error: { message, code: 'GOAL_STATUS_CONFLICT' } });
-      try {
-        if (goalActionMatch[1] === 'pause') {
-          if (!canTransition(cur.status, 'paused')) return conflict(`当前状态（${GOAL_STATUS_LABELS[cur.status]}）不能暂停`);
-          const goal = goals.update(sessionId, (g) => ({ ...g, status: 'paused', statusReason: 'paused(user_requested)', executionWait: null }));
-          log('info', 'Goal 已暂停', { sessionId });
-          return json(res, 200, { goal });
-        }
-        if (goalActionMatch[1] === 'resume') {
-          if (!canTransition(cur.status, 'active')) {
-            return conflict(cur.status === 'budget_limited' ? '预算耗尽的目标不能直接恢复：请先抬高或清除预算' : '已完成的目标不能恢复：请创建新目标');
-          }
-          const goal = goals.update(sessionId, (g) => ({ ...g, status: 'active', statusReason: null }));
-          log('info', 'Goal 已恢复', { sessionId });
-          return json(res, 200, { goal });
-        }
-        if (goalActionMatch[1] === 'stop') {
-          if (cur.status === 'complete') return conflict('目标已完成，无需停止');
-          const goal = goals.update(sessionId, (g) => ({ ...g, status: 'complete', statusReason: 'complete(user_requested)', executionWait: null }));
-          log('info', 'Goal 已停止', { sessionId });
-          return json(res, 200, { goal });
-        }
-        // budget：纪元不符 409 GOAL_STALE；抬高到已用之上或清零会把 budget_limited(token) 重新武装
+      const action = goalActionMatch[1];
+      // budget 的纪元门在 HTTP 层：goalId 与 updatedAt 都必须来自一次新鲜的 get_goal 快照
+      if (action === 'budget') {
         const tb = body.tokenBudget === null ? null : body.tokenBudget;
         if (tb !== null && (!Number.isInteger(tb) || tb <= 0)) return json(res, 400, { error: { message: 'tokenBudget 需为正整数或 null（清除上限）' } });
         if (String(body.expectedGoalId || '') !== cur.goalId || !Number.isInteger(body.expectedUpdatedAt)) {
           return json(res, 409, { error: { message: '预算变更需要新鲜的 get_goal 快照（expectedGoalId + expectedUpdatedAt）', code: 'GOAL_STALE' } });
         }
-        const goal = goals.update(sessionId, (g) => rearmAfterBudgetRaise(g, tb), { expectedUpdatedAt: body.expectedUpdatedAt });
-        log('info', 'Goal 预算已调整', { sessionId, goalId: goal.goalId, tokenBudget: goal.tokenBudget });
+      }
+      try {
+        const goal = applyUserGoalAction(goals, sessionId, action, { tokenBudget: body.tokenBudget, expectedUpdatedAt: body.expectedUpdatedAt });
+        log('info', `Goal 操作 ${action}`, { sessionId });
         return json(res, 200, { goal });
       } catch (e) {
-        if (e instanceof GoalConflictError) return json(res, 409, { error: { message: e.message, code: e.code } });
+        // 坏入参（预算非法 / 未知操作）映射 400；状态冲突与纪元不符映射 409
+        if (e instanceof GoalConflictError) {
+          const status = GOAL_BAD_INPUT_CODES.includes(e.code) ? 400 : 409;
+          return json(res, status, { error: { message: e.message, code: e.code } });
+        }
         throw e;
       }
     }

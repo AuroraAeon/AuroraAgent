@@ -6,7 +6,9 @@
  */
 import { runAgentTurn } from './loop.mjs';
 import { PRICE, TITLE_MODES } from '../config.mjs';
-import { toolLabel, fmtCost, indent, CLEAR } from './terminal-format.mjs';
+import { toolLabel, fmtCost, indent, truncate, CLEAR } from './terminal-format.mjs';
+import { GOAL_STATUS_LABELS, GOAL_WAIT_LABELS } from './goal/types.mjs';
+import { goalUsageChip } from './goal/budget.mjs';
 
 /**
  * 跑一个 turn 并渲染。session 引用会被 loop 更新，故结束后经 onSession 回传最新 meta。
@@ -24,6 +26,7 @@ export async function runTerminalTurn({ store, usage, session, input, provider, 
   let aborted = false;
   let pendingPerm = null;
   let pendingPlan = null;
+  let lastGoalStatus = null; // goal 状态去重键：只在状态真变时打印（用量事件不刷屏）
 
   const write = (s) => { process.stdout.write(s); atLineStart = s.endsWith('\n'); };
   const breakLine = () => { if (!atLineStart) write('\n'); };
@@ -105,6 +108,35 @@ export async function runTerminalTurn({ store, usage, session, input, provider, 
         endToolLine();
         breakLine();
         write(painter.warning('  计划已驳回，未做任何修改') + '\n');
+        break;
+      case 'goal_created': {
+        endToolLine();
+        breakLine();
+        const g = p.goal;
+        lastGoalStatus = `${g.status}:${g.statusReason || ''}`;
+        write(`  ${painter.accent('目标')} ${truncate(g.objective, 60)} ${painter.dim(goalUsageChip(g))}
+`);
+        break;
+      }
+      case 'goal_status_changed': {
+        endToolLine();
+        breakLine();
+        const g = p.goal;
+        const key = `${g.status}:${g.statusReason || ''}`;
+        if (key !== lastGoalStatus) {
+          lastGoalStatus = key;
+          const reason = p.statusReason ? painter.dim(`（${p.statusReason}）`) : '';
+          write(`  ${painter.accent('目标')} → ${painter.text(GOAL_STATUS_LABELS[g.status] || g.status)}${reason} ${painter.dim(goalUsageChip(g))}
+`);
+        }
+        break;
+      }
+      case 'goal_wait_changed':
+        if (!p.reason) break; // 等待结束不单独打印：紧随其后的状态变更事件会说明
+        endToolLine();
+        breakLine();
+        write(`  ${painter.dim(`目标${GOAL_WAIT_LABELS[p.reason] || '等待中'}…`)}
+`);
         break;
       case 'token_usage_updated':
         endToolLine();

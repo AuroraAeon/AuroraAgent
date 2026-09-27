@@ -1404,6 +1404,20 @@ try {
     const js = await (await fetch(`${BASE}${/\/app\/assets\/[A-Za-z0-9._-]+\.js/.exec(html)[0]}`)).text();
     assert(js.includes('session_renamed'), '构建产物应含标题刷新逻辑（改了 web-ui 忘了 build:web 会红）');
   });
+  await test('Goal 终端接线源码契约：/goal 命令、状态栏芯片与三类事件呈现', async () => {
+    const term = readFileSync(join(__dirname, '..', 'util', 'agent', 'terminal.mjs'), 'utf8');
+    assert(term.includes("name: 'goal'") && term.includes("argHint: '[pause|resume|stop|budget <n>|clear]'"), '终端应有 /goal 家族命令');
+    assert(term.includes('applyUserGoalAction(goals, meta.id, sub)'), '/goal 动作应走用户面单一事实源');
+    assert(term.includes("goalUsageChip(g) : null") && term.includes("g.status === 'active'"), '状态栏仅对进行中目标显示芯片');
+    const turn = readFileSync(join(__dirname, '..', 'util', 'agent', 'terminal-turn.mjs'), 'utf8');
+    assert(turn.includes("case 'goal_created':"), '终端应呈现目标创建');
+    assert(turn.includes("case 'goal_status_changed':") && turn.includes('lastGoalStatus'), '终端应去重呈现状态变更');
+    assert(turn.includes("case 'goal_wait_changed':") && turn.includes('GOAL_WAIT_LABELS[p.reason]'), '终端应呈现等待中');
+    const footer = readFileSync(join(__dirname, '..', 'util', 'tui', 'footer.mjs'), 'utf8');
+    assert(footer.includes("state.goal") && footer.includes("label: '目标'"), '状态栏应有目标段');
+    const types = readFileSync(join(__dirname, '..', 'util', 'agent', 'goal', 'types.mjs'), 'utf8');
+    assert(types.includes('GOAL_WAIT_LABELS'), 'goal 类型模块应有等待原因文案表');
+  });
   await test('流式活动状态行源码契约：轮次 / 工具数 / 计时与费用行统一', () => {
     const cv = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ChatView.tsx'), 'utf8');
     assert(cv.includes('live-status') && cv.includes('useElapsed') && cv.includes('第 {live.round || 1} 轮'), '流式行应有活动状态（轮次 / 工具 / 计时）');

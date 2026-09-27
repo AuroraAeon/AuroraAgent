@@ -7,6 +7,9 @@
 import { createInterface } from 'node:readline';
 import { SessionStore } from './session.mjs';
 import { GoalStore } from './goal/store.mjs';
+import { GOAL_STATUS_LABELS, GOAL_WAIT_LABELS } from './goal/types.mjs';
+import { goalUsageChip } from './goal/budget.mjs';
+import { applyUserGoalAction } from './goal/actions.mjs';
 import { UsageLedger } from '../usage.mjs';
 import { ProviderStore } from '../providers.mjs';
 import { HARNESSES, getHarness } from './harness.mjs';
@@ -197,6 +200,49 @@ export async function runTerminal({ argv = [] } = {}) {
     console.log(painter().dim(`✓ 主题 = ${chosen.label}`));
   };
 
+  /** /goal：一会话一目标的用户面管理（与 REST 面共用 applyUserGoalAction 单一事实源） */
+  const cmdGoal = (arg) => {
+    const p = painter();
+    const sub = String(arg || '').trim();
+    const cur = goals.get(meta.id);
+    if (!sub) {
+      if (!cur) { console.log(p.dim('当前会话没有目标：让模型调用 create_goal，或稍后在网页端创建')); return; }
+      const reason = cur.statusReason ? p.dim(`（${cur.statusReason}）`) : '';
+      console.log(`  ${p.text('目标')} ${p.dim(cur.goalId)} ${cur.objective}`);
+      console.log(`  ${p.dim('状态')} ${p.accent(GOAL_STATUS_LABELS[cur.status])}${reason} ${p.dim('·')} ${goalUsageChip(cur)}`);
+      if (cur.executionWait) console.log(p.dim(`  当前${GOAL_WAIT_LABELS[cur.executionWait.reason] || '等待中'}`));
+      if (cur.lastVerification) {
+        console.log(p.dim(`  最近验证：${cur.lastVerification.verdict}${cur.lastVerification.evidence ? ` · ${truncate(cur.lastVerification.evidence, 120)}` : ''}`));
+      }
+      return;
+    }
+    if (!cur) { console.log(p.warning('当前会话没有目标')); return; }
+    if (sub === 'pause' || sub === 'resume' || sub === 'stop') {
+      try {
+        const g = applyUserGoalAction(goals, meta.id, sub);
+        const label = { pause: '已暂停', resume: '已恢复', stop: '已停止' }[sub];
+        console.log(p.dim(`✓ 目标${label}：${GOAL_STATUS_LABELS[g.status]}`));
+      } catch (e) { console.log(p.warning(e.message)); }
+      return;
+    }
+    const bm = /^budget(?:[ \t]+(\S+))?$/.exec(sub);
+    if (bm) {
+      const v = bm[1];
+      let tb = null;
+      if (v && v !== 'clear') {
+        tb = Number(v);
+        if (!Number.isInteger(tb) || tb <= 0) { console.log(p.warning('用法: /goal budget <正整数>|clear')); return; }
+      }
+      try {
+        const g = applyUserGoalAction(goals, meta.id, 'budget', { tokenBudget: tb, expectedUpdatedAt: cur.updatedAt });
+        const rearmed = cur.status === 'budget_limited' && g.status === 'active';
+        console.log(p.dim(`✓ 预算已${tb == null ? '清除' : `设为 ${tb}`}${rearmed ? '，目标已重新武装' : ''}`));
+      } catch (e) { console.log(p.warning(e.message)); }
+      return;
+    }
+    console.log(p.warning('用法: /goal [pause|resume|stop|budget <正整数>|clear]（无参查看状态）'));
+  };
+
   /** 声明式斜杠命令表：/help 与分发同源；技能派生命令追加进同一张表（/<技能名> 直接调用） */
   const baseCommands = [
     { name: 'help', summary: '显示全部命令', run: printHelp },
@@ -238,6 +284,7 @@ export async function runTerminal({ argv = [] } = {}) {
       meta = store.patch(meta.id, { titleMode: want }) || meta;
       console.log(painter().dim(`✓ 标题生成方式已切换为${want === 'model' ? '模型总结（每个新会话多一次小额请求）' : '本地推导（零成本）'}`));
     } },
+    { name: 'goal', argHint: '[pause|resume|stop|budget <n>|clear]', summary: '会话目标（无参查看状态；模型经 create_goal 创建后在此管理）', run: cmdGoal },
     { name: 'plan', argHint: 'on|off', summary: '计划模式开关（默认关；开启后下一轮先出计划，批准才执行）', run: (arg) => {
       const on = arg !== 'off';
       meta = store.patch(meta.id, { planMode: on }) || meta;
@@ -283,6 +330,7 @@ export async function runTerminal({ argv = [] } = {}) {
     titleMode: TITLE_MODES.includes(meta.titleMode) ? meta.titleMode : cfg.titleMode,
     tokens: foot.tokens,
     cost: foot.cost,
+    goal: (() => { const g = goals.get(meta.id); return g && g.status === 'active' ? goalUsageChip(g) : null; })(),
   });
 
   const runTurn = (input) => runTerminalTurn({

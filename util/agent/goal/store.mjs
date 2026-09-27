@@ -2,6 +2,7 @@
  * Goal 存储：<数据目录>/goals/<sessionId>.json，一会话一个文件、临时文件 + rename 原子落盘。
  * updatedAt 兼作「决策纪元」：任何写操作都可带 expectedUpdatedAt 做 CAS，
  * 并发用户改写在结算前重新校验——用户改写的优先级永远高于模型提案。
+ * 每次 update 都严格推进纪元（同毫秒也 +1），陈旧快照必然失配。
  */
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -54,7 +55,8 @@ export class GoalStore {
     }
     const next = mutate(cur);
     if (!next) return cur;
-    this.#write(normalizeGoalState(next));
+    // 纪元随每次写操作严格推进（同毫秒内也 +1）：陈旧快照的 expectedUpdatedAt 必然失配
+    this.#write(normalizeGoalState({ ...next, updatedAt: Math.max(Date.now(), cur.updatedAt + 1) }));
     return this.get(sessionId);
   }
 
