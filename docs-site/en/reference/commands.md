@@ -20,7 +20,7 @@
 
 `/new` `/sessions` `/model` `/harness` `/think` `/temp` `/max` `/key` `/plan` `/goal` `/btw` `/mcp` `/help` `/quit`; every skill gets `/<skill-name>`.
 
-- `/goal` (no argument shows status) / `/goal pause|resume|stop` / `/goal budget <positive int>|clear`: goal-mode user operations, see the [Goal Mode guide](/en/guide/goal-mode)
+- `/goal` family (one parser for the terminal and the web Composer): `/goal` (no argument shows status) / `/goal <objective>` (create; rewrites the text when a goal is unfinished, accepts a trailing `budget=50K`) / `/goal budget=50K` (change the budget, `clear` removes the cap; the legacy `/goal budget 50000` is equivalent) / `/goal edit` (fill the objective back for another pass) / `/goal clear` (remove) / `/goal pause|resume|stop` / `/goal help`: goal-mode user operations, see the [Goal Mode guide](/en/guide/goal-mode)
 - `/btw <question>`: side conversation that inherits the current session history, never persisted and absent from the session list; `Ctrl+/` toggles, `Ctrl+C` on an empty side prompt discards
 
 ## Runtime tools (model side)

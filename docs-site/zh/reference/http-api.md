@@ -32,6 +32,8 @@
 | --- | --- |
 | `GET /api/agent/goal/:id` | 读会话目标（无目标回 `{ goal: null }`） |
 | `POST /api/agent/goal` | 创建目标 `{ sessionId, objective, tokenBudget? }`；存在未完成目标 409 `GOAL_STATUS_CONFLICT`，空白目标 400，会话不存在 404 |
+| `POST /api/agent/goal/edit` | 改写未完成目标文本 `{ sessionId, objective }`；空白 400 `GOAL_BAD_OBJECTIVE`，已完成 409，无目标 404 |
+| `POST /api/agent/goal/clear` | 幂等移除目标，回 `{ cleared }`（无目标也 200） |
 | `POST /api/agent/goal/pause` · `/resume` · `/stop` | 用户面迁移；对 `complete` / `budget_limited` 恢复 active 拒绝 409 |
 | `POST /api/agent/goal/budget` | 改 token 预算 `{ sessionId, tokenBudget, expectedUpdatedAt }`；纪元不符 409 `GOAL_STALE`，预算非法 400 |
 

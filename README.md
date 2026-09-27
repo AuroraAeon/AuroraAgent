@@ -67,7 +67,8 @@ npm run web       # 网页工作台 http://localhost:8787
 - **侧栏**：AuroraAgent 品牌、新建会话、会话列表（相对时间 + 模式 + 轮次）、当前模式；新会话的首条消息发出后，侧栏标题会按消息内容自动总结更新（默认本地推导，不调模型、不花额度；输入区也可切「模型总结」——每个新会话多一次小额请求，失败自动回退本地推导；你手动改过名的会话不被覆盖）
 - **对话区**：用户消息、流式回答、可折叠思考块、工具卡片（状态 / 参数 / 结果 / 差异）、内联权限卡、每轮用量脚注（tokens + 费用）；正文支持 LaTeX 公式渲染与 Markdown 表格；回答与工具调用按发生顺序交错呈现，不被每次工具调用切断
 - **输入区**：自适应文本框、`@` 文件 / 技能提及（只读搜索会话工作目录，调色板键盘可选）、模型选择器（按提供方分组）、思考开关、模式切换、标题生成方式（本地总结 / 模型总结，会话级）、发送 / 停止
-- **目标横幅**：有进行中的 Goal 时显示在对话区顶部——状态芯片、用量 / 预算、暂停 / 恢复 / 停止一键操作，等待授权 / 验证时显示「等待中」
+- **目标横幅**：有 Goal 时显示在对话区顶部——状态芯片、目标内容、tokens / 轮次 / live 时长、预算上限、最近验证结论、随状态裁剪的动作提示，暂停 / 恢复 / 停止一键操作，等待授权 / 验证时显示「等待中」，目标完成贴同源回执
+- **`/goal` 命令**：聊天框直接输入即走目标命令（整段 `/goal` 开头不当作普通消息）——`/goal <目标内容>` 设立或改写、`budget=50K` 一并设预算、`/goal edit` 回填续编、`/goal clear` 移除、`pause/resume/stop`，与终端同一份解析器
 - **会话派生**：侧栏每会话可复制历史到新会话（新 id，原会话不动）
 - **设置弹层**：提供方管理（自定义上游）、开机自启开关、终端偏好（OSC 标题项序、系统通知时机 / 通道 / 事件；浏览器通知 opt-in 开关，默认关）、网络（Agent 沙箱出站代理：本机直连被重置的站点（如维基百科）可经 `http://127.0.0.1:7890` 这类本机 HTTP 代理抓取，留空直连，保存即时生效）、数据目录与版本
 - 设计令牌自原版迁移（暗色、强调蓝 `#4d8df6`）；零 emoji，图标一律内联 SVG；Markdown 为手写子集渲染器（标题 / 列表 / 代码高亮 / 表格 / 公式），不引第三方库
@@ -102,7 +103,7 @@ npm run web       # 网页工作台 http://localhost:8787
 | `/harness <minimal\|standard\|ultimate>` | 切换模式（无参数弹出选择器） |
 | `/theme <dark\|light\|auto>` | 切换终端主题（无参数弹出选择器） |
 | `/title <local\|model>` | 标题生成方式：local 本地推导零成本 / model 调模型总结（每个新会话多一次小额请求，失败自动回退；无参数查看当前值） |
-| `/goal` | 目标模式：无参看状态；`/goal pause\|resume\|stop`；`/goal budget <正整数>\|clear` 改 token 预算（纪元不符 409，可重新武装预算耗尽的目标） |
+| `/goal` | 目标模式（终端与网页 Composer 同解析）：无参看状态；`/goal <目标内容>` 设立（有未完成目标时改写文本，可带 `budget=50K`）；`/goal budget=50K\|clear` 改 token 预算（旧式 `budget 50000` 等价；纪元不符 409，可重新武装预算耗尽的目标）；`/goal edit` 目标文本回填续编；`/goal clear` 移除；`/goal pause\|resume\|stop`；`/goal help` |
 | `/btw <问题>` | 侧边对话：继承当前会话历史开聊，不落盘不进 `/sessions`；`Ctrl+/` 切换、空提示符 `Ctrl+C` 丢弃 |
 | `/plan on\|off` | 计划模式开关（默认关；开启后下一轮先出计划，批准才执行） |
 | `/mcp` | MCP 服务器与工具状态（实验特性，需 `AURORAAGENT_EXPERIMENTAL_MCP=1`） |
@@ -134,6 +135,8 @@ Agent 运行时（`/api/agent/*`，单活跃 turn：已有 turn 在跑时返回 
 | `GET /api/agent/harnesses` | 三档模式契约 |
 | `GET /api/agent/goal/:id` | 读会话目标（无目标回 `{ goal: null }`） |
 | `POST /api/agent/goal` | 创建目标（未完成目标已存在时 409 `GOAL_STATUS_CONFLICT`） |
+| `POST /api/agent/goal/edit` | 改写未完成目标文本（空白 400 `GOAL_BAD_OBJECTIVE`，已完成 409） |
+| `POST /api/agent/goal/clear` | 幂等移除目标（回 `{ cleared }`，无目标也 200） |
 | `POST /api/agent/goal/pause` · `/resume` · `/stop` | 目标用户面迁移（对 complete / budget_limited 恢复 active 拒绝 409） |
 | `POST /api/agent/goal/budget` | 改 token 预算（纪元不符 409 `GOAL_STALE`；抬高或清零可重新武装 budget_limited） |
 | `GET /api/files/search?sessionId=&q=` | 会话工作目录内只读文件搜索（路径禁锢，跳过依赖目录） |
@@ -248,7 +251,7 @@ npm run docs:dev    # 本地起文档站
 
 - `npm test` 266/266 通过（mock 上游，不花额度，含仓库守卫：零 emoji / TUI 颜色单一真值源 / 对比度 / 行数预算 / 文档站结构）；`npm run check` 真实 API 连通（Key 有效 + 模型目录 + 测试请求）
 - 性能基准：`npm run bench`（basic 套件：startup / upstream-100 / history-300 三场景，采样 wall / CPU / peak-RSS），方法论与本地基线见 `docs/perf-baseline.md`，只作回归参考不作门禁
-- Agent e2e 覆盖：会话 CRUD；完整 turn（工具调用 → 权限允许 → workspace 落盘 → 二轮出终稿）；权限拒绝后循环继续；路径穿越拒绝；shell 执行与超时；turn 中途 abort；harness 列表；上下文压缩触发；每轮用量记账；技能斜杠注入与 skill 工具加载；todo 维护；edit_file diff 回传；计划批准 / 驳回两阶段；首条消息自动总结会话标题（默认名才套用、事件推送、落元信息；local 本地推导与 model 调模型两路，模型失败回退本地、成本记 purpose=title 账）；task 派发子代理并汇总（子会话可查）；MCP 注册与工具调用（实验）；Goal 全链路（create_goal → 提案完成 / 预算触顶转 budget_limited + 收尾轮 / 空转续跑 / evaluator 裁决 met 与 not_met 连击两条路径）；Goal REST 冲突与纪元边界；会话派生逐条一致复制；`@` 提及时文件搜索与 404；终端偏好读写与坏值 400
+- Agent e2e 覆盖：会话 CRUD；完整 turn（工具调用 → 权限允许 → workspace 落盘 → 二轮出终稿）；权限拒绝后循环继续；路径穿越拒绝；shell 执行与超时；turn 中途 abort；harness 列表；上下文压缩触发；每轮用量记账；技能斜杠注入与 skill 工具加载；todo 维护；edit_file diff 回传；计划批准 / 驳回两阶段；首条消息自动总结会话标题（默认名才套用、事件推送、落元信息；local 本地推导与 model 调模型两路，模型失败回退本地、成本记 purpose=title 账）；task 派发子代理并汇总（子会话可查）；MCP 注册与工具调用（实验）；Goal 全链路（create_goal → 提案完成 / 预算触顶转 budget_limited + 收尾轮 / 空转续跑 / evaluator 裁决 met 与 not_met 连击两条路径）；Goal REST 冲突与纪元边界；`/goal` 命令解析单测（预算 K/M 后缀、clear 同义词、旧式空格、edit/clear/help、错误分支）与 edit / clear 动作与 REST e2e（改写 trim、空白 400、无目标 404、已完成 409、clear 幂等）；会话派生逐条一致复制；`@` 提及时文件搜索与 404；终端偏好读写与坏值 400
 - 网页工作台经浏览器实测完整 turn：权限卡允许 → 写文件 → 二轮终稿 → 按轮分组的思考 / 工具 / 用量脚注
 - 终端实测：权限 y/n 两条路径、`/help` `/sessions` `/new` `/model` `/harness`、拒绝后续跑均正常；OSC 标题设置 / 清除、`/goal` 家族命令与状态栏目标芯片、`/btw` 侧边对话与 `Ctrl+/` 切换均经 PTY 实测
 - 自定义提供方：设置页可接任意 OpenAI 兼容网关或 Anthropic Messages 上游；账本按提供方单价计价（只填一侧时另一侧回退内置价）；内置 LongCat 请求载荷与接入前逐字节一致（有专门测试守着）

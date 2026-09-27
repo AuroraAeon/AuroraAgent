@@ -20,7 +20,7 @@
 
 `/new` `/sessions` `/model` `/harness` `/think` `/temp` `/max` `/key` `/plan` `/goal` `/btw` `/mcp` `/help` `/quit`；每个技能自动生成 `/<技能名>`。
 
-- `/goal`（无参看状态）/ `/goal pause|resume|stop` / `/goal budget <正整数>|clear`：目标模式用户面操作，详见 [Goal 模式指南](/zh/guide/goal-mode)
+- `/goal` 家族（终端与网页 Composer 同解析）：`/goal`（无参看状态）/ `/goal <目标内容>`（设立；有未完成目标时改写文本，可带 `budget=50K`）/ `/goal budget=50K`（改预算，`clear` 清除；旧式 `/goal budget 50000` 等价）/ `/goal edit`（目标文本回填续编）/ `/goal clear`（移除）/ `/goal pause|resume|stop` / `/goal help`：目标模式用户面操作，详见 [Goal 模式指南](/zh/guide/goal-mode)
 - `/btw <问题>`：侧边对话，继承当前会话历史开聊，不落盘不进会话列表；`Ctrl+/` 切换、空提示符 `Ctrl+C` 丢弃
 
 ## 运行时工具（模型侧）

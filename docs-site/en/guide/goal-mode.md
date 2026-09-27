@@ -63,18 +63,25 @@ Adapted to the single-SSE-turn model with no queue subsystem: within a turn, whe
 
 ## User-side operations
 
-Terminal `/goal` (no argument shows status):
+The terminal and the web Composer share one `/goal` parser (`util/agent/goal/command.mjs`, the single source of truth, mirroring MiniMax-code's `thread-goal-command`), so both clients behave identically:
 
 ```bash
-/goal                    # current goal: status / usage / budget
-/goal pause              # pause (active → paused)
-/goal resume             # resume (paused / blocked / usage_limited → active)
-/goal stop               # stop
-/goal budget 50000       # set the token budget (stale epoch → 409; can re-arm budget_limited)
-/goal budget clear       # clear the cap
+/goal                          # current goal: status / objective / usage / budget / latest verification / available actions
+/goal Rewrite the README install section    # create a goal; rewrites the objective when one is unfinished
+/goal Fix the login bug budget=50K          # create a goal and set the token budget in one shot (K / M suffix)
+/goal budget=50K               # change only the current budget; the legacy /goal budget 50000 also works
+/goal budget=clear             # clear the cap (clear / null / none / off / 0 are synonyms)
+/goal edit                     # fill the current objective back into the input box for another pass
+/goal clear                    # remove the goal (alongside stop's "mark complete": clear removes it outright)
+/goal pause                    # pause (active → paused)
+/goal resume                   # resume (paused / blocked / usage_limited → active)
+/goal stop                     # mark complete and stop tracking (complete(user_requested))
+/goal help                     # command help
 ```
 
-Web: the GoalBanner above the conversation shows the status chip, usage, and budget with pause / resume / stop buttons. The REST surface is `GET /api/agent/goal/:id` and `POST /api/agent/goal/{pause,resume,stop,budget}`; creating a second goal while one is unfinished returns 409 `GOAL_STATUS_CONFLICT`.
+Web: type the commands above straight into the chat box (a message starting with `/goal` is intercepted instead of sent); view / help / errors reply as system messages, create becomes "rewrite the objective" when a goal is unfinished, and budget changes carry a fresh `expectedGoalId` + `expectedUpdatedAt` snapshot. The GoalBanner above the conversation shows the status chip, objective, tokens / turns / live elapsed, budget cap, latest verification verdict, and a status-tailored action hint; when a goal turns `complete`, a same-source completion receipt is appended to the message stream. Pause / resume / stop are one click away.
+
+The REST surface is `GET /api/agent/goal/:id`, `POST /api/agent/goal` (create; 409 `GOAL_STATUS_CONFLICT` while a goal is unfinished), `POST /api/agent/goal/edit` (rewrite; 400 `GOAL_BAD_OBJECTIVE` for a blank text, 409 when complete), `POST /api/agent/goal/clear` (idempotent removal, returns `{cleared}`), and `POST /api/agent/goal/{pause,resume,stop,budget}`.
 
 Event protocol (shared SSE): `goal_created` / `goal_status_changed` / `goal_usage_updated` / `goal_wait_changed`.
 

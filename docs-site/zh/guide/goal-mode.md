@@ -65,18 +65,25 @@ Goal 模式给会话挂一个**跨轮次存续的目标**：模型自主推进�
 
 ## 用户面操作
 
-终端 `/goal`（无参看状态）：
+终端与网页 Composer 共用同一份 `/goal` 命令解析（`util/agent/goal/command.mjs` 单一事实源，语义对齐 MiniMax-code 的 `thread-goal-command`），两端行为完全一致：
 
 ```bash
-/goal                    # 查看当前目标：状态 / 用量 / 预算
-/goal pause              # 暂停（active → paused）
-/goal resume             # 恢复（paused / blocked / usage_limited → active）
-/goal stop               # 停止
-/goal budget 50000       # 设 token 预算（纪元不符 409；可重新武装 budget_limited）
-/goal budget clear       # 清除预算上限
+/goal                          # 查看当前目标：状态 / 目标内容 / 用量 / 预算 / 最近验证 / 可用操作
+/goal 把 README 安装章节改写    # 设立目标；已有未完成目标时改写目标文本
+/goal 修复登录 bug budget=50K  # 设立目标并一并设 token 预算（K / M 后缀）
+/goal budget=50K               # 只改当前目标预算；也接受旧式 /goal budget 50000
+/goal budget=clear             # 清除预算上限（clear / null / none / off / 0 同义）
+/goal edit                     # 把当前目标文本填回输入框续编（终端即行回填，网页回填 Composer）
+/goal clear                    # 移除目标（与 stop 的「标记完成」并存：clear 是彻底移除）
+/goal pause                    # 暂停（active → paused）
+/goal resume                   # 恢复（paused / blocked / usage_limited → active）
+/goal stop                     # 标记完成并停止追踪（complete(user_requested)）
+/goal help                     # 命令帮助
 ```
 
-网页：会话顶部 GoalBanner 展示状态芯片 + 用量 + 预算，暂停 / 恢复 / 停止即点即走。REST 面对应 `GET /api/agent/goal/:id` 与 `POST /api/agent/goal/{pause,resume,stop,budget}`，未完成目标存在时再创建回 409 `GOAL_STATUS_CONFLICT`。
+网页：聊天框直接输入上述命令（整段以 `/goal` 开头即被拦截，不当作普通消息发送）；view / help / 错误以系统消息回复，create 在已有未完成目标时自动转为「改写目标文本」，budget 变更携带 `expectedGoalId` + `expectedUpdatedAt` 新鲜快照。会话顶部 GoalBanner 展示状态芯片、目标内容、tokens / 轮次 / live 时长、预算上限、最近验证结论与随状态裁剪的操作提示；目标转 `complete` 时消息流贴一条同源完成回执。暂停 / 恢复 / 停止即点即走。
+
+REST 面对应 `GET /api/agent/goal/:id`、`POST /api/agent/goal`（创建，未完成目标存在时 409 `GOAL_STATUS_CONFLICT`）、`POST /api/agent/goal/edit`（改写，空白 400 `GOAL_BAD_OBJECTIVE`，已完成 409）、`POST /api/agent/goal/clear`（幂等移除，回 `{cleared}`）与 `POST /api/agent/goal/{pause,resume,stop,budget}`。
 
 事件协议（两端共用 SSE）：`goal_created` / `goal_status_changed` / `goal_usage_updated` / `goal_wait_changed`。
 

@@ -32,6 +32,8 @@ Same-origin `/api/*`, all JSON; SSE frames are `event:` + `data:` lines.
 | --- | --- |
 | `GET /api/agent/goal/:id` | read a session's goal (`{ goal: null }` when none) |
 | `POST /api/agent/goal` | create `{ sessionId, objective, tokenBudget? }`; 409 `GOAL_STATUS_CONFLICT` when an unfinished goal exists, 400 for a blank objective, 404 for unknown sessions |
+| `POST /api/agent/goal/edit` | rewrite an unfinished goal `{ sessionId, objective }`; 400 `GOAL_BAD_OBJECTIVE` for a blank text, 409 when complete, 404 when none |
+| `POST /api/agent/goal/clear` | idempotent removal, returns `{ cleared }` (200 even with no goal) |
 | `POST /api/agent/goal/pause` · `/resume` · `/stop` | user-side transitions; resuming `complete` / `budget_limited` to active is rejected with 409 |
 | `POST /api/agent/goal/budget` | set the token budget `{ sessionId, tokenBudget, expectedUpdatedAt }`; 409 `GOAL_STALE` on a stale epoch, 400 for an invalid budget |
 
