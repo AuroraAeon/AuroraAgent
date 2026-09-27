@@ -99,13 +99,16 @@ export const GET_GOAL_DEF = {
 export const GOAL_TOOL_NAMES = ['create_goal', 'update_goal', 'get_goal'];
 
 /**
- * 载荷是否意图走「持久 token 预算」模式。
- * 部分提供方的工具调用适配器会把省略的可空字段物化成 null：孤立 null（无 status 在场）
- * 视为兼容性填充，不构成预算意图——清零预算必须显式 mode: 'token_budget' + token_budget: null；
- * 终态提案在场的 null 同样只是填充；数字预算与 status 同时出现则是真实的（且非法的）混合模式。
+ * 载荷是否意图走「持久 token 预算」模式（语义与 MiniMax tool-defs.ts 字节级一致）。
+ * 部分提供方的工具调用适配器会把省略的可空字段物化成 null：豁免仅限「终态提案在场」——
+ * 那种兼容填充不能把 complete / blocked 提案变成预算变更；数字预算与 status 同现则是
+ * 真实的（且非法的）混合模式。孤立 null（无 status 在场）是明确的清预算意图，交由
+ * 纪元校验要求新鲜 get_goal 快照（缺快照返回纠正性错误，与 MiniMax 同路径）。
  */
 export function hasUpdateGoalTokenBudgetIntent(input) {
-  return Object.hasOwn(input || {}, 'token_budget') && input.token_budget !== null;
+  const raw = input || {};
+  if (!Object.hasOwn(raw, 'token_budget')) return false;
+  return raw.status === undefined || raw.token_budget !== null;
 }
 
 export function resolveUpdateGoalMode(input) {
