@@ -52,10 +52,10 @@ Goal 模式给会话挂一个**跨轮次存续的目标**：模型自主推进�
 
 `goal.verification`：`none`（默认，不验证）/ `evaluator` / `subagent`。
 
-- **evaluator**：经同一路由用小快模型低温一次请求裁决 `met` / `not_met` / `impossible` / `inconclusive`（`goal.evaluatorModel` 必填，`maxTokens` 4096、超时 60s、重试封顶 1）；模型的 `summary` 一律作不可信数据提交。`not_met` 时验证器还需逐条给出 `missing` 缺口清单（每条一句话、最多 50 条），随续跑反馈与横幅 / 终端摘要展示
+- **evaluator**：经同一路由用小快模型低温一次请求裁决 `met` / `not_met` / `impossible` / `inconclusive`（`goal.evaluatorModel` 必填，`maxTokens` 4096、超时 60s、裁决层重试封顶 1 次）；模型的 `summary` 一律作不可信数据提交，目标 / 自述 / 转录对验证器只是数据不是指令。`inconclusive`（含载荷不完整降级）触发至多一次重试。`not_met` 时验证器还需逐条给出 `missing` 缺口清单（每条一句话、最多 50 条），随续跑反馈与横幅 / 终端摘要展示
 - **subagent**：经子代理系统派发只读 profile（`goal-verifier-readonly`）独立核查
 - **证据形态** `goal.evidence`：`brief`（默认）/ `transcript`
-- **结算**：`met` → `complete(verifier_met)`；`not_met` 连续 `goal.repeatedNotMetLimit`（默认 5）次 → `blocked(verifier_impossible)`；验证器自身不可用 → `paused(verifier_unavailable)`，不静默放行
+- **结算**：`met` → `complete(verifier_met)`；`impossible` → `blocked(verifier_impossible)`；`not_met` 连续 `goal.repeatedNotMetLimit`（默认 5）次且缺口集合始终相同 → `paused(no_progress)`（缺口变化则重新计数）；`inconclusive` 按 code 归因暂停（`schema_error` → `paused(verifier_protocol)`，其余 → `paused(verifier_unavailable)`）；验证器自身不可用 → `paused(verifier_unavailable)`。任何情况下不静默放行
 
 本地工具不做隐式路由推导：只有显式配置 `goal.evaluatorModel` 才走 evaluator。
 
@@ -97,7 +97,7 @@ REST 面对应 `GET /api/agent/goal/:id`、`POST /api/agent/goal`（创建，未
 | `evaluatorModel` | 空 | evaluator 档必填；填了即隐含启用 evaluator |
 | `evidence` | `brief` | 验证证据形态：`brief` / `transcript` |
 | `repeatedReplyLimit` | 3 | 双熔断共享阈值 |
-| `repeatedNotMetLimit` | 5 | `not_met` 连续次数转 `blocked(verifier_impossible)` |
+| `repeatedNotMetLimit` | 5 | `not_met` 连续次数（缺口集合相同才累加）转 `paused(no_progress)` |
 | `graceSteps` | 1 | 轮次 / 时长触顶后的宽限轮数（0–3） |
 | `mainTurns` | 0 | 续跑轮次上限，0 = 不限 |
 | `activeSeconds` | 0 | 轮内活跃秒数上限，0 = 不限 |

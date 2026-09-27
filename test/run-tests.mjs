@@ -1584,6 +1584,9 @@ try {
     assert(app.includes('handleGoalCommand') && app.includes('onGoalCommand={handleGoalCommand}'), 'App 应接线 /goal 命令处理');
     assert(app.includes('parseGoalCommand(rawArgs)') && app.includes('createGoal(currentId'), 'App 应走共享解析器并区分创建与改写');
     assert(app.includes("kind: 'notice'") && !app.includes("kind: 'system', key: `g"), 'goal 命令输出应走 notice 消息（不套压缩摘要前缀）');
+    assert(app.includes('onlyIfEmpty: true') && app.includes('输入已保留'), 'goal 命令失败应原样回填用户输入（对齐 MiniMax goal-flow 的 retained 语义）');
+    assert(app.includes('当前没有会话'), '无会话时 goal 命令应给出提示而非静默（对齐 MiniMax 的 session 缺失告警）');
+    assert(app.includes('编辑目标文本后按 Enter 提交'), '/goal edit 回填后应给出操作提示（对齐 MiniMax setHint）');
     const msg = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Message.tsx'), 'utf8');
     assert(msg.includes("msg.kind === 'notice'") && msg.includes('row-notice'), 'Message 应渲染 notice 行');
     assert(/msg\.kind === 'notice'[\s\S]{0,200}\{msg\.text\}/.test(msg), 'notice 行应直出文本（不套压缩摘要前缀）');
@@ -1593,6 +1596,7 @@ try {
     assert(composerSrc.includes('onGoalCommand') && composerSrc.includes("/^\\/goal(\\s|$)/"), 'Composer 应拦截 /goal 命令');
     assert(composerSrc.includes('goalPrefill') && composerSrc.includes('lastPrefillNonce'), 'Composer 应支持 edit 回填（nonce 去重）');
     assert(composerSrc.includes('Enter 不拦截，落到下方统一提交'), '技能调色板无匹配时不应吞掉 /goal 命令的 Enter');
+    assert(composerSrc.includes('onlyIfEmpty'), 'Composer 回填应支持 onlyIfEmpty（失败保留不覆盖新输入）');
     const api = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'api.ts'), 'utf8');
     assert(api.includes('/api/agent/goal/${sessionId}') && api.includes('/api/agent/goal/${action}'), 'api 客户端应覆盖 goal 读与动作');
     assert(api.includes('createGoal') && api.includes('editGoal') && api.includes('clearGoal'), 'api 客户端应覆盖设立 / 改写 / 移除');
@@ -2542,22 +2546,39 @@ await test('Agent turn：USE_GOAL_VERIFY_MET 经 evaluator 裁决 met → comple
   eq(goalFile.statusReason, 'complete(verifier_met)');
 });
 
-await test('Agent turn：USE_GOAL_VERIFY_NOTMET 连续未达到阈值转 blocked(verifier_impossible)', async () => {
+await test('Agent turn：USE_GOAL_VERIFY_RETRY evaluator 首轮无结论恰好重试一次后采信 met', async () => {
+  // goal 验证档配置落临时数据目录（evaluator 同路由小快模型，maxRetries 默认 1）
+  writeFileSync(join(tmpDataDir, 'auroraagent.config.json'), JSON.stringify({ goal: { verification: 'evaluator', evaluatorModel: 'LongCat-2.0' } }));
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_GOAL_VERIFY_RETRY 盯着把 README 安装章节改写' }),
+  });
+  const all = await drainAgentStream(openAgentStream(resp));
+  const changed = all.find((e) => e.type === 'goal_status_changed' && e.goal.status === 'complete');
+  assert(changed, '重试后 met 应转 complete');
+  eq(changed.statusReason, 'complete(verifier_met)');
+  const evalCalls = mock.state.requests.filter((r) => r.body.includes('你是目标验证器') && r.body.includes('VERIFY_RETRY')).length;
+  eq(evalCalls, 2, 'inconclusive（schema_error）应触发恰好一次重试后采纳结论');
+  const goalFile = JSON.parse(readFileSync(join(tmpDataDir, 'goals', `${s.id}.json`), 'utf8'));
+  eq(goalFile.status, 'complete');
+});
+
+await test('Agent turn：USE_GOAL_VERIFY_NOTMET 连续未达到阈值转 paused(no_progress)（对齐 MiniMax repeatedGap）', async () => {
   const s = await createAgentSession();
   const resp = await fetch(`${AGENT}/turn`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sessionId: s.id, input: 'USE_GOAL_VERIFY_NOTMET 盯着把 README 安装章节改写' }),
   });
   const all = await drainAgentStream(openAgentStream(resp));
-  const blocked = all.find((e) => e.type === 'goal_status_changed' && e.goal.status === 'blocked');
-  assert(blocked, '连续 not_met 到阈值应转 blocked');
-  eq(blocked.statusReason, 'blocked(verifier_impossible)');
-  assert(blocked.lastVerification.notMetStreak >= 5, '未达成连胜应达到阈值 5');
+  const paused = all.find((e) => e.type === 'goal_status_changed' && e.goal.status === 'paused' && e.goal.statusReason === 'paused(no_progress)');
+  assert(paused, '同一批缺口连续 not_met 到阈值应转 paused(no_progress)');
+  assert(paused.lastVerification.notMetStreak >= 5, '未达成连胜应达到阈值 5');
   const feedbackCount = mock.state.requests.filter((r) => r.body.includes('【目标验证未通过')).length;
-  assert(feedbackCount >= 4, '前几次未达成应带证据反馈续跑（第 5 次直接判受阻）');
+  assert(feedbackCount >= 4, '前几次未达成应带证据反馈续跑（第 5 次直接判停）');
   const goalFile = JSON.parse(readFileSync(join(tmpDataDir, 'goals', `${s.id}.json`), 'utf8'));
-  eq(goalFile.status, 'blocked');
-  eq(goalFile.statusReason, 'blocked(verifier_impossible)');
+  eq(goalFile.status, 'paused');
+  eq(goalFile.statusReason, 'paused(no_progress)');
   assert(goalFile.lastVerification.notMetStreak >= 5);
 });
 

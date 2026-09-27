@@ -79,14 +79,16 @@ export function startMock(port = 18901) {
         const isTitleRound = body.includes('【会话标题生成】');
         const toolName = isGoalCreateRound ? 'create_goal' : isGoalProposalRound ? 'update_goal' : isSkillRound ? 'skill' : isTodoRound ? 'todo' : isEditRound ? 'edit_file' : isSwarmRound ? 'task' : isMcpRound ? 'mcp__mock__echo' : lastText.includes('USE_TOOL_WRITE') ? 'write_file' : 'read_file';
         const toolArgs = isGoalCreateRound ? { objective: isGoalBudgetRound ? '把测试基线扩展到 300 个并保持全绿' : '把 README 安装章节改写并通过自检', ...(isGoalBudgetRound ? { token_budget: 10 } : {}) }
-          : isGoalProposalRound ? { mode: 'status', status: 'complete', summary: body.includes('USE_GOAL_VERIFY_MET') ? 'VERIFY_MET 已改写 README 安装章节并通过自检' : body.includes('USE_GOAL_VERIFY') ? 'VERIFY_NOTMET 已改写 README 安装章节' : 'README 安装章节已改写并通过自检' }
+          : isGoalProposalRound ? { mode: 'status', status: 'complete', summary: body.includes('USE_GOAL_VERIFY_MET') ? 'VERIFY_MET 已改写 README 安装章节并通过自检' : body.includes('USE_GOAL_VERIFY_RETRY') ? 'VERIFY_RETRY 已改写 README 安装章节' : body.includes('USE_GOAL_VERIFY') ? 'VERIFY_NOTMET 已改写 README 安装章节' : 'README 安装章节已改写并通过自检' }
           : isSkillRound ? { name: 'code-review' }
           : isTodoRound ? { action: 'add', item: 'mock 待办事项' }
           : isEditRound ? { path: 'edit_me.txt', old_string: 'old', new_string: 'new' }
           : isSwarmRound ? { tasks: ['子任务甲：统计工作目录文件数', '子任务乙：读取 README 前 20 行'] }
           : isMcpRound ? { text: '来自模型的调用' }
           : toolName === 'write_file' ? { path: 'written_by_agent.txt', content: 'AGENT_WROTE' } : { path: 'mock.txt' };
-        const answer = isToolRound ? '' : isTitleRound ? 'README 安装章节改写' : isGoalWrapUp ? '已完成：建立目标并开始追踪；未完成：目标本身的工作；停止原因：token 预算已耗尽，可经 update_goal 抬高预算后续跑。' : isEvaluatorRound ? (lastText.includes('VERIFY_MET') ? '{"verdict":"met","evidence":"README 安装章节已按自述改写"}' : '{"verdict":"not_met","evidence":"自述与事实不符，缺口仍在"}') : isGoalIdleRound ? '让我先理清现状，下一步读取目标文件确认缺口。' : hasToolResult ? `工具结果已收到：${toolEcho}` : isImg ? '图中有一个蓝色的圆形。' : isPlanRound ? '计划：先读取目标文件确认现状，再用 edit_file 精确替换，最后汇报差异。' : lastText.includes('【已批准的计划】') ? '已按批准的计划执行完毕。' : lastText.includes('子任务甲') ? '子代理甲结果：工作目录共 3 个文件。' : lastText.includes('子任务乙') ? '子代理乙结果：README 开头是 AuroraAgent 本地 Agent 运行时。' : `你好！我是 ${j.model}。`;
+        const answer = isToolRound ? '' : isTitleRound ? 'README 安装章节改写' : isGoalWrapUp ? '已完成：建立目标并开始追踪；未完成：目标本身的工作；停止原因：token 预算已耗尽，可经 update_goal 抬高预算后续跑。' : isEvaluatorRound ? (body.includes('VERIFY_RETRY')
+            ? ((state.evalRetryCalls = (state.evalRetryCalls || 0) + 1) === 1 ? '我觉得大概完成了' : '{"verdict":"met","evidence":"README 安装章节已按自述改写"}')
+            : lastText.includes('VERIFY_MET') ? '{"verdict":"met","evidence":"README 安装章节已按自述改写"}' : '{"verdict":"not_met","evidence":"自述与事实不符，缺口仍在","missing":["README 安装章节仍未按自述改写"]}') : isGoalIdleRound ? '让我先理清现状，下一步读取目标文件确认缺口。' : hasToolResult ? `工具结果已收到：${toolEcho}` : isImg ? '图中有一个蓝色的圆形。' : isPlanRound ? '计划：先读取目标文件确认现状，再用 edit_file 精确替换，最后汇报差异。' : lastText.includes('【已批准的计划】') ? '已按批准的计划执行完毕。' : lastText.includes('子任务甲') ? '子代理甲结果：工作目录共 3 个文件。' : lastText.includes('子任务乙') ? '子代理乙结果：README 开头是 AuroraAgent 本地 Agent 运行时。' : `你好！我是 ${j.model}。`;
         // FLAKY：首次请求直接掐断 socket，模拟网络层失败（用于测试连接期重试）
         if (lastText.includes('FLAKY') && !state.flakyDone) {
           state.flakyDone = true;

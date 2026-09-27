@@ -20,7 +20,7 @@
 | `evaluatorModel` | 空 | evaluator 档必填；填了即隐含启用 evaluator |
 | `evidence` | `brief` | 验证证据形态：`brief` / `transcript` |
 | `repeatedReplyLimit` | 3 | 双熔断共享阈值 |
-| `repeatedNotMetLimit` | 5 | `not_met` 连续次数转 `blocked(verifier_impossible)` |
+| `repeatedNotMetLimit` | 5 | `not_met` 连续次数（缺口集合相同才累加）转 `paused(no_progress)` |
 | `graceSteps` | 1 | 轮次 / 时长触顶后的宽限轮数（0–3） |
 | `mainTurns` | 0 | 续跑轮次上限，0 = 不限 |
 | `activeSeconds` | 0 | 轮内活跃秒数上限，0 = 不限 |

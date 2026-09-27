@@ -591,6 +591,81 @@ export async function runGoalTests(test, assert, eq) {
     eq(g.lastVerification.notMetStreak, 1);
   });
 
+  await test('goal: not_met streak 指纹语义——同一批缺口才累加，达到阈值转 paused(no_progress)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'goal-rt12-'));
+    const store = new GoalStore(dir);
+    const events = [];
+    const rt = createGoalRuntime({
+      goalStore: store, sessionId: 'rt12', config: parseGoalConfig({ verification: 'subagent' }),
+      harnessTools: ['create_goal', 'update_goal', 'get_goal'], emit: (t, p) => events.push({ t, p }),
+      provider: { id: 'fake', protocol: 'openai', baseUrl: 'http://127.0.0.1:1', apiKey: 'x', builtin: false },
+    });
+    rt.bindSpawn(async () => ({ output: '{"verdict":"not_met","evidence":"README 未改","missing":["缺 A","缺 B"]}' }));
+    rt.tools[0].run({ objective: '改写 README' });
+    rt.beginTurn();
+    for (let i = 1; i <= 5; i++) {
+      rt.tools[1].run({ mode: 'status', status: 'complete', summary: `第 ${i} 次自称改完` });
+      const d = await rt.onProposal();
+      if (i < 5) {
+        eq(d.action, 'continue', `第 ${i} 次未达到阈值应带反馈续跑`);
+        eq(store.get('rt12').lastVerification.notMetStreak, i, '同一批缺口应逐轮累加 streak');
+      } else {
+        eq(d.action, 'finish', '达到 repeatedNotMetLimit 应收尾（对齐 MiniMax repeatedGap 覆盖式决策）');
+      }
+    }
+    const g = store.get('rt12');
+    eq(g.status, 'paused');
+    eq(g.statusReason, 'paused(no_progress)');
+    eq(g.lastVerification.notMetStreak, 5);
+  });
+
+  await test('goal: not_met 缺口变化则重新计数，不到阈值不暂停', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'goal-rt13-'));
+    const store = new GoalStore(dir);
+    const events = [];
+    const rt = createGoalRuntime({
+      goalStore: store, sessionId: 'rt13', config: parseGoalConfig({ verification: 'subagent' }),
+      harnessTools: ['create_goal', 'update_goal', 'get_goal'], emit: (t, p) => events.push({ t, p }),
+      provider: { id: 'fake', protocol: 'openai', baseUrl: 'http://127.0.0.1:1', apiKey: 'x', builtin: false },
+    });
+    let round = 0;
+    rt.bindSpawn(async () => {
+      round += 1;
+      return { output: JSON.stringify({ verdict: 'not_met', evidence: `第 ${round} 批缺口`, missing: [`缺口 ${round}`] }) };
+    });
+    rt.tools[0].run({ objective: '改写 README' });
+    rt.beginTurn();
+    for (let i = 1; i <= 4; i++) {
+      rt.tools[1].run({ mode: 'status', status: 'complete', summary: `第 ${i} 次自称改完` });
+      const d = await rt.onProposal();
+      eq(d.action, 'continue', '缺口每轮都变：streak 始终为 1，不该暂停');
+      eq(store.get('rt13').lastVerification.notMetStreak, 1, '缺口集合不同应重新计数（指纹语义）');
+    }
+    eq(store.get('rt13').status, 'active');
+  });
+
+  await test('goal: inconclusive 按 code 归因暂停——schema_error → verifier_protocol，不累加 not_met 连胜', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'goal-rt14-'));
+    const store = new GoalStore(dir);
+    const events = [];
+    const rt = createGoalRuntime({
+      goalStore: store, sessionId: 'rt14', config: parseGoalConfig({ verification: 'subagent' }),
+      harnessTools: ['create_goal', 'update_goal', 'get_goal'], emit: (t, p) => events.push({ t, p }),
+      provider: { id: 'fake', protocol: 'openai', baseUrl: 'http://127.0.0.1:1', apiKey: 'x', builtin: false },
+    });
+    rt.bindSpawn(async () => ({ output: '{"verdict":"not_met","evidence":"缺 missing 的残缺载荷"}' }));
+    rt.tools[0].run({ objective: '改写 README' });
+    rt.beginTurn();
+    rt.tools[1].run({ mode: 'status', status: 'complete', summary: '自称改完' });
+    const d = await rt.onProposal();
+    eq(d.action, 'finish', 'inconclusive 应收尾不续跑（对齐 MiniMax threadGoalInconclusiveTransition）');
+    const g = store.get('rt14');
+    eq(g.status, 'paused');
+    eq(g.statusReason, 'paused(verifier_protocol)');
+    eq(g.lastVerification.verdict, 'inconclusive');
+    eq(g.lastVerification.notMetStreak, 0, 'inconclusive 不累加 not_met 连胜');
+  });
+
   await test('goal: 无目标会话的钩子是廉价空操作', () => {
     const dir = mkdtempSync(join(tmpdir(), 'goal-rt6-'));
     const store = new GoalStore(dir);

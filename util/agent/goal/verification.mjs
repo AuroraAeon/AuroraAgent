@@ -49,6 +49,11 @@ function parseMissing(raw) {
   )].sort().slice(0, 50);
 }
 
+/** 两批缺口是否同一集合（归一化后比较；streak 指纹语义对齐 MiniMax missingFingerprint） */
+export function sameMissingSet(a, b) {
+  return JSON.stringify(parseMissing(a)) === JSON.stringify(parseMissing(b));
+}
+
 /** 从自由文本里解析一行 JSON 裁决。
  * 结构性校验对齐 MiniMax normalizeVerificationResult：met 必须有依据、not_met 必须
  * 有依据且至少一条缺口、impossible 必须有依据；载荷不完整或非法一律降级

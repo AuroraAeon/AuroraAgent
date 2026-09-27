@@ -20,7 +20,7 @@ Per-leaf fallback + clamping + startup warning. Full semantics: [Goal Mode guide
 | `evaluatorModel` | empty | required for evaluator; setting it implies evaluator |
 | `evidence` | `brief` | evidence shape: `brief` / `transcript` |
 | `repeatedReplyLimit` | 3 | shared breaker threshold |
-| `repeatedNotMetLimit` | 5 | consecutive `not_met` before `blocked(verifier_impossible)` |
+| `repeatedNotMetLimit` | 5 | consecutive `not_met` (counted only while the gap set is unchanged) before `paused(no_progress)` |
 | `graceSteps` | 1 | grace rounds after round / time exhaustion (0–3) |
 | `mainTurns` | 0 | continuation round cap, 0 = unlimited |
 | `activeSeconds` | 0 | in-turn active seconds cap, 0 = unlimited |

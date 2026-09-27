@@ -50,10 +50,10 @@ Names and schemas match codex / minimax-code so models need zero learning time; 
 
 `goal.verification`: `none` (default) / `evaluator` / `subagent`.
 
-- **evaluator**: one low-temperature request through the same route with a small fast model, verdict `met` / `not_met` / `impossible` / `inconclusive` (`goal.evaluatorModel` required; maxTokens 4096, 60s timeout, retries capped at 1); the model's own `summary` is always submitted as untrusted data. On `not_met` the verifier must also list a `missing` array of concrete gaps (one sentence each, at most 50), surfaced in the continuation feedback, the banner, and the terminal summary
+- **evaluator**: one low-temperature request through the same route with a small fast model, verdict `met` / `not_met` / `impossible` / `inconclusive` (`goal.evaluatorModel` required; maxTokens 4096, 60s timeout, verdict-layer retries capped at 1); the model's own `summary` is always submitted as untrusted data, and the objective, summary, and transcript are data for the verifier, never instructions. An `inconclusive` verdict (including a degraded incomplete payload) triggers at most one retry. On `not_met` the verifier must also list a `missing` array of concrete gaps (one sentence each, at most 50), surfaced in the continuation feedback, the banner, and the terminal summary
 - **subagent**: an independent read-only profile (`goal-verifier-readonly`) dispatched through the sub-agent system
 - **Evidence shape** `goal.evidence`: `brief` (default) / `transcript`
-- **Settlement**: `met` → `complete(verifier_met)`; `repeatedNotMetLimit` (default 5) consecutive `not_met` → `blocked(verifier_impossible)`; a broken verifier → `paused(verifier_unavailable)`, never a silent pass
+- **Settlement**: `met` → `complete(verifier_met)`; `impossible` → `blocked(verifier_impossible)`; `repeatedNotMetLimit` (default 5) consecutive `not_met` with an unchanged gap set → `paused(no_progress)` (a changed gap set restarts the count); `inconclusive` pauses attributed by `code` (`schema_error` → `paused(verifier_protocol)`, otherwise `paused(verifier_unavailable)`); a broken verifier → `paused(verifier_unavailable)`. Never a silent pass
 
 No implicit routing: evaluator only runs when `goal.evaluatorModel` is explicitly configured.
 
@@ -95,7 +95,7 @@ The `goal` section of `auroraagent.config.json` (per-leaf fallback + clamping + 
 | `evaluatorModel` | empty | required for evaluator; setting it implies evaluator |
 | `evidence` | `brief` | evidence shape: `brief` / `transcript` |
 | `repeatedReplyLimit` | 3 | shared breaker threshold |
-| `repeatedNotMetLimit` | 5 | consecutive `not_met` before `blocked(verifier_impossible)` |
+| `repeatedNotMetLimit` | 5 | consecutive `not_met` (counted only while the gap set is unchanged) before `paused(no_progress)` |
 | `graceSteps` | 1 | grace rounds after round / time exhaustion (0–3) |
 | `mainTurns` | 0 | continuation round cap, 0 = unlimited |
 | `activeSeconds` | 0 | in-turn active seconds cap, 0 = unlimited |

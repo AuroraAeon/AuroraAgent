@@ -17,7 +17,7 @@ import { applyUsage, budgetBreach, rearmAfterBudgetRaise } from './budget.mjs';
 import { advanceBreakers } from './breaker.mjs';
 import { goalLimits, parseGoalConfig } from './config.mjs';
 import { GOAL_CONTINUATION_NOTE, GOAL_WRAPUP_NOTE, goalVerifierFeedbackNote } from './continuation.mjs';
-import { verifyGoalProposal } from './verification.mjs';
+import { verifyGoalProposal, sameMissingSet } from './verification.mjs';
 
 export { GOAL_WRAPUP_NOTE };
 
@@ -215,10 +215,27 @@ export function createGoalRuntime({
       goalStore.update(sessionId, (g) => applyUsage(g, { tokens: (result.usage.prompt_tokens || 0) + (result.usage.completion_tokens || 0), isGoalTurn: false }));
       onExtraUsage?.(result.usage, Date.now() - verifyT0, 'goal-verify');
     }
+    if (result && result.aborted) {
+      // 验证随 turn 中止：不结算、不改目标状态（对齐 MiniMax paused(verifier_aborted) 的
+      // 「宿主生命周期、非缺陷」语义——本地实现选择干脆不动，用户下一轮自然继续）
+      return { action: 'finish' };
+    }
     if (!result || result.available === false) {
+      const reason = result?.code === 'timeout' ? 'paused(verifier_timeout)' : 'paused(verifier_unavailable)';
       const next = goalStore.update(sessionId, (g) => ({
-        ...g, status: 'paused', statusReason: 'paused(verifier_unavailable)',
+        ...g, status: 'paused', statusReason: reason,
         lastVerification: { verdict: 'unavailable', at: Date.now(), evidence: String(result?.error || '验证器不可用').slice(0, 500) },
+      }));
+      emitStatus(next);
+      return { action: 'finish' };
+    }
+    if (result.verdict === 'inconclusive') {
+      // 对齐 MiniMax threadGoalInconclusiveTransition：无结论即暂停并按 code 归因
+      // （schema_error → 协议层；其余 → 验证器不可用）；不并入 not_met 连击、不清帐放行
+      const reason = result.code === 'schema_error' ? 'paused(verifier_protocol)' : 'paused(verifier_unavailable)';
+      const next = goalStore.update(sessionId, (g) => ({
+        ...g, status: 'paused', statusReason: reason, lastWorkerProposal: proposalRec,
+        lastVerification: { verdict: 'inconclusive', at: Date.now(), evidence: result.evidence, missing: [], notMetStreak: 0 },
       }));
       emitStatus(next);
       return { action: 'finish' };
@@ -239,12 +256,17 @@ export function createGoalRuntime({
       emitStatus(next);
       return { action: 'finish' };
     }
-    // not_met / inconclusive：累加连续未达成，到阈值才判受阻
-    const streak = Number(goal.lastVerification?.notMetStreak || 0) + 1;
+    // not_met：仅当缺口集合与上一轮完全相同时累加 streak（指纹语义，对齐 MiniMax
+    // normalizeVerificationResult），否则重新计数；达到 repeatedNotMetLimit 时覆盖式转
+    // paused(no_progress)（对齐 recordThreadGoalVerification 的 repeatedGap 决策）
+    const prev = goal.lastVerification;
+    const streak = prev && prev.verdict === 'not_met' && sameMissingSet(prev.missing, result.missing)
+      ? Number(prev.notMetStreak || 0) + 1
+      : 1;
     if (streak >= cfg.repeatedNotMetLimit) {
       const next = goalStore.update(sessionId, (g) => ({
-        ...g, status: 'blocked', statusReason: 'blocked(verifier_impossible)', lastWorkerProposal: proposalRec,
-        lastVerification: { verdict: result.verdict, at: Date.now(), evidence: result.evidence, missing: result.missing || [], notMetStreak: streak },
+        ...g, status: 'paused', statusReason: 'paused(no_progress)', lastWorkerProposal: proposalRec,
+        lastVerification: { verdict: 'not_met', at: Date.now(), evidence: result.evidence, missing: result.missing || [], notMetStreak: streak },
       }));
       emitStatus(next);
       return { action: 'finish' };
