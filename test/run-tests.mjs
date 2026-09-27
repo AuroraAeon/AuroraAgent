@@ -1320,6 +1320,8 @@ try {
     assert(types.includes("type: 'session_renamed'"), '前端事件类型应声明 session_renamed');
     const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
     assert(app.includes("ev.type === 'session_renamed'"), 'App 应处理 session_renamed 并实时刷新会话标题');
+    const turn = readFileSync(join(__dirname, '..', 'util', 'agent', 'terminal-turn.mjs'), 'utf8');
+    assert(turn.includes("case 'session_renamed':"), '终端渲染器应呈现标题更新提示');
     const html = await (await fetch(`${BASE}/`)).text();
     const js = await (await fetch(`${BASE}${/\/app\/assets\/[A-Za-z0-9._-]+\.js/.exec(html)[0]}`)).text();
     assert(js.includes('session_renamed'), '构建产物应含标题刷新逻辑（改了 web-ui 忘了 build:web 会红）');

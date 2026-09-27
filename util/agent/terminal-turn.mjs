@@ -127,6 +127,11 @@ export async function runTerminalTurn({ store, usage, session, input, provider, 
         breakLine();
         write(painter.dim(`  ↳ 折叠失败，沿用原上下文：${p.error}\n`));
         break;
+      case 'session_renamed':
+        endToolLine();
+        breakLine();
+        write(painter.dim(`  ↳ 会话标题已按首条消息更新为 ${p.name}\n`));
+        break;
       case 'turn_cancelled':
         endToolLine();
         breakLine();
