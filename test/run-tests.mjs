@@ -1586,6 +1586,7 @@ try {
     assert(app.includes("kind: 'notice'") && !app.includes("kind: 'system', key: `g"), 'goal 命令输出应走 notice 消息（不套压缩摘要前缀）');
     assert(app.includes('onlyIfEmpty: true') && app.includes('输入已保留'), 'goal 命令失败应原样回填用户输入（对齐 MiniMax goal-flow 的 retained 语义）');
     assert(app.includes('当前没有会话'), '无会话时 goal 命令应给出提示而非静默（对齐 MiniMax 的 session 缺失告警）');
+    assert(app.includes("'已暂停', resume: '已恢复', stop: '已停止'") && app.includes('GOAL_STATUS_LABELS[r.goal.status]'), 'pause/resume/stop 应回执状态（与终端 REPL 同源）');
     assert(app.includes('编辑目标文本后按 Enter 提交'), '/goal edit 回填后应给出操作提示（对齐 MiniMax setHint）');
     const msg = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Message.tsx'), 'utf8');
     assert(msg.includes("msg.kind === 'notice'") && msg.includes('row-notice'), 'Message 应渲染 notice 行');

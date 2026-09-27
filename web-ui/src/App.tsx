@@ -14,6 +14,7 @@ import {
   listHarnesses, listModels, listSkills, listProviders, listSessions, patchSession, respondPermission, respondPlan, runTurn,
 } from './api';
 import { GOAL_COMMAND_HELP, formatGoalReceipt, formatGoalSummary, parseGoalCommand } from '../../util/agent/goal/command.mjs';
+import { GOAL_STATUS_LABELS } from './types';
 import type { AgentEvent, GoalState, Harness, LiveTurn, ModelInfo, MsgPart, MsgView, PlanView, ProviderRow, SessionMeta, SettingsInfo, TodoItem, ToolView, SkillRow } from './types';
 
 const planView = (text: string, decided: PlanView['decided']): PlanView => ({ text, decided });
@@ -299,9 +300,14 @@ export default function App() {
             push(`预算已${intent.tokenBudget == null ? '清除' : `设为 ${intent.tokenBudget}`}`);
           }).catch(fail);
         return;
-      default:
-        goalAction(currentId, intent.kind).then((r) => setGoal(r.goal)).catch(fail);
+      default: {
+        // pause / resume / stop：状态迁移（回执与终端 REPL 同源；拒绝信息由服务端说清原因）
+        const label = { pause: '已暂停', resume: '已恢复', stop: '已停止' }[intent.kind] || '已更新';
+        goalAction(currentId, intent.kind)
+          .then((r) => { setGoal(r.goal); push(`目标${label}：${GOAL_STATUS_LABELS[r.goal.status] || r.goal.status}`); })
+          .catch(fail);
         return;
+      }
     }
   };
 
