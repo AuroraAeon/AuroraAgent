@@ -1608,6 +1608,9 @@ try {
     assert(app.split('if (stale()) return;').length - 1 >= 4, 'goal 命令四类异步回调（clear / create / budget / pause·resume·stop）应依次防串会话');
     assert(app.includes('existing = (await getGoal(sid)).goal;') && app.includes('if (stale()) return;\n    setGoal(existing);'), 'goal 命令执行前应取新鲜目标快照再分派（对齐 MiniMax execute() 的 runtime.getGoal）');
     assert(/unfinished = existing !== null && existing\.status !== 'complete';/.test(app), 'create-or-edit 判定应基于新鲜快照而非 React state');
+    assert(/if \(!currentId && intent\.kind !== 'create'\)/.test(app), '无会话时非 create 意图应直接告警（对齐 MiniMax execute() 的 session 缺失分支）');
+    assert(app.includes('await createSession({})') && app.includes('await openSession(s.id)') && app.includes('currentIdRef.current = s.id;'), '无会话且 create 应先自动建会话再设立目标（对齐 MiniMax ensureSessionId；等会话落地防回执被投影冲掉）');
+    assert(app.includes('无法为当前目标创建会话'), '自动建会话失败应给出可操作提示（对齐 MiniMax 的 ensureSessionId 失败分支）');
     assert(app.includes('const epoch = ++goalViewEpochRef.current;') && app.includes('if (goalViewEpochRef.current !== epoch) return;'), 'openSession 迟到响应应凭纪元丢弃（快切会话不投影旧会话内容）');
     assert(/当前没有会话[\s\S]{0,240}setGoalPrefill/.test(app), '无会话时 goal 命令应原样回填草稿（对齐 MiniMax retained 语义）');
     const msg = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Message.tsx'), 'utf8');

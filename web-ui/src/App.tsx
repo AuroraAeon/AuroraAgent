@@ -292,15 +292,30 @@ export default function App() {
       setGoalPrefill({ text: `/goal ${rawArgs}`, nonce: Date.now() });
       return;
     }
-    if (!currentId) {
+    // 无会话处理（对齐 MiniMax execute() 第 4-5 步）：kind==='create' 先尝试 ensureSessionId()
+    // 自动建会话；其余意图直接告警。两条路径都 retained——原样回填，会话就绪后可直接重发
+    if (!currentId && intent.kind !== 'create') {
       push('当前没有会话：请先新建或切换会话，再管理目标');
-      // 对齐 MiniMax retained 语义：无会话也原样回填，会话就绪后可直接重发
       setGoalPrefill({ text: `/goal ${rawArgs}`, nonce: Date.now() });
       return;
     }
+    let sid = currentId;
+    if (!sid) {
+      try {
+        const s = await createSession({});
+        setSessions((prev) => [s, ...prev]);
+        await openSession(s.id); // 等会话落地（消息投影 / 偏好就位）再继续，目标回执不被投影冲掉
+        currentIdRef.current = s.id; // setCurrentId 的渲染尚未落地，手动同步引用供 stale() 判定
+        sid = s.id;
+      } catch (e) {
+        push('无法为当前目标创建会话：请稍后重试或手动新建会话后再设立目标');
+        setGoalPrefill({ text: `/goal ${rawArgs}`, nonce: Date.now() });
+        setError(`自动创建会话失败：${e instanceof Error ? e.message : String(e)}`);
+        return;
+      }
+    }
     // 命令发起时的会话与纪元：回调迟到（用户已切换 / 新建会话）时不投影，避免旧会话的
     // 目标状态与通知落到新会话界面（对齐 MiniMax canProjectOperation）
-    const sid = currentId;
     const epoch = goalViewEpochRef.current;
     const stale = () => goalViewEpochRef.current !== epoch || currentIdRef.current !== sid;
     const fail = (e: unknown) => {
