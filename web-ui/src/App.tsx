@@ -32,37 +32,48 @@ function appendTextPart(live: LiveTurn, text: string): LiveTurn {
 /** 工具事件 → live turn parts 里的工具卡片状态机（工具片段保持在时间线原位置） */
 function applyToolEvent(live: LiveTurn, ev: Extract<AgentEvent, { type: 'tool_event' }>): LiveTurn {
   const parts = live.parts.slice();
-  const idx = parts.findIndex((p) => p.kind === 'tool' && p.id === ev.toolId);
+  // 同 id 多调用（个别上游代理复用 tool_call id）：open 定位尚未完结的卡片，
+  // 后一个调用的增量事件开新卡片而非顶掉前一个已完结的调用（与 transcript 投影同语义）
+  const open = parts.findIndex((p) => p.kind === 'tool' && p.id === ev.toolId && p.phase !== 'done' && p.phase !== 'failed' && p.phase !== 'rejected');
+  const idx = open >= 0 ? open : parts.findIndex((p) => p.kind === 'tool' && p.id === ev.toolId);
   const cur: Extract<MsgPart, { kind: 'tool' }> | null = idx >= 0 && parts[idx].kind === 'tool' ? parts[idx] : null;
   // loop 对「拒绝」会补发 failed：保留拒绝态，不被失败态覆盖
   if ((ev.phase === 'failed' || ev.phase === 'completed') && cur?.phase === 'rejected') return live;
-  const upsert = (view: Extract<MsgPart, { kind: 'tool' }>) => {
-    if (idx >= 0) parts[idx] = view;
+  // begin 类事件（started / params_partial / confirmation_needed）：无未完结卡片即开新卡
+  const begin = (view: Extract<MsgPart, { kind: 'tool' }>) => {
+    if (open >= 0) parts[open] = view;
     else parts.push(view);
+  };
+  // settle 类事件（completed / failed）：无未完结卡片时仅从未见过的调用才补卡，重复完成事件忽略
+  const settle = (view: Extract<MsgPart, { kind: 'tool' }>) => {
+    if (open >= 0) parts[open] = view;
+    else if (idx < 0) parts.push(view);
   };
   const sub = ev.subAgent ? { subAgent: true, subTask: ev.subTask } : {};
   switch (ev.phase) {
     case 'started':
-      upsert({ kind: 'tool', id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'running', output: '', ...sub });
+      begin({ kind: 'tool', id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'running', output: '', ...sub });
       break;
     case 'params_partial':
-      if (cur) parts[idx] = { ...cur, params: ev.params };
-      else upsert({ kind: 'tool', id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'running', output: '', ...sub });
+      if (open >= 0 && cur) parts[open] = { ...cur, params: ev.params };
+      else begin({ kind: 'tool', id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'running', output: '', ...sub });
       break;
     case 'confirmation_needed':
-      upsert({ kind: 'tool', id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'ask', output: '', requestId: ev.requestId });
+      begin({ kind: 'tool', id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'ask', output: '', requestId: ev.requestId });
       break;
     case 'confirmed':
-      if (cur) parts[idx] = { ...cur, phase: 'running' };
+      if (open >= 0 && cur) parts[open] = { ...cur, phase: 'running' };
       break;
     case 'rejected':
-      if (cur) parts[idx] = { ...cur, phase: 'rejected' };
+      if (open >= 0 && cur) parts[open] = { ...cur, phase: 'rejected' };
       break;
     case 'completed':
-      if (cur) parts[idx] = { ...cur, phase: 'done', output: ev.output || '', ...(ev.extra ? { extra: ev.extra as ToolView['extra'] } : {}) };
+      if (open >= 0 && cur) parts[open] = { ...cur, phase: 'done', output: ev.output || '', ...(ev.extra ? { extra: ev.extra as ToolView['extra'] } : {}) };
+      else settle({ kind: 'tool', id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'done', output: ev.output || '', ...sub });
       break;
     case 'failed':
-      if (cur) parts[idx] = { ...cur, phase: 'failed', output: ev.output || '', ...(ev.extra ? { extra: ev.extra as ToolView['extra'] } : {}) };
+      if (open >= 0 && cur) parts[open] = { ...cur, phase: 'failed', output: ev.output || '', ...(ev.extra ? { extra: ev.extra as ToolView['extra'] } : {}) };
+      else settle({ kind: 'tool', id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'failed', output: ev.output || '', ...sub });
       break;
   }
   return { ...live, parts };
