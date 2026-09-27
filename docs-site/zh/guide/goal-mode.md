@@ -52,7 +52,7 @@ Goal 模式给会话挂一个**跨轮次存续的目标**：模型自主推进�
 
 `goal.verification`：`none`（默认，不验证）/ `evaluator` / `subagent`。
 
-- **evaluator**：经同一路由用小快模型低温一次请求裁决 `met` / `not_met` / `impossible` / `inconclusive`（`goal.evaluatorModel` 必填，`maxTokens` 4096、超时 60s、重试封顶 1）；模型的 `summary` 一律作不可信数据提交
+- **evaluator**：经同一路由用小快模型低温一次请求裁决 `met` / `not_met` / `impossible` / `inconclusive`（`goal.evaluatorModel` 必填，`maxTokens` 4096、超时 60s、重试封顶 1）；模型的 `summary` 一律作不可信数据提交。`not_met` 时验证器还需逐条给出 `missing` 缺口清单（每条一句话、最多 50 条），随续跑反馈与横幅 / 终端摘要展示
 - **subagent**：经子代理系统派发只读 profile（`goal-verifier-readonly`）独立核查
 - **证据形态** `goal.evidence`：`brief`（默认）/ `transcript`
 - **结算**：`met` → `complete(verifier_met)`；`not_met` 连续 `goal.repeatedNotMetLimit`（默认 5）次 → `blocked(verifier_impossible)`；验证器自身不可用 → `paused(verifier_unavailable)`，不静默放行
@@ -81,7 +81,7 @@ Goal 模式给会话挂一个**跨轮次存续的目标**：模型自主推进�
 /goal help                     # 命令帮助
 ```
 
-网页：聊天框直接输入上述命令（整段以 `/goal` 开头即被拦截，不当作普通消息发送）；view / help / 错误以系统消息回复，create 在已有未完成目标时自动转为「改写目标文本」，budget 变更携带 `expectedGoalId` + `expectedUpdatedAt` 新鲜快照。会话顶部 GoalBanner 展示状态芯片、目标内容、tokens / 轮次 / live 时长、预算上限、最近验证结论与随状态裁剪的操作提示；目标转 `complete` 时消息流贴一条同源完成回执。暂停 / 恢复 / 停止即点即走。
+网页：聊天框直接输入上述命令（整段以 `/goal` 开头即被拦截，不当作普通消息发送）；view / help / 错误以系统消息回复，create 在已有未完成目标时自动转为「改写目标文本」，budget 变更携带 `expectedGoalId` + `expectedUpdatedAt` 新鲜快照。会话顶部 GoalBanner 展示状态芯片、目标内容、tokens / 轮次 / live 时长、预算上限、最近验证结论（`not_met` 附前 2 条 `missing` 缺口，超出记 `+N`）与随状态裁剪的操作提示；`active` 且等待授权 / 验证时芯片改用等待标签（对齐 MiniMax goalPresentation），目标转 `complete` 时横幅隐藏、消息流贴一条同源完成回执。暂停 / 恢复 / 停止即点即走。
 
 REST 面对应 `GET /api/agent/goal/:id`、`POST /api/agent/goal`（创建，未完成目标存在时 409 `GOAL_STATUS_CONFLICT`）、`POST /api/agent/goal/edit`（改写，空白 400 `GOAL_BAD_OBJECTIVE`，已完成 409）、`POST /api/agent/goal/clear`（幂等移除，回 `{cleared}`）与 `POST /api/agent/goal/{pause,resume,stop,budget}`。
 

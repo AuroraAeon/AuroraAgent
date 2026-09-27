@@ -244,13 +244,13 @@ export function createGoalRuntime({
     if (streak >= cfg.repeatedNotMetLimit) {
       const next = goalStore.update(sessionId, (g) => ({
         ...g, status: 'blocked', statusReason: 'blocked(verifier_impossible)', lastWorkerProposal: proposalRec,
-        lastVerification: { verdict: result.verdict, at: Date.now(), evidence: result.evidence, notMetStreak: streak },
+        lastVerification: { verdict: result.verdict, at: Date.now(), evidence: result.evidence, missing: result.missing || [], notMetStreak: streak },
       }));
       emitStatus(next);
       return { action: 'finish' };
     }
     const next = goalStore.update(sessionId, (g) => ({
-      ...g, lastVerification: { verdict: result.verdict, at: Date.now(), evidence: result.evidence, notMetStreak: streak },
+      ...g, lastVerification: { verdict: result.verdict, at: Date.now(), evidence: result.evidence, missing: result.missing || [], notMetStreak: streak },
     }));
     emitStatus(next); // 状态未变但验证结论刷新（lastVerification 随事件透出）
     if (allowContinue) {

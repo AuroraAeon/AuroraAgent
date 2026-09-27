@@ -494,6 +494,16 @@ export async function runGoalTests(test, assert, eq) {
     eq(parseVerdict('我觉得大概完成了').verdict, 'inconclusive', '非 JSON 不能悄悄放行');
     eq(parseVerdict('{"verdict":"maybe"}').verdict, 'inconclusive', '非法裁决值按 inconclusive');
     eq(parseVerdict('').verdict, 'inconclusive');
+    // missing 缺口清单解析（对齐 MiniMax evaluator schema：not_met 逐条缺口）
+    const nm = parseVerdict('{"verdict":"not_met","evidence":"e","missing":["缺 A","缺 B","缺 C"]}');
+    assert(Array.isArray(nm.missing) && nm.missing.length === 3 && nm.missing[0] === '缺 A', 'not_met 应解析出 missing 数组');
+    eq(parseVerdict('{"verdict":"met","evidence":"ok"}').missing.length, 0, 'met 无 missing 时回退空数组');
+    const trunc = parseVerdict(`{"verdict":"not_met","evidence":"e","missing":["${'x'.repeat(1200)}","  ","ok"]}`);
+    eq(trunc.missing.length, 2, '空串项被剔除、非字符串项被过滤');
+    eq(trunc.missing[0].length, 1000, '单条缺口截断到 1000 字符');
+    const capped = parseVerdict(`{"verdict":"not_met","evidence":"e","missing":${JSON.stringify(Array.from({ length: 60 }, (_, i) => `g${i}`))}}`);
+    eq(capped.missing.length, 50, 'missing 上限 50 条');
+    eq(parseVerdict('{"verdict":"not_met","evidence":"e"}').missing.length, 0, '缺 missing 字段也接受 verdict（保守不降级）');
   });
 
   await test('goal: 续跑/收尾/验证反馈提醒文案单一事实源', () => {
@@ -502,6 +512,10 @@ export async function runGoalTests(test, assert, eq) {
     assert(GOAL_WRAPUP_NOTE.includes('不要调用任何工具'), '收尾轮禁工具');
     const note = goalVerifierFeedbackNote({ evidence: 'README 未改' }, 2, 5);
     assert(note.includes('第 2/5 次') && note.includes('README 未改'), '反馈提醒应带连胜与证据');
+    const withMissing = goalVerifierFeedbackNote({ evidence: 'e', missing: ['缺 A', '缺 B', '缺 C', '缺 D', '缺 E', '缺 F', '缺 G'] }, 3, 5);
+    assert(withMissing.includes('缺 A') && withMissing.includes('缺 E'), '反馈提醒应带前 5 条缺口');
+    assert(withMissing.includes('另有 2 条缺口从简略提示中省略'), '超出 5 条应记省略数');
+    assert(!goalVerifierFeedbackNote({ evidence: 'e' }, 1, 5).includes('尚未满足的缺口'), '无 missing 不渲染缺口块');
   });
 
   await test('goal: evaluator 档验证器不可用转 paused(verifier_unavailable)，不静默放行', async () => {
@@ -522,6 +536,29 @@ export async function runGoalTests(test, assert, eq) {
     eq(g.status, 'paused');
     eq(g.statusReason, 'paused(verifier_unavailable)');
     eq(g.lastVerification.verdict, 'unavailable');
+  });
+
+  await test('goal: subagent 档 not_met 的 missing 缺口清单透出到 lastVerification 并要求续跑', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'goal-rt11-'));
+    const store = new GoalStore(dir);
+    const events = [];
+    const rt = createGoalRuntime({
+      goalStore: store, sessionId: 'rt11', config: parseGoalConfig({ verification: 'subagent' }),
+      harnessTools: ['create_goal', 'update_goal', 'get_goal'], emit: (t, p) => events.push({ t, p }),
+      provider: { id: 'fake', protocol: 'openai', baseUrl: 'http://127.0.0.1:1', apiKey: 'x', builtin: false },
+    });
+    rt.bindSpawn(async () => ({ output: '{"verdict":"not_met","evidence":"README 未改","missing":["缺 A","缺 B","缺 C"]}' }));
+    rt.tools[0].run({ objective: '改写 README' });
+    rt.beginTurn();
+    rt.tools[1].run({ mode: 'status', status: 'complete', summary: '自称改完' });
+    const d = await rt.onProposal();
+    eq(d.action, 'continue', '未到受阻阈值应带着缺口续跑');
+    assert(String(d.extraSystem).includes('缺 A') && String(d.extraSystem).includes('缺 C'), '续跑提醒应带上 missing 缺口');
+    const g = store.get('rt11');
+    eq(g.status, 'active', 'not_met 未连击不改状态');
+    eq(g.lastVerification.verdict, 'not_met');
+    assert(Array.isArray(g.lastVerification.missing) && g.lastVerification.missing.length === 3, 'missing 应透出到 lastVerification');
+    eq(g.lastVerification.notMetStreak, 1);
   });
 
   await test('goal: 无目标会话的钩子是廉价空操作', () => {
@@ -601,6 +638,8 @@ export async function runGoalTests(test, assert, eq) {
     assert(summary.includes('预算：50000 tokens'), '摘要应含预算');
     const withV = formatGoalSummary({ ...g, lastVerification: { verdict: 'not_met', notMetStreak: 2 } });
     assert(withV.includes('未达到') && withV.includes('连续 2 次'), '摘要应带验证结论与连击');
+    const withMissing = formatGoalSummary({ ...g, lastVerification: { verdict: 'not_met', notMetStreak: 2, missing: ['缺 A', '缺 B', '缺 C'] } });
+    assert(withMissing.includes('缺口：缺 A；缺 B') && withMissing.includes('+1'), 'not_met 摘要应展示前 2 条缺口并记 +N');
     const receipt = formatGoalReceipt({ ...g, status: 'complete' });
     assert(receipt.includes('2m') && receipt.includes('12500 tokens') && receipt.includes('3 轮'), '回执应含时长 / token / 轮次');
     assert(GOAL_COMMAND_HELP.includes('/goal edit'), '帮助应含 edit');

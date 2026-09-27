@@ -50,7 +50,7 @@ Names and schemas match codex / minimax-code so models need zero learning time; 
 
 `goal.verification`: `none` (default) / `evaluator` / `subagent`.
 
-- **evaluator**: one low-temperature request through the same route with a small fast model, verdict `met` / `not_met` / `impossible` / `inconclusive` (`goal.evaluatorModel` required; maxTokens 4096, 60s timeout, retries capped at 1); the model's own `summary` is always submitted as untrusted data
+- **evaluator**: one low-temperature request through the same route with a small fast model, verdict `met` / `not_met` / `impossible` / `inconclusive` (`goal.evaluatorModel` required; maxTokens 4096, 60s timeout, retries capped at 1); the model's own `summary` is always submitted as untrusted data. On `not_met` the verifier must also list a `missing` array of concrete gaps (one sentence each, at most 50), surfaced in the continuation feedback, the banner, and the terminal summary
 - **subagent**: an independent read-only profile (`goal-verifier-readonly`) dispatched through the sub-agent system
 - **Evidence shape** `goal.evidence`: `brief` (default) / `transcript`
 - **Settlement**: `met` → `complete(verifier_met)`; `repeatedNotMetLimit` (default 5) consecutive `not_met` → `blocked(verifier_impossible)`; a broken verifier → `paused(verifier_unavailable)`, never a silent pass
@@ -79,7 +79,7 @@ The terminal and the web Composer share one `/goal` parser (`util/agent/goal/com
 /goal help                     # command help
 ```
 
-Web: type the commands above straight into the chat box (a message starting with `/goal` is intercepted instead of sent); view / help / errors reply as system messages, create becomes "rewrite the objective" when a goal is unfinished, and budget changes carry a fresh `expectedGoalId` + `expectedUpdatedAt` snapshot. The GoalBanner above the conversation shows the status chip, objective, tokens / turns / live elapsed, budget cap, latest verification verdict, and a status-tailored action hint; when a goal turns `complete`, a same-source completion receipt is appended to the message stream. Pause / resume / stop are one click away.
+Web: type the commands above straight into the chat box (a message starting with `/goal` is intercepted instead of sent); view / help / errors reply as system messages, create becomes "rewrite the objective" when a goal is unfinished, and budget changes carry a fresh `expectedGoalId` + `expectedUpdatedAt` snapshot. The GoalBanner above the conversation shows the status chip, objective, tokens / turns / live elapsed, budget cap, the latest verification verdict (with the first two `missing` gaps on `not_met`, extra ones counted as `+N`), and a status-tailored action hint; while `active` and waiting on permission / verification the chip switches to a wait label (matching MiniMax goalPresentation), and when a goal turns `complete` the banner hides and a same-source completion receipt is appended to the message stream. Pause / resume / stop are one click away.
 
 The REST surface is `GET /api/agent/goal/:id`, `POST /api/agent/goal` (create; 409 `GOAL_STATUS_CONFLICT` while a goal is unfinished), `POST /api/agent/goal/edit` (rewrite; 400 `GOAL_BAD_OBJECTIVE` for a blank text, 409 when complete), `POST /api/agent/goal/clear` (idempotent removal, returns `{cleared}`), and `POST /api/agent/goal/{pause,resume,stop,budget}`.
 

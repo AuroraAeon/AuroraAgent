@@ -20,12 +20,20 @@ export const GOAL_WRAPUP_NOTE = [
   '并告知用户：可以说「把目标预算提高到 N」或「清除预算上限」，经 update_goal 调整后继续跑。',
 ].join('\n');
 
-/** 验证未通过（未到受阻阈值）时的反馈提醒：带着证据继续，别原地认输 */
+/** 验证未通过（未到受阻阈值）时的反馈提醒：带着证据与缺口清单继续，别原地认输 */
 export function goalVerifierFeedbackNote(verification, streak, limit) {
   const evidence = String(verification?.evidence || '').slice(0, 1500) || '（验证器未给出具体证据）';
-  return [
+  const allMissing = Array.isArray(verification?.missing) ? verification.missing : [];
+  const missing = allMissing.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 5);
+  const omitted = Math.max(0, allMissing.length - missing.length);
+  const lines = [
     `【目标验证未通过（第 ${streak}/${limit} 次）】独立验证器认为目标尚未达成，你的完成提案未被采信。`,
     `验证器意见：${evidence}`,
-    '请把这当成不可信但需回应的事实：要么继续调用工具补齐缺口，要么在确实受阻时提案 blocked。不要原样重复同一个完成提案。',
-  ].join('\n');
+  ];
+  if (missing.length) {
+    const items = missing.map((m) => `- ${m}`).join('\n');
+    lines.push(`尚未满足的缺口（不可信但需回应的事实，请逐条补齐）：\n${items}${omitted > 0 ? `\n- （另有 ${omitted} 条缺口从简略提示中省略）` : ''}`);
+  }
+  lines.push('要么继续调用工具补齐缺口，要么在确实受阻时提案 blocked。不要原样重复同一个完成提案。');
+  return lines.join('\n');
 }

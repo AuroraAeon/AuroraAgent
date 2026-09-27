@@ -1573,7 +1573,9 @@ try {
     assert(banner.includes('tokenBudget != null'), '横幅应展示预算上限');
     assert(banner.includes('goal.turnsUsed') && banner.includes('最近验证'), '横幅应展示轮次用量与最近验证结论');
     assert(banner.includes('setInterval') && banner.includes('goalActionHint(goal.status)'), '横幅应有 live elapsed 与随状态动作提示');
-    assert(banner.includes('formatGoalReceipt(goal)'), '横幅完成态应展示同源回执');
+    assert(banner.includes("goal.status === 'complete') return null"), '横幅 complete 时隐藏（回执由 notice 承载，对齐 MiniMax banner）');
+    assert(banner.includes('GOAL_WAIT_LABELS[goal.executionWait') && banner.includes('chipLabel'), 'active 等待时用等待标签替换状态芯片（对齐 MiniMax goalPresentation）');
+    assert(banner.includes('v.missing') && banner.includes('+${missingOmitted}'), 'not_met 应展示前 2 条 missing 并记 +N');
     assert(!hasEmoji(banner), 'GoalBanner 零 emoji 铁律');
     const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
     assert(app.includes("ev.type === 'goal_created'") && app.includes('setGoal(ev.goal)'), 'App 应处理四类 goal 事件');

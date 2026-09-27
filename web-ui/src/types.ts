@@ -28,7 +28,7 @@ export type Harness = { id: string; label: string; summary: string; tools: strin
 
 /** 会话目标（与 util/agent/goal/types.mjs 六态状态机一一对应） */
 export type GoalStatus = 'active' | 'paused' | 'blocked' | 'complete' | 'budget_limited' | 'usage_limited';
-export type GoalVerification = { verdict: 'met' | 'not_met' | 'impossible' | 'unavailable' | 'inconclusive'; at: number; evidence: string; notMetStreak?: number };
+export type GoalVerification = { verdict: 'met' | 'not_met' | 'impossible' | 'unavailable' | 'inconclusive'; at: number; evidence: string; notMetStreak?: number; missing?: string[] };
 export type GoalState = {
   goalId: string; sessionId: string; objective: string; status: GoalStatus;
   createdAt: number; updatedAt: number;

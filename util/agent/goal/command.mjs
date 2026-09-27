@@ -187,7 +187,14 @@ export function formatGoalSummary(goal) {
   ];
   if (goal.lastVerification) {
     const v = goal.lastVerification;
-    lines.push(`最近验证：${VERDICT_LABELS[v.verdict] || v.verdict}${v.verdict === 'not_met' && v.notMetStreak ? `（连续 ${v.notMetStreak} 次）` : ''}`);
+    let line = `最近验证：${VERDICT_LABELS[v.verdict] || v.verdict}${v.verdict === 'not_met' && v.notMetStreak ? `（连续 ${v.notMetStreak} 次）` : ''}`;
+    const missing = v.verdict === 'not_met' && Array.isArray(v.missing) ? v.missing.filter(Boolean) : [];
+    if (missing.length) {
+      const visible = missing.slice(0, 2).join('；');
+      const omitted = missing.length - Math.min(missing.length, 2);
+      line += ` · 缺口：${visible}${omitted > 0 ? ` +${omitted}` : ''}`;
+    }
+    lines.push(line);
   }
   lines.push(`可用操作：${goalActionHint(goal.status)}`);
   return lines.join('\n');
