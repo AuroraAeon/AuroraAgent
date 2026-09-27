@@ -12,7 +12,7 @@
 执行顺序永远是：
 
 1. 改代码（一个可独立验证的小改动，例如「修复一个错误映射」「新增一个厂商标识」）
-2. `npm test` 全绿（基线 213 个测试；不绿不准提交）
+2. `npm test` 全绿（基线 266 个测试；不绿不准提交）
 3. `git add <具体文件>` → `git commit -m "中文描述"` → `git push`
 
 规约：
@@ -40,40 +40,44 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 - 可打包为独立 macOS Application（`~/Applications/AuroraAgent.app`，显示名 AuroraAgent），由 LaunchAgent `com.auroraagent.app` 常驻
 - 当前接入厂商：美团 LongCat-2.5-Preview。Base URL / 模型目录 / Key 全部是配置项——**代码不绑定厂商**，接入新厂商不改架构
 - 自定义 Provider：设置页可加任意 OpenAI 兼容 / Anthropic Messages 上游（存储、校验、发现、路由在 `util/providers.mjs` + `util/wire.mjs`，前端在 `web-ui/src/components/ProviderEditor.tsx`）；内置提供方只读，请求载荷保持历史形态
-- Agent 能力面（6.0.0 起对齐 kimi-code 能力模型，全部零依赖自实现）：技能（`skills/` 内置 + `<数据目录>/skills/` 用户，frontmatter 目录常驻系统提示，`/<技能名>` 斜杠命令与 `skill` 工具按需加载正文）、子代理（`task` 工具派发受限子 turn）、计划模式（先出计划、批准才执行）、权限三档（`always_ask` / `ask_when_needed` / `never_ask`）、MCP 客户端（stdio / HTTP 双传输，`AURORAAGENT_EXPERIMENTAL_MCP=1` 门控，默认关）
+- Agent 能力面（6.0.0 起对齐 kimi-code 能力模型，7.0.0 起对齐 MiniMax-code goal 能力，全部零依赖自实现）：Goal 目标模式（一会话一目标、六态状态机、三维预算 + 双熔断、evaluator / subagent 独立验证、轮内自动续跑、`/goal` 与 GoalBanner 双端操作）、技能（`skills/` 内置 + `<数据目录>/skills/` 用户，frontmatter 目录常驻系统提示，`/<技能名>` 斜杠命令与 `skill` 工具按需加载正文）、子代理（`task` 工具派发受限子 turn）、计划模式（先出计划、批准才执行）、权限三档（`always_ask` / `ask_when_needed` / `never_ask`）、MCP 客户端（stdio / HTTP 双传输，`AURORAAGENT_EXPERIMENTAL_MCP=1` 门控，默认关）
 
 ## 2. 架构地图
 
 | 文件 | 职责 |
 | --- | --- |
-| `web.mjs` | 网页服务核心：`/api/*` 路由平铺、SSE 代理、停止中断、模型目录（单飞加载 + 60s 缓存）、`/app/` 静态服务（React 产物 + SPA 回退 + 防目录穿越）；Provider / LaunchAgent / SSE 泵 / 账本 / Agent HTTP 面已拆到 `util/`，静态资源走 `STATIC_ASSETS` 白名单 |
+| `web.mjs` | 网页服务核心：`/api/*` 路由平铺、SSE 代理、停止中断、模型目录（单飞加载 + 60s 缓存）、`/app/` 静态服务（React 产物 + SPA 回退 + 防目录穿越 + 304 协商）；Provider / LaunchAgent / SSE 泵 / 账本 / Agent HTTP 面 / 终端偏好已拆到 `util/`，静态资源走 `STATIC_ASSETS` 白名单 |
 | `chat.mjs` | 终端客户端入口：main 委派 `runTerminal`；保留旧对话通道 `streamChat` 与配置导出（`tools/color-test.mjs` 依赖） |
 | `check.mjs` | 连接自检：Key 校验 → 模型列表 → 一条最小真实请求（会花少量钱） |
 | `util/config.mjs` | 数据目录三级回退 + 配置读写 + `PRICE`（chat / check / web / color-test 共用） |
 | `util/sse.mjs` | SSE 解析器 `SseParser` + token 估算（测试与后端共享） |
 | `util/providers.mjs` | 自定义 Provider：存储（`providers.json` 原子落盘）、ID/端点/协议/模型目录/单价/API 密钥格式校验（与 dsh 同规约）、上游模型发现、`/api/providers` 路由处理 |
 | `util/wire.mjs` | 协议适配：OpenAI 兼容与 Anthropic Messages 的 URL 拼接、请求拼装（含 `tools` / `tool_choice`）、Anthropic SSE 帧翻译成 OpenAI 帧（含 `tool_use` / `input_json_delta`） |
-| `util/stream.mjs` | SSE 透传 / 翻译泵（逐帧转发 + 用量累计，供 `/api/chat`）；`consumeAgentStream` 增量累积 `tool_calls` delta 供 Loop 使用 |
+| `util/stream.mjs` | SSE 透传 / 翻译泵（逐帧转发 + 用量累计 + 背压 pause/resume，供 `/api/chat`）；`consumeAgentStream` 增量累积 `tool_calls` delta 供 Loop 使用 |
 | `util/usage.mjs` | 用量账本：逐行追加 + 汇总出口 |
 | `util/service.mjs` | LaunchAgent 生命周期：plist 生成 / 安装 / 卸载 / 状态 |
-| `util/agent/events.mjs` | AgentEvent 协议（OpenBitFun AgenticEvent 精简子集）+ SSE 帧封装；`session_renamed` 供两端实时刷新自动总结出的标题 |
-| `util/agent/harness.mjs` | 三档模式契约 minimal / standard / ultimate：系统提示、工具集、轮次上限（1 / 24 / 64）、压缩阈值；Creative 留待后续 |
-| `util/agent/session.mjs` | 会话存储：`sessions/<id>.meta.json` 原子落盘 + `.jsonl` 追加式转录；投影重建容错误行；create / list / get / patch / delete |
+| `util/agent/events.mjs` | AgentEvent 协议（OpenBitFun AgenticEvent 精简子集）+ SSE 帧封装；`session_renamed` 供两端实时刷新自动总结出的标题；`goal_created` / `goal_status_changed` / `goal_usage_updated` / `goal_wait_changed` 四类 goal 事件 |
+| `util/agent/harness.mjs` | 三档模式契约 minimal / standard / ultimate：系统提示、工具集（goal 三工具仅 standard / ultimate 收录）、轮次上限（1 / 24 / 64）、压缩阈值；Creative 留待后续 |
+| `util/agent/session.mjs` | 会话存储：`sessions/<id>.meta.json` 原子落盘 + `.jsonl` 追加式转录（投影按 mtime+size 失效缓存）；投影重建容错误行；create / list / get / patch / fork / delete |
 | `util/agent/title.mjs` | 会话标题自动总结：首条用户消息本地推导简短标题（零成本纯函数，不调模型）——首行提取 / markdown 噪声剥离 / 技能注入取用户原话 / 斜杠命令取参数 / emoji 与控制符清洗 / CJK 宽度截断（≤24 列）；仅会话仍是 `DEFAULT_SESSION_NAME` 时套用 |
 | `util/agent/title-model.mjs` | 模型总结标题：titleMode=model 时一次无工具低温请求（≤64 token，参考首条消息与终稿）生成标题，失败回退本地推导；成本记 `purpose:'title'` 账本与会话汇总，不进转录与轮次脚注 |
-| `util/tui/` | 终端 TUI 工具包（零依赖）：`theme.mjs` 语义色板暗/亮双调 + 对比度守卫（全仓库唯一允许原始 SGR 的文件）；`render.mjs` CJK/ANSI 感知宽度截断；`printable-key.mjs` Kitty CSI-u 解码；`searchable-list.mjs` 光标/搜索/翻页状态机；`select.mjs`+`pick.mjs` 单选对话框（TTY 原始模式读键 + 非 TTY 退化）；`footer.mjs` 状态条；`commands.mjs` 声明式斜杠命令；`screen.mjs` 增量重绘；规范单一真值源 `docs-site/zh/reference/tui-design.md` |
+| `util/tui/` | 终端 TUI 工具包（零依赖）：`theme.mjs` 语义色板暗/亮双调 + 对比度守卫（全仓库唯一允许原始 SGR 的文件）；`render.mjs` CJK/ANSI 感知宽度截断；`printable-key.mjs` Kitty CSI-u 解码；`searchable-list.mjs` 光标/搜索/翻页状态机；`select.mjs`+`pick.mjs` 单选对话框（TTY 原始模式读键 + 非 TTY 退化）；`footer.mjs` 状态条（含目标用量芯片）；`commands.mjs` 声明式斜杠命令；`screen.mjs` 增量重绘；`config.mjs` tui 段解析（terminalTitle 项序 + notifications 三档，单叶容错）；`title.mjs` OSC 终端标题（退出 / 挂起清除）；`notify.mjs` OSC9 / OSC777 / bel 三通道通知（osascript 尽力焦点探测）；`settings-api.mjs` `/api/settings/tui` HTTP 面；规范单一真值源 `docs-site/zh/reference/tui-design.md` |
 | `util/llm/` | LLM 抽象：`tool.mjs` kosong 风格 Tool 归一化与 OpenAI/Anthropic 双协议转换（`tools.mjs` 共用，`deferred` 标记的工具不进请求顶层 `tools[]` 以保字节稳定）；`errors.mjs` 状态码 → 中文错误分类（额度措辞先于 400）；`provider.mjs` `openChatStream` 统一开流入口（`/api/chat` 与 Loop 共用，非 2xx 抛带 kind/status 的 Error）；`message.mjs` OpenAI ↔ Anthropic 消息序列纯函数 |
 | `util/agent/tools.mjs` | 十一个内置工具（read_file / list_dir / write_file / edit_file / shell / web_fetch / grep / glob / todo / skill / task）：JSON Schema、`resolveInside` 路径禁锢（拒绝穿越）、输出截断、shell 超时（默认 30s 上限 120s）；MCP 与技能工具经 `util/llm/tool.mjs` 归一化后同形态入列 |
 | `util/agent/policy.mjs` | 权限策略：`{action, resource, effect}` 规则集，层内后匹配赢、多层取最严（deny > ask > allow）；`permissionMode` 三档（always_ask / ask_when_needed / never_ask）设定 ask 类动作默认效应，不推翻 deny 与会话级「总是允许」；action 支持 `mcp__*` 前缀通配 |
 | `util/agent/context.mjs` | 上下文组装（系统提示 + 历史 + 工具定义；thinking/usage 不回填、summary 转系统消息）与压缩规划（超窗口 70% 触发，保留最近 4 个用户轮原文） |
 | `util/agent/loop.mjs` | turn 运行器：轮次循环至无 tool_calls 或触顶；计划 / 执行两阶段（`plan.mjs`）；权限经 pending map 挂起等前端决策；`AbortController` 中断保留已生成内容（子代理级联中止）；SSE 断开即中止；MCP 等额外工具经 `extraTools` 进请求；每轮经 `usage.mjs` 记账 |
-| `util/agent/http.mjs` | `/api/agent/*` 与 `/api/mcp/*` HTTP 面（web.mjs 前缀委派）：会话 CRUD + PATCH、turn SSE、abort、permission、harnesses、skills 目录、plan 决策通道、MCP 服务器 CRUD + probe（实验门控）；单活跃 turn（409） |
-| `util/agent/terminal.mjs` | 终端 REPL 协调器：readline + 声明式斜杠命令表（`defineCommands`）+ footer 状态条 + 可搜索选择器；`-p` 单次提问；行数预算内拆出下面两个模块 |
+| `util/agent/http.mjs` | `/api/agent/*` 与 `/api/mcp/*` HTTP 面（web.mjs 前缀委派）：会话 CRUD + PATCH + fork、turn SSE、abort、permission、harnesses、skills 目录、plan 决策通道、goal REST 四面（查询 / 创建 / pause·resume·stop / budget，纪元与状态冲突 409）、MCP 服务器 CRUD + probe（实验门控）；单活跃 turn（409） |
+| `util/agent/terminal.mjs` | 终端 REPL 协调器：readline + 声明式斜杠命令表（`defineCommands`，含 `/goal` 家族与 `/btw`）+ footer 状态条 + 可搜索选择器；OSC 标题实时改写（挂起经不可捕获 SIGSTOP 真正停下）、系统通知接线；`Ctrl+/` 主 / 侧边对话切换；`-p` 单次提问；行数预算内拆出下面两个模块 |
 | `util/agent/terminal-turn.mjs` | 终端 turn 渲染器：AgentEvent → 思考流 / 工具单行 / 权限 y/n/a / 用量脚注；Ctrl+C 经 rl 'SIGINT' 事件中转中断（raw mode 下无真信号） |
 | `util/agent/terminal-format.mjs` | 终端渲染纯助手：工具标签、截断、费用格式化、输出缩进（coordinator 与 turn 渲染器共用；标签与费用已转置到 `transcript.mjs` 同源） |
 | `util/agent/skills.mjs` | 技能系统：frontmatter（name + description）解析、内置 + 用户双目录、目录清单注入系统提示、`/<技能名>` 斜杠命令与 `skill` 工具按需加载正文 |
 | `util/agent/plan.mjs` | 计划模式：计划轮只读 / 检索 / 待办工具白名单（单点定义）、批准后作为既定契约注入执行轮、驳回以 `plan_rejected` 收尾 |
 | `util/agent/swarm.mjs` | 子代理：`task` 工具派发受限子 turn（真实子会话透明可查、嵌套深度封顶 2 层、单次上限 4 个、父中止级联），终稿经工具结果聚合回父模型 |
+| `util/agent/goal/` | Goal 目标模式（语义对齐 MiniMax-code thread-goal，一会话一目标）：`types.mjs` 六态状态机 + statusReason 闭集 + 读路径归一化；`store.mjs` 原子落盘 + CAS 纪元严格推进；`tools.mjs` create_goal / update_goal / get_goal（名字与 schema 对齐 codex，混合模式拒绝）；`budget.mjs` 三维预算（token / 轮次 / 活跃秒数）触顶与收尾轮 + 用量芯片；`breaker.mjs` 回复指纹 + 无工具双熔断；`config.mjs` goal 段解析（单叶容错 + 钳制）；`verification.mjs` evaluator / subagent 验证与结算；`continuation.mjs` 轮内自动续跑；`runtime.mjs` 编排入口；`actions.mjs` 用户面操作单一事实源（REST 与终端共用） |
+| `util/agent/side-session.mjs` | 侧边对话（`/btw`）：内存门面，继承主会话自洽历史前缀（无悬空工具调用的最后边界），不落盘不进 `/sessions`、不接管 goal、不派发子代理 |
+| `util/agent/files.mjs` | `@` 提及时只读文件搜索：`resolveInside` 路径禁锢仅列会话工作目录，跳过依赖目录（`GET /api/files/search`） |
+| `tools/perf/` | 性能基准（本地回归参考，非门禁）：`mock-upstream.mjs` 可播大上下文 SSE mock、`scenarios.mjs` startup / upstream-100 / history-300 三场景、`run.mjs` 临时数据目录拉起真实服务采样 wall / CPU / peak-RSS 输出 JSON + Markdown |
 | `util/agent/transcript.mjs` | 转录投影层：工具标签 / 图标键 / 资源摘要 / 费用格式化的单一真值源 + `projectTurns` 记录分组规则（终端与 Web 共用；配套 `transcript.d.mts` 供 TS 取类型） |
 | `util/mcp/` | MCP 客户端（实验，`AURORAAGENT_EXPERIMENTAL_MCP` 门控）：`client.mjs` JSON-RPC 2.0（stdio spawn 行读写 / HTTP POST + SSE 复用 `sse.mjs`，initialize / tools-list / tools-call）；`registry.mjs` 服务器配置（`mcp.json` 原子落盘）与工具发现注册（`mcp__<服务器>__<工具>`），单服务器失败不阻塞其他 |
 | `web-ui/` | React + Vite + TS 工作台：`src/App.tsx` + `components/{Sidebar,ChatView,Message,ToolCard,Composer(+SkillPalette 斜杠调色板),ProviderEditor,SettingsDialog(+McpPanel+SkillsPanel),PlanCard,Todo}.tsx` + 手写 Markdown 子集渲染器 + `highlight.ts` 零依赖语法高亮 + `projection.ts`（委托 `transcript.mjs` 同源投影）+ 内联 SVG 图标 + `tokens.css` 设计令牌（`app.css` 引用） |
@@ -102,8 +106,9 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 | `PORT=8788 npm run web` | 开发态网页服务 | 避开 8787 正式端口 |
 | `npm run dev:web` | 前端开发态（vite 5173，`/api` 代理 8787） | 只动 `web-ui/` 时用 |
 | `npm run docs:dev` / `docs:build` / `docs:notes` | 文档站开发 / 构建 / 生成发布笔记 | 依赖例外仅 `docs-site/`，产物不提交 |
+| `npm run bench` / `bench:smoke` / `bench:full` | 性能基准（basic / smoke / full 套件） | 本地回归参考，不作 CI 门禁 |
 | `npm run build:web` | 构建前端产物到 `public/app/` | 改了 `web-ui/` 源码后必跑并提交产物 |
-| `npm run chat` | 终端 Agent 会话 | 与网页共用 Loop / 会话 / 账本；斜杠命令含 `/plan` `/mcp` 与技能派生的 `/<技能名>` |
+| `npm run chat` | 终端 Agent 会话 | 与网页共用 Loop / 会话 / 账本；斜杠命令含 `/plan` `/goal` `/btw` `/mcp` 与技能派生的 `/<技能名>` |
 | `npm run color` | 纯色识别测试 | 真实调用，按需 |
 | `npm run service` / `service:status` / `service:remove` | 安装 / 查看 / 卸载 LaunchAgent | — |
 | `npm run publish` | 构建前端 + 打 `.app` + 重启服务 | **只能在 Bundle 外的源码目录执行** |
@@ -119,9 +124,9 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 2. 同目录已存在 `auroraagent.config.json` → 用当前目录（源码开发态）
 3. 否则 `~/Library/Application Support/AuroraAgent`（App 态，数据与 Bundle 解耦）
 
-配置字段：`apiKey` / `model` / `thinking` / `temperature` / `maxTokens` / `permissionMode` / `planMode` / `titleMode`（标题生成方式：local 本地推导零成本 / model 调模型总结，缺省 local，非法值回退缺省）；用量账本 `usage.jsonl` 逐行追加；会话在 `sessions/<id>.meta.json` + `.jsonl`；新建会话默认名 `新会话`（`session.mjs` 的 `DEFAULT_SESSION_NAME` 单一常量），首条消息自动总结出标题后替换，用户改名不被覆盖；titleMode 可全局配置，也可会话级热切换（网页输入区「本地总结 / 模型总结」选择器 PATCH 落 meta / 终端 `/title local|model`，新建会话继承当前选择）。环境变量 `AURORAAGENT_API_KEY`、`AURORAAGENT_BASE_URL` 优先级高于配置文件。实验特性开关：`AURORAAGENT_EXPERIMENTAL_<NAME>`（如 `AURORAAGENT_EXPERIMENTAL_MCP`）单开、`AURORAAGENT_EXPERIMENTAL_FLAG` 全开，缺省关（`util/config.mjs` 单一实现）。
+配置字段：`apiKey` / `model` / `thinking` / `temperature` / `maxTokens` / `permissionMode` / `planMode` / `titleMode`（标题生成方式：local 本地推导零成本 / model 调模型总结，缺省 local，非法值回退缺省）/ `goal` 段（目标模式：`verification` 三档缺省 none、`evaluatorModel`、`evidence`、`repeatedReplyLimit`、`repeatedNotMetLimit`、`graceSteps`、`mainTurns`、`activeSeconds`、`evaluatorMaxTokens` / `evaluatorTimeoutSeconds` / `evaluatorMaxRetries`，解析落 `util/agent/goal/config.mjs`）/ `tui` 段（终端偏好：`terminalTitle` 项序 + `notifications` 的 when / method / events，解析落 `util/tui/config.mjs`，经 `GET/POST /api/settings/tui` 读写，终端启动时读取一次）；用量账本 `usage.jsonl` 逐行追加；会话在 `sessions/<id>.meta.json` + `.jsonl`；目标在 `goals/<sessionId>.json`（一会话一个，原子落盘，`updatedAt` 兼作 CAS 决策纪元）；新建会话默认名 `新会话`（`session.mjs` 的 `DEFAULT_SESSION_NAME` 单一常量），首条消息自动总结出标题后替换，用户改名不被覆盖；titleMode 可全局配置，也可会话级热切换（网页输入区「本地总结 / 模型总结」选择器 PATCH 落 meta / 终端 `/title local|model`，新建会话继承当前选择）。环境变量 `AURORAAGENT_API_KEY`、`AURORAAGENT_BASE_URL` 优先级高于配置文件。实验特性开关：`AURORAAGENT_EXPERIMENTAL_<NAME>`（如 `AURORAAGENT_EXPERIMENTAL_MCP`）单开、`AURORAAGENT_EXPERIMENTAL_FLAG` 全开，缺省关（`util/config.mjs` 单一实现）。
 
-**`auroraagent.config.json`、`usage.jsonl`、`providers.json`、`mcp.json`、`sessions/` 已在 `.gitignore`，永远不许提交**——Key 泄露即安全事故。自定义提供方（含 API 密钥、单价）存 `providers.json`，内置 LongCat 提供方在内存里合成（`builtin: true`，只读）。用户技能放 `<数据目录>/skills/<名称>/SKILL.md`（与内置 `skills/` 合并展示）；MCP 服务器配置存 `mcp.json`（含连接信息，同级不提交）。
+**`auroraagent.config.json`、`usage.jsonl`、`providers.json`、`mcp.json`、`sessions/`、`goals/` 已在 `.gitignore`，永远不许提交**——Key 泄露即安全事故。自定义提供方（含 API 密钥、单价）存 `providers.json`，内置 LongCat 提供方在内存里合成（`builtin: true`，只读）。用户技能放 `<数据目录>/skills/<名称>/SKILL.md`（与内置 `skills/` 合并展示）；MCP 服务器配置存 `mcp.json`（含连接信息，同级不提交）。
 
 ## 5. 代码风格铁律
 
@@ -156,10 +161,10 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 - e2e 模式：mock 上游（`127.0.0.1:18901`，复刻真实 SSE 帧与 401 / 402 错误、`tool_calls` 帧与 tool 结果回执）+ 真实 socket 拉起 `web.mjs`（`127.0.0.1:18787`）
 - **数据隔离**：测试以临时目录作 `AURORAAGENT_DATA_DIR`，绝不许写真实数据目录
 - 新路由 / 新行为 / 新错误映射必须带中文测试名进入 `test/run-tests.mjs`；mock 需要新行为时改 `test/mock-longcat.mjs`
-- mock 触发词：消息含 `USE_TOOL` → 模型发起 `read_file mock.txt`；含 `USE_TOOL_WRITE` → 发起 `write_file written_by_agent.txt`；`FLAKY` 断网重试；`SLOW` 慢速；`USE_SKILL` / `USE_TODO` / `USE_EDIT` / `USE_PLAN` / `USE_SWARM` / `USE_MCP` 分别触发技能加载 / 待办维护 / diff 回传 / 计划两阶段 / 子代理派发 / MCP 工具调用；系统提示带 `【会话标题生成】` 标记即标题生成轮（titleMode=model），回固定标题 `README 安装章节改写`
+- mock 触发词：消息含 `USE_TOOL` → 模型发起 `read_file mock.txt`；含 `USE_TOOL_WRITE` → 发起 `write_file written_by_agent.txt`；`FLAKY` 断网重试；`SLOW` 慢速；`USE_SKILL` / `USE_TODO` / `USE_EDIT` / `USE_PLAN` / `USE_SWARM` / `USE_MCP` 分别触发技能加载 / 待办维护 / diff 回传 / 计划两阶段 / 子代理派发 / MCP 工具调用；`USE_GOAL` → create_goal 全链路；`USE_GOAL_BUDGET` → 预算触顶转 budget_limited + 收尾轮；`USE_GOAL_IDLE` → 空转轮后续跑；`USE_GOAL_VERIFY_MET` / `USE_GOAL_VERIFY_NOTMET` → evaluator 裁决 met 转 complete(verifier_met) / not_met 连击转 blocked(verifier_impossible)；系统提示带 `【会话标题生成】` 标记即标题生成轮（titleMode=model），回固定标题 `README 安装章节改写`
 - 前端契约测试（`/app` 服务、哈希资产、令牌 CSS 在场、零 emoji、旧路由 404、ProviderEditor 源码校验规则）守着构建产物与 `web-ui/` 的同步；改了 `web-ui/` 忘了 `build:web` 会红
 - 仓库守卫（`test/guards.mjs`，已入 `npm test`）：产品源码零 emoji、TUI 颜色单一真值源（仅 `theme.mjs` 出 SGR）、色板对比度达标、新模块 ≤500 行、文档站结构契约（中英页面一一对应 / 发布笔记标记在场 / 依赖例外登记）
-- 基线 213/213 通过。提交前 `npm test` 必须全绿；不许 `skip`，不许放宽断言迁就失败
+- 基线 266/266 通过。提交前 `npm test` 必须全绿；不许 `skip`，不许放宽断言迁就失败
 - `npm run check` 走真实上游，只在改上游集成时跑（花少量钱）
 - 跑 `npm test` 前确认 18901 无常驻 mock 占用（`pkill -f mock-longcat`）；exec 沙箱会杀后台进程，常驻服务 / mock 用 exec_command 前台会话跑
 
@@ -176,10 +181,10 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 
 ## 10. 验证基线（改动后自查）
 
-- `npm test` → 213/213
+- `npm test` → 266/266
 - `curl -s localhost:8787/api/health` → `{"ok":true,...}`；`/api/settings` → `version` / `managed` / `dataDir` 符合预期
 - 浏览器打开 http://localhost:8787 ：无 emoji、模型选择器按提供方分组、完整 turn（工具卡 / 权限卡 / 用量脚注）正常、设置弹层可开关开机自启
-- 终端 `npm run chat`：`/help`、权限 y/n/a、`/sessions` 切换正常
+- 终端 `npm run chat`：`/help`、权限 y/n/a、`/sessions` 切换、`/goal` 状态与预算、`/btw` 侧边对话与 `Ctrl+/` 切换均正常
 - 改了启动 / 打包逻辑：`npm run publish` 后 `launchctl print gui/$(id -u)/com.auroraagent.app` 确认 `state = running`
 
 ## 11. 文档同步

@@ -12,6 +12,7 @@
 - **上下文压缩**（`util/agent/context.mjs`）：token 估算超过窗口阈值（默认 128k 的 70%）时，把早期对话经一轮模型调用总结为 summary 记录，保留近期尾部原文
 - **三档 Harness 模式**（`util/agent/harness.mjs`）：模式决定任务怎么被完成——系统提示、可用工具、轮次上限、压缩阈值都随模式变化
 - **技能与扩展**：`skills/` 内置 + `<数据目录>/skills/` 用户技能（frontmatter 目录常驻系统提示，`/<技能名>` 斜杠命令与 `skill` 工具按需加载正文）；`task` 工具派发子代理并行处理相互独立的子任务并聚合结果；MCP 客户端（实验特性，stdio / HTTP 双传输）把外部服务器工具接入同一套工具接口
+- **Goal 目标模式**（`util/agent/goal/`）：给会话挂一个跨轮次存续的目标——模型自主推进、独立验证、自动续跑，直到完成、受阻或预算耗尽；六态状态机 + 三维预算（token / 轮次 / 活跃时长）+ 无进展双熔断，你随时可暂停 / 恢复 / 改预算（`/goal`、GoalBanner、`POST /api/agent/goal/*`）
 - **按轮记账**：每一轮模型请求经 `util/usage.mjs` 按提供方单价结算，会话内可看到每轮 tokens 与费用
 - **事件协议**（`util/agent/events.mjs`）：`turn_started` / `model_round_started` / `text_chunk` / `thinking_chunk` / `tool_event` / `token_usage_updated` / `context_compression_*` / `turn_completed|cancelled|failed`，统一 SSE 帧封装，终端与网页共用
 
@@ -49,6 +50,9 @@ npm run web       # 网页工作台 http://localhost:8787
 | `todo` | 规划清单维护（增项 / 更新状态，随会话持久化） | 放行 |
 | `skill` | 按名称加载技能正文（frontmatter 目录常驻系统提示） | 放行 |
 | `task` | 派发子代理：受限子 turn 并行处理自含子任务并聚合结果 | 放行 |
+| `create_goal` | 建立跨轮次目标（仅 Standard / Ultimate；已存在未完成目标时失败） | 放行 |
+| `update_goal` | 提案 complete / blocked；用户显式要求时带新鲜快照改 token 预算（CAS 纪元校验） | 放行 |
+| `get_goal` | 读当前目标：状态 / 时间戳 / 用量 / 预算 | 放行 |
 
 需要确认的工具会在界面里弹出权限卡：**允许**（仅这一次）/ **总是允许**（本会话后续同类操作放行，落会话规则）/ **拒绝**（结果回给模型，循环继续）。终端里是 `y` / `a` / `n` 确认。
 
@@ -62,8 +66,10 @@ npm run web       # 网页工作台 http://localhost:8787
 
 - **侧栏**：AuroraAgent 品牌、新建会话、会话列表（相对时间 + 模式 + 轮次）、当前模式；新会话的首条消息发出后，侧栏标题会按消息内容自动总结更新（默认本地推导，不调模型、不花额度；输入区也可切「模型总结」——每个新会话多一次小额请求，失败自动回退本地推导；你手动改过名的会话不被覆盖）
 - **对话区**：用户消息、流式回答、可折叠思考块、工具卡片（状态 / 参数 / 结果 / 差异）、内联权限卡、每轮用量脚注（tokens + 费用）；正文支持 LaTeX 公式渲染
-- **输入区**：自适应文本框、模型选择器（按提供方分组）、思考开关、模式切换、标题生成方式（本地总结 / 模型总结，会话级）、发送 / 停止
-- **设置弹层**：提供方管理（自定义上游）、开机自启开关、数据目录与版本
+- **输入区**：自适应文本框、`@` 文件 / 技能提及（只读搜索会话工作目录，调色板键盘可选）、模型选择器（按提供方分组）、思考开关、模式切换、标题生成方式（本地总结 / 模型总结，会话级）、发送 / 停止
+- **目标横幅**：有进行中的 Goal 时显示在对话区顶部——状态芯片、用量 / 预算、暂停 / 恢复 / 停止一键操作，等待授权 / 验证时显示「等待中」
+- **会话派生**：侧栏每会话可复制历史到新会话（新 id，原会话不动）
+- **设置弹层**：提供方管理（自定义上游）、开机自启开关、终端偏好（OSC 标题项序、系统通知时机 / 通道 / 事件；浏览器通知 opt-in 开关，默认关）、数据目录与版本
 - 设计令牌自原版迁移（暗色、强调蓝 `#4d8df6`）；零 emoji，图标一律内联 SVG；Markdown 为手写子集渲染器，不引第三方库
 
 开发态前端：`npm run dev:web`（vite 监听 5173，`/api` 代理到 8787）；改完前端 `npm run build:web` 产出即被 `web.mjs` 以 `/app/` 服务（哈希资产长缓存 + SPA 回退 + 防目录穿越）。
@@ -86,7 +92,7 @@ npm run web       # 网页工作台 http://localhost:8787
 
 ## 终端客户端
 
-`npm run chat` 或 `node chat.mjs`，与网页共用同一套 Loop、会话、账本（数据同目录，两端可交替使用）：思考过程暗色流式渲染、工具调用单行状态、权限 `y/n/a` 确认、恢复会话时打印最近几行 recap。提示符上方有状态栏（模型 · 模式 · 思考 · 权限 · tokens/费用）；`/sessions` `/harness` `/theme` 无参数时弹出可搜索选择器（`↑↓` 移动、`←→` 翻页、输入即过滤、`Enter` 选中、`Esc` 取消），终端太窄或非 TTY 时自动退化为编号列表。配色走语义主题（`AURORAAGENT_THEME=dark|light|auto` 或 `/theme` 切换），规范见文档站 `docs-site/zh/reference/tui-design.md`。
+`npm run chat` 或 `node chat.mjs`，与网页共用同一套 Loop、会话、账本（数据同目录，两端可交替使用）：思考过程暗色流式渲染、工具调用单行状态、权限 `y/n/a` 确认、恢复会话时打印最近几行 recap。提示符上方有状态栏（模型 · 模式 · 思考 · 权限 · tokens/费用）；`/sessions` `/harness` `/theme` 无参数时弹出可搜索选择器（`↑↓` 移动、`←→` 翻页、输入即过滤、`Enter` 选中、`Esc` 取消），终端太窄或非 TTY 时自动退化为编号列表。配色走语义主题（`AURORAAGENT_THEME=dark|light|auto` 或 `/theme` 切换），规范见文档站 `docs-site/zh/reference/tui-design.md`。终端标题按 `tui.terminalTitle` 项序实时改写（`状态 | 会话名 | AuroraAgent`，退出 / 挂起清空）；任务完成 / 失败 / 等待授权 / 等待提问可经 OSC9 / OSC777 / bel 发系统通知（`tui.notifications` 三档，设置页「终端」面板配置）；有进行中的目标时状态栏显示用量芯片（`12.5K / 50.0K · 2m30s`）。
 
 | 命令 | 作用 |
 | --- | --- |
@@ -96,6 +102,8 @@ npm run web       # 网页工作台 http://localhost:8787
 | `/harness <minimal\|standard\|ultimate>` | 切换模式（无参数弹出选择器） |
 | `/theme <dark\|light\|auto>` | 切换终端主题（无参数弹出选择器） |
 | `/title <local\|model>` | 标题生成方式：local 本地推导零成本 / model 调模型总结（每个新会话多一次小额请求，失败自动回退；无参数查看当前值） |
+| `/goal` | 目标模式：无参看状态；`/goal pause\|resume\|stop`；`/goal budget <正整数>\|clear` 改 token 预算（纪元不符 409，可重新武装预算耗尽的目标） |
+| `/btw <问题>` | 侧边对话：继承当前会话历史开聊，不落盘不进 `/sessions`；`Ctrl+/` 切换、空提示符 `Ctrl+C` 丢弃 |
 | `/plan on\|off` | 计划模式开关（默认关；开启后下一轮先出计划，批准才执行） |
 | `/mcp` | MCP 服务器与工具状态（实验特性，需 `AURORAAGENT_EXPERIMENTAL_MCP=1`） |
 | `/<技能名>` | 技能派生命令：把该技能正文作为指令注入下一轮（与网页斜杠调色板同源） |
@@ -117,12 +125,19 @@ Agent 运行时（`/api/agent/*`，单活跃 turn：已有 turn 在跑时返回 
 | `GET /api/agent/sessions/:id` | 会话详情（meta + 记录投影） |
 | `PATCH /api/agent/sessions/:id` | 热切换 harness / 改名 / 换模型 / 标题生成方式 titleMode（下一轮生效；未知模式与非法模型 ID 返回 400 且不改动会话） |
 | `DELETE /api/agent/sessions/:id` | 删除会话 |
+| `POST /api/agent/sessions/:id/fork` | 派生会话：复制 meta 与全部转录到新会话（goal 不随复制） |
 | `POST /api/agent/turn` | 发起一轮对话，SSE 事件流（事件协议见上）；会话仍是默认名时，首轮总结出标题并推送 `session_renamed`（titleMode 按请求体 > 会话 meta > 全局配置解析） |
 | `POST /api/agent/abort` | 中止当前 turn，保留已生成内容 |
 | `POST /api/agent/permission` | 权限决策回传：`{requestId, decision: 'allow'\|'deny'\|'always'}` |
 | `POST /api/agent/plan` | 计划决策回传：`{sessionId, requestId, approve: true\|false}` |
 | `GET /api/agent/skills` | 技能目录（内置 + 用户，name + description + 来源） |
 | `GET /api/agent/harnesses` | 三档模式契约 |
+| `GET /api/agent/goal/:id` | 读会话目标（无目标回 `{ goal: null }`） |
+| `POST /api/agent/goal` | 创建目标（未完成目标已存在时 409 `GOAL_STATUS_CONFLICT`） |
+| `POST /api/agent/goal/pause` · `/resume` · `/stop` | 目标用户面迁移（对 complete / budget_limited 恢复 active 拒绝 409） |
+| `POST /api/agent/goal/budget` | 改 token 预算（纪元不符 409 `GOAL_STALE`；抬高或清零可重新武装 budget_limited） |
+| `GET /api/files/search?sessionId=&q=` | 会话工作目录内只读文件搜索（路径禁锢，跳过依赖目录） |
+| `GET/POST /api/settings/tui` | 终端偏好读写（标题项序 + 通知三档；坏值 400） |
 
 MCP 实验面（`AURORAAGENT_EXPERIMENTAL_MCP=1` 门控，未开启 404 并附开启指引）：`GET /api/mcp/servers`、`POST /api/mcp/servers`、`DELETE /api/mcp/servers/:id`、`POST /api/mcp/servers/:id/probe`（测试连接并列举工具）。
 
@@ -134,11 +149,12 @@ MCP 实验面（`AURORAAGENT_EXPERIMENTAL_MCP=1` 门控，未开启 404 并附�
 | --- | --- |
 | API Key / 模型 / 温度等配置 | `~/Library/Application Support/AuroraAgent/auroraagent.config.json` |
 | 会话（meta + 追加式转录） | `~/Library/Application Support/AuroraAgent/sessions/<id>.meta.json` + `.jsonl` |
+| 目标（一会话一个，原子落盘） | `~/Library/Application Support/AuroraAgent/goals/<sessionId>.json` |
 | 用量账本（含被中止的请求） | `~/Library/Application Support/AuroraAgent/usage.jsonl` |
 | 自定义提供方（Key / 端点 / 模型目录 / 单价） | `~/Library/Application Support/AuroraAgent/providers.json` |
 | 服务日志 | `~/Library/Logs/com.auroraagent.app.log` |
 
-数据目录三级回退：`AURORAAGENT_DATA_DIR` 环境变量 → 同目录已存在 `auroraagent.config.json` 时用当前目录（源码开发态）→ `~/Library/Application Support/AuroraAgent`（App 态）。`auroraagent.config.json`、`usage.jsonl`、`providers.json`、`sessions/` 永不进仓库。
+数据目录三级回退：`AURORAAGENT_DATA_DIR` 环境变量 → 同目录已存在 `auroraagent.config.json` 时用当前目录（源码开发态）→ `~/Library/Application Support/AuroraAgent`（App 态）。`auroraagent.config.json`、`usage.jsonl`、`providers.json`、`mcp.json`、`sessions/`、`goals/` 永不进仓库。
 
 > 5.0.0 更名迁移：首次运行会把旧目录 `~/Library/Application Support/ModelTester` 整体搬迁到新目录（Key 与账本保留），旧 LaunchAgent label `com.modeltester.app` 在重新安装服务时自动卸载。
 
@@ -199,7 +215,7 @@ Bundle 结构：
 npm run docs:dev    # 本地起文档站
 ```
 
-- **指南**：快速开始 / Agent Loop / 网页工作台 / 终端客户端 / 技能 / MCP / 自定义提供方
+- **指南**：快速开始 / Agent Loop / Goal 目标模式 / 网页工作台 / 终端客户端 / 技能 / MCP / 自定义提供方
 - **速查**：斜杠命令 / HTTP API / 配置项 / 终端设计规范（对话框与选择器的单一真值源）
 - **发布笔记**：`npm run docs:notes` 从 git 历史生成，里程碑段落可手写补充
 - **里程碑变更**：根目录 `CHANGELOG.md`（Keep a Changelog 格式，逐提交细节走发布笔记页）
@@ -230,10 +246,11 @@ npm run docs:dev    # 本地起文档站
 
 ## 当前状态（实测打通）
 
-- `npm test` 213/213 通过（mock 上游，不花额度，含仓库守卫：零 emoji / TUI 颜色单一真值源 / 对比度 / 行数预算 / 文档站结构）；`npm run check` 真实 API 连通（Key 有效 + 模型目录 + 测试请求）
-- Agent e2e 覆盖：会话 CRUD；完整 turn（工具调用 → 权限允许 → workspace 落盘 → 二轮出终稿）；权限拒绝后循环继续；路径穿越拒绝；shell 执行与超时；turn 中途 abort；harness 列表；上下文压缩触发；每轮用量记账；技能斜杠注入与 skill 工具加载；todo 维护；edit_file diff 回传；计划批准 / 驳回两阶段；首条消息自动总结会话标题（默认名才套用、事件推送、落元信息；local 本地推导与 model 调模型两路，模型失败回退本地、成本记 purpose=title 账）；task 派发子代理并汇总（子会话可查）；MCP 注册与工具调用（实验）
+- `npm test` 266/266 通过（mock 上游，不花额度，含仓库守卫：零 emoji / TUI 颜色单一真值源 / 对比度 / 行数预算 / 文档站结构）；`npm run check` 真实 API 连通（Key 有效 + 模型目录 + 测试请求）
+- 性能基准：`npm run bench`（basic 套件：startup / upstream-100 / history-300 三场景，采样 wall / CPU / peak-RSS），方法论与本地基线见 `docs/perf-baseline.md`，只作回归参考不作门禁
+- Agent e2e 覆盖：会话 CRUD；完整 turn（工具调用 → 权限允许 → workspace 落盘 → 二轮出终稿）；权限拒绝后循环继续；路径穿越拒绝；shell 执行与超时；turn 中途 abort；harness 列表；上下文压缩触发；每轮用量记账；技能斜杠注入与 skill 工具加载；todo 维护；edit_file diff 回传；计划批准 / 驳回两阶段；首条消息自动总结会话标题（默认名才套用、事件推送、落元信息；local 本地推导与 model 调模型两路，模型失败回退本地、成本记 purpose=title 账）；task 派发子代理并汇总（子会话可查）；MCP 注册与工具调用（实验）；Goal 全链路（create_goal → 提案完成 / 预算触顶转 budget_limited + 收尾轮 / 空转续跑 / evaluator 裁决 met 与 not_met 连击两条路径）；Goal REST 冲突与纪元边界；会话派生逐条一致复制；`@` 提及时文件搜索与 404；终端偏好读写与坏值 400
 - 网页工作台经浏览器实测完整 turn：权限卡允许 → 写文件 → 二轮终稿 → 按轮分组的思考 / 工具 / 用量脚注
-- 终端实测：权限 y/n 两条路径、`/help` `/sessions` `/new` `/model` `/harness`、拒绝后续跑均正常
+- 终端实测：权限 y/n 两条路径、`/help` `/sessions` `/new` `/model` `/harness`、拒绝后续跑均正常；OSC 标题设置 / 清除、`/goal` 家族命令与状态栏目标芯片、`/btw` 侧边对话与 `Ctrl+/` 切换均经 PTY 实测
 - 自定义提供方：设置页可接任意 OpenAI 兼容网关或 Anthropic Messages 上游；账本按提供方单价计价（只填一侧时另一侧回退内置价）；内置 LongCat 请求载荷与接入前逐字节一致（有专门测试守着）
 - LaunchAgent `com.auroraagent.app`：running / managed，数据目录指向 `~/Library/Application Support/AuroraAgent`
 - UI：零 emoji（全 Bundle 代码 `Extended_Pictographic` 零匹配）；动画遵循 `modern-web-guidance`，全局 `prefers-reduced-motion` 降级

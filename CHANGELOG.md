@@ -2,6 +2,43 @@
 
 本文件记里程碑版本（Keep a Changelog 格式，中文）。逐提交的发布笔记由 `npm run docs:notes` 从 git 历史生成，进文档站 `release-notes` 页。
 
+## [7.0.0] - 2026-09-27
+
+以 MiniMax-code 为范本的全面升级：goal 目标模式为主峰，辅以性能基准方法论、终端能力面扩展、前端 UX 补强与文档工程同步。后端仍为零依赖 Node 内置模块，macOS 单用户定位、LaunchAgent 常驻、厂商事实层（模型 ID / `PRICE` / 纯色结论）均不变；缺省行为与 6.x 一致，新能力全部可选开启。
+
+### Goal 目标模式（主峰）
+
+- 一会话一目标（`<数据目录>/goals/<sessionId>.json` 原子落盘，`updatedAt` 兼作 CAS 决策纪元）；六态状态机 `active / paused / blocked / complete / budget_limited / usage_limited`，statusReason 闭集，终态停止自动续跑
+- 模型侧三工具 `create_goal` / `update_goal` / `get_goal`（名字与 schema 对齐 codex / minimax-code，仅 Standard / Ultimate 收录）；`update_goal` 提案模式与预算模式严格分离，预算变更必须带新鲜 `get_goal` 快照（纪元不符 409）
+- 三维预算（token / 续跑轮次 / 轮内活跃秒数）+ 触顶自动迁移与唯一无工具收尾轮；抬高或清零预算可重新武装 `budget_limited(token)`
+- 双熔断：归一化回复指纹 + 无工具提交轮共享阈值，互不累加，触发转 `paused(no_progress)`
+- 验证三档 `none / evaluator / subagent`：evaluator 走同路由小快模型低温裁决（maxTokens 4096、超时 60s、重试封顶 1）；met → `complete(verifier_met)`，not_met 连击 → `blocked(verifier_impossible)`，验证器不可用 → `paused(verifier_unavailable)` 不静默放行
+- 轮内自动续跑（适配单 SSE turn 模型，不建队列子系统）；`executionWait` 随 `goal_wait_changed` 发布，两端渲染「等待中」
+- 双端操作：`/goal` 家族终端命令 + footer 用量芯片；REST `GET /api/agent/goal/:id` 与 `POST /api/agent/goal/{,pause,resume,stop,budget}`；网页 GoalBanner；`goal_created` 等四类事件两端共用
+
+### 性能基准与热点优化
+
+- `tools/perf/` 基准设施：可播大上下文的 SSE mock、startup / upstream-100 / history-300 三场景、临时数据目录拉起真实服务采样 wall / CPU / peak-RSS，输出 JSON + Markdown（`npm run bench` / `bench:smoke` / `bench:full`，本地回归参考非门禁）
+- 四项热点优化：`util/stream.mjs` SSE 泵背压 pause/resume、`util/agent/context.mjs` tools JSON 按 (harness, extraTools 签名) 缓存、`util/agent/session.mjs` jsonl 投影按 mtime+size 失效缓存、`web.mjs` 静态资产 304；方法论与前后数字落 `docs/perf-baseline.md`
+
+### 终端 CLI 能力面
+
+- OSC 终端标题（`tui.terminalTitle` 项序，退出 / 挂起清除；挂起经不可捕获 SIGSTOP 真正停下）
+- 系统通知三通道（OSC9 / OSC777 / bel，`tui.notifications` 的 when × method × events；unfocused 经 osascript 尽力焦点探测，失败按未聚焦）
+- `/btw` 侧边对话：继承主会话自洽历史前缀，内存门面不落盘不进 `/sessions`，`Ctrl+/` 无污染切换
+- `/goal` 家族命令与状态栏目标用量芯片
+
+### 前端 UI/UX
+
+- Composer `@` 提及：`GET /api/files/search` 只读搜索会话工作目录（路径禁锢、跳过依赖目录），MentionPalette 调色板（150ms 防抖 + 键盘导航）
+- 会话派生：`POST /api/agent/sessions/:id/fork` 复制 meta 与全部转录到新会话（goal 不随复制），侧栏入口
+- 设置页「终端」面板：OSC 标题项序、系统通知三档（服务端配置 `GET/POST /api/settings/tui`）、浏览器 Notification opt-in 开关（默认关）
+
+### 文档系统
+
+- 新增 Goal 模式指南中英双页；速查页同步 goal / tui 配置字段表、goal REST 与文件搜索等新路由、`/goal` `/btw` 命令、OSC 标题 / 通知 / footer 芯片规范
+- 测试基线 266/266；mock 触发词新增 `USE_GOAL` / `USE_GOAL_BUDGET` / `USE_GOAL_IDLE` / `USE_GOAL_VERIFY_MET` / `USE_GOAL_VERIFY_NOTMET`
+
 ## [6.0.0] - 2026-09-27
 
 对标 kimi-code 能力模型的全面升级。后端仍为零依赖 Node 内置模块，macOS 单用户定位、LaunchAgent 常驻、厂商事实层（模型 ID / `PRICE` / 纯色结论）均不变；缺省行为与 5.x 一致，新能力全部可选开启。
