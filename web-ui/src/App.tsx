@@ -10,9 +10,10 @@ import { Composer } from './components/Composer';
 import { SettingsDialog } from './components/SettingsDialog';
 import { projectRecords } from './projection';
 import {
-  abortTurn, createSession, deleteSession, forkSession, getGoal, getSession, getSettings, goalAction, listHarnesses, listModels, listSkills,
-  listProviders, listSessions, patchSession, respondPermission, respondPlan, runTurn,
+  abortTurn, clearGoal, createGoal, createSession, deleteSession, editGoal, forkSession, getGoal, getSession, getSettings, goalAction,
+  listHarnesses, listModels, listSkills, listProviders, listSessions, patchSession, respondPermission, respondPlan, runTurn,
 } from './api';
+import { GOAL_COMMAND_HELP, formatGoalReceipt, formatGoalSummary, parseGoalCommand } from '../../util/agent/goal/command.mjs';
 import type { AgentEvent, GoalState, Harness, LiveTurn, ModelInfo, MsgPart, MsgView, PlanView, ProviderRow, SessionMeta, SettingsInfo, TodoItem, ToolView, SkillRow } from './types';
 
 const planView = (text: string, decided: PlanView['decided']): PlanView => ({ text, decided });
@@ -73,6 +74,7 @@ export default function App() {
   const [live, setLive] = useState<LiveTurn | null>(null);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [goal, setGoal] = useState<GoalState | null>(null);
+  const [goalPrefill, setGoalPrefill] = useState({ text: '', nonce: 0 });
   const [permMode, setPermMode] = useState('ask_when_needed');
   const [titleMode, setTitleMode] = useState('local');
   const [planOn, setPlanOn] = useState(false);
@@ -235,6 +237,63 @@ export default function App() {
     setLive((l) => (l && l.plan ? { ...l, plan: { ...l.plan, decided: decision === 'approve' ? 'approved' : 'rejected' } } : l));
   };
 
+  // 目标完成回执：同一 goalId 从非 complete 迁到 complete 时贴一条系统消息（会话切换不误触发）
+  const prevGoal = useRef<{ id: string; status: string } | null>(null);
+  useEffect(() => {
+    const cur = goal ? { id: goal.goalId, status: goal.status } : null;
+    if (goal && cur && prevGoal.current && cur.id === prevGoal.current.id && cur.status === 'complete' && prevGoal.current.status !== 'complete') {
+      setMessages((m) => [...m, { kind: 'system', key: `gr${goal.updatedAt}`, text: formatGoalReceipt(goal) }]);
+    }
+    prevGoal.current = cur;
+  }, [goal]);
+
+  /** /goal 斜杠命令：解析与终端 REPL 共用 command.mjs 单一事实源；执行走 /api/agent/goal* REST 面 */
+  const handleGoalCommand = (rawArgs: string) => {
+    if (!currentId) return;
+    const push = (text: string) => setMessages((m) => [...m, { kind: 'system', key: `g${Date.now()}`, text }]);
+    const fail = (e: unknown) => setError(`目标操作失败：${e instanceof Error ? e.message : String(e)}`);
+    const intent = parseGoalCommand(rawArgs);
+    // 有未完成目标时「设立」语义变为「改写目标文本」（与 MiniMax 客户端 setObjective 一致；创建的严格 409 由服务端守）
+    const unfinished = goal !== null && goal.status !== 'complete';
+    switch (intent.kind) {
+      case 'view':
+        if (!goal) { push('当前会话没有目标：输入 /goal <你想达成的目标> 设立'); return; }
+        push(formatGoalSummary(goal));
+        return;
+      case 'help':
+        push(GOAL_COMMAND_HELP);
+        return;
+      case 'error':
+        push(intent.message);
+        return;
+      case 'edit':
+        if (!goal) { push('当前会话没有目标'); return; }
+        setGoalPrefill({ text: `/goal ${goal.objective}`, nonce: Date.now() });
+        return;
+      case 'clear':
+        clearGoal(currentId).then((r) => { setGoal(null); push(r.cleared ? '目标已移除' : '当前会话没有目标'); }).catch(fail);
+        return;
+      case 'create':
+        (unfinished ? editGoal(currentId, intent.objective) : createGoal(currentId, intent.objective, intent.tokenBudget))
+          .then((r) => {
+            setGoal(r.goal);
+            push(`${unfinished ? '目标文本已更新' : '新目标已设立'}：${intent.objective}${intent.tokenBudget != null ? ` · 预算 ${intent.tokenBudget} tokens` : ''}`);
+          }).catch(fail);
+        return;
+      case 'budget':
+        if (!goal) { push('当前会话没有目标'); return; }
+        goalAction(currentId, 'budget', { tokenBudget: intent.tokenBudget, expectedGoalId: goal.goalId, expectedUpdatedAt: goal.updatedAt })
+          .then((r) => {
+            setGoal(r.goal);
+            push(`预算已${intent.tokenBudget == null ? '清除' : `设为 ${intent.tokenBudget}`}`);
+          }).catch(fail);
+        return;
+      default:
+        goalAction(currentId, intent.kind).then((r) => setGoal(r.goal)).catch(fail);
+        return;
+    }
+  };
+
   const decideGoal = async (action: 'pause' | 'resume' | 'stop') => {
     if (!currentId) return;
     try {
@@ -379,6 +438,8 @@ export default function App() {
         <Composer
           busy={busy}
           onSend={send}
+          onGoalCommand={handleGoalCommand}
+          goalPrefill={goalPrefill}
           onStop={stop}
           models={models}
           modelStatus={modelStatus}

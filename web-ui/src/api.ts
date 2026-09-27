@@ -50,8 +50,23 @@ export const abortTurn = (sessionId: string) => api<{ aborted: boolean }>('/api/
 export const getGoal = (sessionId: string) => api<{ goal: GoalState | null }>(`/api/agent/goal/${sessionId}`);
 export const searchFiles = (sessionId: string, q: string) =>
   api<{ files: string[] }>(`/api/files/search?sessionId=${encodeURIComponent(sessionId)}&q=${encodeURIComponent(q)}`);
-export const goalAction = (sessionId: string, action: 'pause' | 'resume' | 'stop') =>
-  api<{ goal: GoalState }>(`/api/agent/goal/${action}`, { method: 'POST', body: JSON.stringify({ sessionId }) });
+/** 设立目标（未完成目标存在时服务端 409 GOAL_STATUS_CONFLICT，由调用方先选 edit） */
+export const createGoal = (sessionId: string, objective: string, tokenBudget?: number | null) =>
+  api<{ goal: GoalState }>('/api/agent/goal', {
+    method: 'POST',
+    body: JSON.stringify({ sessionId, objective, ...(tokenBudget === undefined ? {} : { tokenBudget }) }),
+  });
+/** 改写未完成目标的目标文本（空白 400 GOAL_BAD_OBJECTIVE / 已完成 409） */
+export const editGoal = (sessionId: string, objective: string) =>
+  api<{ goal: GoalState }>('/api/agent/goal/edit', { method: 'POST', body: JSON.stringify({ sessionId, objective }) });
+/** 移除目标（幂等：没有目标也回 200，cleared=false） */
+export const clearGoal = (sessionId: string) =>
+  api<{ cleared: boolean }>('/api/agent/goal/clear', { method: 'POST', body: JSON.stringify({ sessionId }) });
+/** 用户面目标动作；budget 需带新鲜快照的 expectedGoalId + expectedUpdatedAt（纪元不符 409 GOAL_STALE） */
+export const goalAction = (sessionId: string, action: 'pause' | 'resume' | 'stop' | 'budget' | 'edit', extra: {
+  tokenBudget?: number | null; expectedGoalId?: string; expectedUpdatedAt?: number; objective?: string;
+} = {}) =>
+  api<{ goal: GoalState }>(`/api/agent/goal/${action}`, { method: 'POST', body: JSON.stringify({ sessionId, ...extra }) });
 
 /** 跑一个 turn：逐事件回调，流结束即 resolve */
 export async function runTurn(body: { sessionId: string; input: string; thinking?: boolean; model?: string; provider?: string }, onEvent: (ev: AgentEvent) => void): Promise<void> {

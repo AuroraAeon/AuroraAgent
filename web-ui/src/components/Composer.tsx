@@ -291,6 +291,10 @@ function TitlePicker({ mode, onMode }: { mode: string; onMode: (m: string) => vo
 type Props = {
   busy: boolean;
   onSend: (text: string) => void;
+  /** /goal 斜杠命令：整段以 /goal 开头时拦截，交 App 走共享解析器（不当作普通消息发送） */
+  onGoalCommand?: (rawArgs: string) => void;
+  /** /goal edit 回填：nonce 变化即写入输入框并聚焦（续编目标文本） */
+  goalPrefill?: { text: string; nonce: number };
   onStop: () => void;
   models: ModelInfo[];
   modelStatus: string;
@@ -315,7 +319,7 @@ type Props = {
 
 export function Composer({
   busy, onSend, onStop, models, modelStatus, model, onModel, providers, thinking, onThinking, harnesses, harness, onHarness, disabled,
-  permissionMode, onPermissionMode, titleMode, onTitleMode, planMode, onPlanMode, skills, sessionId,
+  permissionMode, onPermissionMode, titleMode, onTitleMode, planMode, onPlanMode, skills, sessionId, onGoalCommand, goalPrefill,
 }: Props) {
   const [text, setText] = useState('');
   const [skillIdx, setSkillIdx] = useState(0);
@@ -358,9 +362,25 @@ export function Composer({
   const submit = () => {
     const t = text.trim();
     if (!t || busy || disabled) return;
+    // /goal 家族命令走共享解析器（与终端 REPL 同一份 command.mjs 语义），不进普通消息通道
+    if (/^\/goal(\s|$)/.test(t) && onGoalCommand) {
+      onGoalCommand(t.slice('/goal'.length).trim());
+      setText('');
+      return;
+    }
     onSend(t);
     setText('');
   };
+
+  // /goal edit 回填：nonce 是每次回填的递增令牌，重复渲染不会覆盖用户正在输入的内容
+  const lastPrefillNonce = useRef(0);
+  useEffect(() => {
+    if (goalPrefill && goalPrefill.nonce !== lastPrefillNonce.current) {
+      lastPrefillNonce.current = goalPrefill.nonce;
+      setText(goalPrefill.text);
+      taRef.current?.focus();
+    }
+  }, [goalPrefill]);
 
   /** 把 @<query> 尾缀替换为 @路径 或 /技能名（后者即技能调用的既定形态） */
   const insertMention = (it: MentionItem) => {

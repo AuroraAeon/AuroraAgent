@@ -46,6 +46,8 @@ export const GOAL_STATUS_LABELS: Record<GoalStatus, string> = {
 export const GOAL_WAIT_LABELS: Record<string, string> = {
   permission: '等待授权', plan: '等待计划批准', verification: '独立验证中', unknown: '等待中',
 };
+/** 用户面目标动作全集（与 util/agent/goal/actions.mjs 的 action 参数一致；clear 走独立路由） */
+export type GoalUserAction = 'pause' | 'resume' | 'stop' | 'budget' | 'edit';
 /** 与后端 canTransition 同语义的用户面可用动作（complete / budget_limited 不给恢复入口） */
 export function goalActionsFor(status: GoalStatus): ('pause' | 'resume' | 'stop')[] {
   if (status === 'active') return ['pause', 'stop'];
