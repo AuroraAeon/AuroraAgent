@@ -148,7 +148,7 @@ Agent 运行时（`/api/agent/*`，单活跃 turn：已有 turn 在跑时返回 
 
 MCP 实验面（`AURORAAGENT_EXPERIMENTAL_MCP=1` 门控，未开启 404 并附开启指引）：`GET /api/mcp/servers`、`POST /api/mcp/servers`、`DELETE /api/mcp/servers/:id`、`POST /api/mcp/servers/:id/probe`（测试连接并列举工具）。
 
-模型速测底座（全部保持原样）：`POST /api/chat`（SSE 流式对话，`provider` 路由自定义上游）、`POST /api/abort`、`GET /api/models`（60s 缓存）、`GET/POST/PUT/DELETE /api/providers*`、`POST /api/providers/discover`、`GET /api/status` `/api/health`、`GET /api/usage`（`?lite=1` 只取汇总；默认另带近 30 天 `stats` 统计视图）、`GET/POST /api/settings`、`POST/GET/DELETE /api/logs/errors`（前端崩溃与未捕获错误的落盘与查看）、`GET /vendor/<name>.svg`。
+模型速测底座（全部保持原样）：`POST /api/chat`（SSE 流式对话，`provider` 路由自定义上游）、`POST /api/abort`、`GET /api/models`（60s 缓存）、`GET/POST/PUT/DELETE /api/providers*`、`POST /api/providers/discover`、`GET /api/status` `/api/health`、`GET /api/usage`（`?lite=1` 只取汇总；默认另带近 30 天 `stats` 统计视图）、`GET/POST /api/settings`、`POST/GET/DELETE /api/logs/errors`（前端崩溃与未捕获错误的落盘与查看）、`GET /api/update/check`（GitHub Releases 版本检查，6 小时缓存）、`GET /vendor/<name>.svg`。
 
 ## 数据与日志（与 App 解耦）
 

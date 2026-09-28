@@ -70,6 +70,58 @@ export function guardContrast() {
   }
 }
 
+
+/** 网页设计令牌对比度守卫：双主题的关键前景 / 背景组合都要达到可读阈值 */
+const TOKEN_BLOCKS = [['dark', ':root {'], ['light', ':root[data-theme="light"] {']];
+/** [前景, 背景, 阈值]：正文与语义色按 AA 4.5，最弱的 faint 元信息按 3.0（与原深色值同级） */
+const TOKEN_PAIRS = [
+  ['--text', '--bg', 4.5], ['--text', '--panel', 4.5], ['--text', '--code-bg', 4.5],
+  ['--dim', '--panel', 4.5], ['--dim', '--surface', 4.5],
+  ['--faint', '--panel', 3],
+  ['--accent', '--panel', 4.5], ['--accent-hi', '--panel', 4.5],
+  ['--ok-ink', '--panel', 4.5], ['--danger-ink', '--panel', 4.5], ['--think', '--panel', 3],
+  ['--diff-add-ink', '--panel', 4.5], ['--diff-del-ink', '--panel', 4.5],
+];
+
+function parseHexTokens(block) {
+  const out = {};
+  for (const m of block.matchAll(/(--[a-z0-9-]+)\s*:\s*(#[0-9a-fA-F]{3,8})\b/g)) out[m[1]] = m[2];
+  return out;
+}
+
+function channel(v) {
+  const c = v / 255;
+  return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+
+function luminance(hex) {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h.slice(0, 6);
+  const rgb = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16));
+  return 0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2]);
+}
+
+export function guardWebTokenContrast() {
+  const css = readFileSync(join(ROOT, 'web-ui', 'src', 'tokens.css'), 'utf8');
+  const issues = [];
+  for (const [name, marker] of TOKEN_BLOCKS) {
+    const start = css.indexOf(marker);
+    if (start < 0) throw new Error(`tokens.css 缺少 ${marker} 主题块`);
+    const block = css.slice(start, css.indexOf('\n}', start));
+    const tokens = parseHexTokens(block);
+    for (const [fg, bg, min] of TOKEN_PAIRS) {
+      const f = tokens[fg];
+      const b = tokens[bg];
+      if (!f || !b) { issues.push(`${name}: 缺 ${f ? bg : f}`); continue; }
+      const l1 = luminance(f);
+      const l2 = luminance(b);
+      const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+      if (ratio < min) issues.push(`${name} ${fg}/${bg} = ${ratio.toFixed(2)} < ${min}`);
+    }
+  }
+  if (issues.length) throw new Error(`网页令牌对比度不足: ${issues.join(', ')}`);
+}
+
 const LINE_BUDGET = 500;
 export function guardLineBudget() {
   const bad = [];
@@ -107,6 +159,7 @@ export function guardDocsSite() {
 }
 export const GUARDS = [
   ['产品源码零 emoji', guardNoEmoji],
+  ['网页设计令牌双主题对比度达标', guardWebTokenContrast],
   ['TUI 颜色单一真值源（仅 theme.mjs 出 SGR）', guardNoRawColorOutsideTheme],
   ['主题色板对比度达标', guardContrast],
   ['新模块行数预算 ≤500', guardLineBudget],

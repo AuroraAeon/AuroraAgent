@@ -247,7 +247,7 @@ const server = createServer(async (req, res) => {
   }
 
   // 错误日志（/api/logs/errors，实现见 util/errorlog.mjs）：前端全局捕获上报 + 设置页查看 / 清空
-  if (url === '/api/logs/errors' || url.startsWith('/api/logs/errors?')) {
+  if (url === '/api/logs/errors') { // url 已剥离查询串，limit 从 req.url 里取
     if (req.method === 'GET') {
       const limit = Number(new URL(req.url, 'http://localhost').searchParams.get('limit') || 50);
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
