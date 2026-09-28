@@ -19,7 +19,7 @@ Same-origin `/api/*`, all JSON; SSE frames are `event:` + `data:` lines.
 | `GET/POST /api/agent/sessions` | list / create (titleMode defaults to the global setting) |
 | `GET/PATCH/DELETE /api/agent/sessions/:id` | detail (`{ meta, records }`) / rename & switch (incl. titleMode, thinking) / delete |
 | `POST /api/agent/sessions/:id/fork` | fork a session: copies meta and full transcript into a new session (new id / timestamps / "（copy）" name suffix); goals are not copied |
-| `POST /api/agent/turn` | run a turn (SSE); single active turn (409); when the session still has the default name, the first round summarizes a title from the input and emits `session_renamed` (titleMode resolves as request body > session meta > global config) |
+| `POST /api/agent/turn` | run a turn (SSE); single active turn (409); when the session still has the default name, the first round summarizes a title from the input and emits `session_renamed` (titleMode resolves as request body > session meta > global config)  With `side:true` it runs a side conversation (`/btw`: in-memory facade, never persisted, no goal, no subagents, mutually exclusive with the main conversation) |
 | `POST /api/agent/abort` | abort, keeping generated content |
 | `POST /api/agent/permission` | `{ requestId, decision: allow/deny/always }` |
 | `POST /api/agent/plan` | `{ sessionId, decision: approve/reject }` |
@@ -36,6 +36,8 @@ Same-origin `/api/*`, all JSON; SSE frames are `event:` + `data:` lines.
 | `POST /api/agent/goal/clear` | idempotent removal, returns `{ cleared }` (200 even with no goal) |
 | `POST /api/agent/goal/pause` · `/resume` · `/stop` | user-side transitions; resuming `complete` / `budget_limited` to active is rejected with 409 |
 | `POST /api/agent/goal/budget` | set the token budget `{ sessionId, tokenBudget, expectedUpdatedAt }`; 409 `GOAL_STALE` on a stale epoch, 400 for an invalid budget |
+| `GET /api/agent/side/:sessionId` | read the side conversation (`/btw`) transcript; 404 when none exists |
+| `POST /api/agent/side/discard` | discard the side conversation (idempotent, returns `discarded`) |
 | `GET /api/agent/events?sessionId=` | cross-client goal event stream (SSE): pushes `goal_created` / `goal_status_changed` / `goal_cleared` immediately when another client (terminal / another tab) changes the goal via REST (goal events inside a turn still travel on the turn SSE); a comment frame flushes the headers on subscribe, auto-unsubscribe on close; 404 for unknown sessions |
 
 ## Settings

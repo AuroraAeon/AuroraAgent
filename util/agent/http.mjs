@@ -13,6 +13,7 @@ import { applyUserGoalAction, setUserGoalObjective, clearUserGoal, GOAL_BAD_INPU
 import { subscribeGoalEvents, publishGoalEvent } from './goal/bus.mjs';
 import { loadSkills, findSkill, skillInvocationText } from './skills.mjs';
 import { searchWorkspaceFiles } from './files.mjs';
+import { SideSession } from './side-session.mjs';
 import { PERMISSION_MODES, TITLE_MODES, experimentalEnabled } from '../config.mjs';
 import { McpRegistry } from '../mcp/registry.mjs';
 
@@ -49,6 +50,17 @@ export function createAgentApi(deps) {
   // 技能目录：内置 skills/ + 用户 <数据目录>/skills/（进程启动时加载一次）
   const skills = loadSkills({ userDir: join(dataDir, 'skills') });
   const activeTurns = new Map(); // sessionId -> { controller }
+  // 侧边对话（/btw）：mainSessionId -> SideSession 内存门面（继承主会话 meta 快照 + 自洽历史前缀）。
+  // 不落盘、不进 /sessions、不接管 goal、不派发子代理（SideSession.create 抛错），主会话存储零污染
+  const sides = new Map();
+  const sideStoreFor = (sessionId, meta) => {
+    let side = sides.get(sessionId);
+    if (!side) {
+      side = new SideSession(meta, { prefix: sessions.records(sessionId) });
+      sides.set(sessionId, side);
+    }
+    return side;
+  };
   const pendingPermissions = new Map(); // requestId -> { resolve, sessionId }
   const pendingPlans = new Map(); // sessionId -> { resolve }（计划模式等用户批准 / 驳回）
   // MCP 注册表（实验特性门控）：启用时后台连接已配置服务器并发现工具；单服务器失败不阻塞
@@ -105,7 +117,9 @@ export function createAgentApi(deps) {
       return json(res, 200, got);
     }
     if (sessionMatch && req.method === 'DELETE') {
-      return json(res, 200, { deleted: sessions.remove(sessionMatch[1]) });
+      const deleted = sessions.remove(sessionMatch[1]);
+      sides.delete(sessionMatch[1]); // 会话没了，侧边对话随之作废（防进程内驻留增长）
+      return json(res, 200, { deleted });
     }
     // 切换模式 / 改名 / 换模型：下一轮 turn 生效（进行中的 turn 不受影响）
     if (sessionMatch && req.method === 'PATCH') {
@@ -185,6 +199,22 @@ export function createAgentApi(deps) {
       pendingPlans.delete(String(body.sessionId || ''));
       pending.resolve(body.decision === 'approve' ? 'approve' : 'reject');
       return json(res, 200, { ok: true });
+    }
+
+    // ---------- 侧边对话 REST 面（/btw）：查转录 + 丢弃 ----------
+    // GET：turn 结束后前端凭它重投影侧边消息（投影与主会话同源）；POST discard 幂等
+    const sideMatch = /^\/api\/agent\/side\/([0-9a-f-]{36})$/.exec(url);
+    if (sideMatch && req.method === 'GET') {
+      const side = sides.get(sideMatch[1]);
+      if (!side) return json(res, 404, { error: { message: '当前会话没有侧边对话' } });
+      return json(res, 200, { records: side.records() });
+    }
+    if (req.method === 'POST' && url === '/api/agent/side/discard') {
+      const body = await readBody(req, 64 * 1024);
+      const sid = String(body.sessionId || '');
+      const dropped = sides.delete(sid);
+      log('info', '侧边对话已丢弃', { sessionId: sid, dropped });
+      return json(res, 200, { ok: true, discarded: dropped });
     }
 
     if (url === '/api/mcp/servers' && req.method === 'GET') {
@@ -309,6 +339,11 @@ export function createAgentApi(deps) {
       }
       const raw = String(body.input || '').trim();
       if (!raw) return json(res, 400, { error: { message: '输入不能为空' } });
+      // side=true 跑侧边对话：store 换内存门面、goalStore 置空（goal 工具自然摘除）；
+      // activeTurns 仍按 sessionId 键控，主 / 侧互斥（与终端 busy 语义一致）
+      const side = body.side === true;
+      const store = side ? sideStoreFor(sessionId, got.meta) : sessions;
+      const sessionMeta = side ? store.meta : got.meta;
       // 斜杠技能命令：/<技能名> [参数] → 技能正文注入（与终端同一规则，两端同源单点解析）
       const skillCmd = /^\/([A-Za-z0-9._-]+)[ \t]*([\s\S]*)$/.exec(raw);
       const hit = skillCmd ? findSkill(skills, skillCmd[1]) : null;
@@ -344,14 +379,14 @@ export function createAgentApi(deps) {
       };
       try {
         await runAgentTurn({
-          store: sessions, usage, session: got.meta, input, provider, model, harness,
+          store, usage, session: sessionMeta, input, provider, model, harness,
           builtinPrice, skills,
           gen: { maxTokens: cfg.maxTokens, temperature: cfg.temperature, thinkingOn: body.thinking !== false },
           emit, controller, permissionMode, planMode, titleMode, extraTools: mcpTools(),
           agentProxy: cfg.agentProxy,
           providerFailover: cfg.providerFailover, providerFailoverMaxAttempts: cfg.providerFailoverMaxAttempts,
           failoverCandidates,
-          goalStore: goals, goalCfg: cfg.goal,
+          goalStore: side ? null : goals, goalCfg: cfg.goal,
           requestPermission: ({ requestId }) => new Promise((resolve) => {
             pendingPermissions.set(requestId, { resolve, sessionId });
           }),

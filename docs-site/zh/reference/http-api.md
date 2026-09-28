@@ -19,7 +19,7 @@
 | `GET/POST /api/agent/sessions` | 会话列表 / 新建（titleMode 缺省继承全局配置） |
 | `GET/PATCH/DELETE /api/agent/sessions/:id` | 详情（`{ meta, records }`）/ 改名换模型换模式换标题生成方式 / 思考开关 / 删除 |
 | `POST /api/agent/sessions/:id/fork` | 派生会话：复制 meta 与全部转录到新会话（新 id / 新时间戳 / 名字加「副本」后缀），goal 不随复制 |
-| `POST /api/agent/turn` | 跑一个 turn（SSE 事件流）；单活跃 turn（409）；会话仍是默认名时，首轮总结标题并推送 `session_renamed`（titleMode 按请求体 > 会话 meta > 全局配置解析） |
+| `POST /api/agent/turn` | 跑一个 turn（SSE 事件流）；单活跃 turn（409）；`side:true` 跑侧边对话（`/btw`，内存门面、不落盘、不接管 goal、不派发子代理，与主对话互斥）；会话仍是默认名时，首轮总结标题并推送 `session_renamed`（titleMode 按请求体 > 会话 meta > 全局配置解析） |
 | `POST /api/agent/abort` | 中止 turn（保留已生成内容） |
 | `POST /api/agent/permission` | 权限决策 `{ requestId, decision: allow/deny/always }` |
 | `POST /api/agent/plan` | 计划决策 `{ sessionId, decision: approve/reject }` |
@@ -36,6 +36,8 @@
 | `POST /api/agent/goal/clear` | 幂等移除目标，回 `{ cleared }`（无目标也 200） |
 | `POST /api/agent/goal/pause` · `/resume` · `/stop` | 用户面迁移；对 `complete` / `budget_limited` 恢复 active 拒绝 409 |
 | `POST /api/agent/goal/budget` | 改 token 预算 `{ sessionId, tokenBudget, expectedUpdatedAt }`；纪元不符 409 `GOAL_STALE`，预算非法 400 |
+| `GET /api/agent/side/:sessionId` | 查询侧边对话（`/btw`）转录；没有侧边对话 404 |
+| `POST /api/agent/side/discard` | 丢弃侧边对话（幂等，回 `discarded`） |
 | `GET /api/agent/events?sessionId=` | 跨客户端 goal 事件流（SSE）：另一客户端（终端 / 另一标签页）经 REST 改动目标时即时推送 `goal_created` / `goal_status_changed` / `goal_cleared`（turn 内的 goal 事件仍走 turn SSE）；订阅即写 SSE 注释帧冲掉响应头，连接关闭自动退订；未知会话 404 |
 
 ## 设置

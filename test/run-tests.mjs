@@ -3645,6 +3645,84 @@ await test('Agent turn：权限等待期间并发发起返回 409', async () => 
   assert(tail.some((e) => e.type === 'turn_completed'), '拒绝后第一个 turn 应收尾');
 });
 
+// ---------- 侧边对话（/btw）：内存门面 turn、主 / 侧互斥、不派发子代理 ----------
+await test('侧边对话 turn：继承主会话历史前缀、不污染主会话转录、可查可弃', async () => {
+  const s = await createAgentSession();
+  await drainAgentStream(openAgentStream(await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: '主会话前缀标记 ALPHA' }),
+  })));
+  const before = (await (await fetch(`${AGENT}/sessions/${s.id}`)).json()).records;
+  const side = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: '侧边问题 BETA', side: true }),
+  });
+  const all = await drainAgentStream(openAgentStream(side));
+  assert(all.some((e) => e.type === 'turn_completed'), '侧边 turn 应正常收尾');
+  const after = (await (await fetch(`${AGENT}/sessions/${s.id}`)).json()).records;
+  eq(after.length, before.length, '主会话转录不应被侧边对话写入');
+  assert(!after.some((r) => r.t === 'user' && String(r.text).includes('BETA')), '侧边提问不应落进主会话');
+  const got = await (await fetch(`${AGENT}/side/${s.id}`)).json();
+  assert(got.records.some((r) => r.t === 'user' && String(r.text).includes('BETA')), '侧边转录应含侧边提问');
+  // 侧边 turn 的请求应同时带上主会话前缀与新问题（SideSession 继承 completePrefix）
+  const lastReq = mock.state.requests[mock.state.requests.length - 1].body;
+  assert(lastReq.includes('ALPHA') && lastReq.includes('BETA'), '侧边 turn 请求应带上前缀与新问题');
+  const sideTools = JSON.parse(lastReq).tools.map((t) => t.function.name);
+  assert(!sideTools.includes('create_goal') && !sideTools.includes('update_goal'), '侧边对话不接管 goal，目标工具不应进请求 tools[]');
+  const dropped = await (await fetch(`${AGENT}/side/discard`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: s.id }),
+  })).json();
+  eq(dropped.ok, true, '应回 ok');
+  eq(dropped.discarded, true, '应回报已丢弃');
+  eq((await fetch(`${AGENT}/side/${s.id}`)).status, 404, '丢弃后查询应 404');
+  eq((await (await fetch(`${AGENT}/side/discard`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: s.id }),
+  })).json()).discarded, false, '重复丢弃应幂等');
+});
+
+await test('侧边对话不派发子代理：task 工具直接失败并说清原因', async () => {
+  const s = await createAgentSession();
+  const all = await drainAgentStream(openAgentStream(await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_SWARM 派个活下去', side: true }),
+  })));
+  const failed = all.find((e) => e.type === 'tool_event' && e.phase === 'failed');
+  assert(failed, '侧边对话里派发子代理应失败');
+  assert(String(failed.output).includes('侧边对话不派发子代理'), '失败原因应说清并给出下一步动作');
+});
+
+await test('侧边对话与主对话互斥：侧边 turn 活跃时主 turn 409', async () => {
+  const s = await createAgentSession();
+  const stream = openAgentStream(await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_TOOL_WRITE 占位', side: true }),
+  }));
+  const head = await drainAgentStream(stream, { until: (ev) => ev.type === 'tool_event' && ev.phase === 'confirmation_needed' });
+  assert(head.some((e) => e.phase === 'confirmation_needed'), '侧边 turn 应进入权限等待');
+  const main = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: '主对话插队' }),
+  });
+  eq(main.status, 409, '侧边 turn 活跃时主 turn 应 409');
+  await fetch(`${AGENT}/permission`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId: head.find((e) => e.phase === 'confirmation_needed').requestId, decision: 'deny' }),
+  });
+  const tail = await drainAgentStream(stream);
+  assert(tail.some((e) => e.type === 'turn_completed'), '拒绝后侧边 turn 应收尾');
+});
+
+await test('删除会话同步作废其侧边对话', async () => {
+  const s = await createAgentSession();
+  await drainAgentStream(openAgentStream(await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: '开一个侧边对话', side: true }),
+  })));
+  eq((await fetch(`${AGENT}/side/${s.id}`)).status, 200, '侧边对话应在场');
+  await fetch(`${AGENT}/sessions/${s.id}`, { method: 'DELETE' });
+  eq((await fetch(`${AGENT}/side/${s.id}`)).status, 404, '删除会话后侧边对话应随之失效');
+});
+
 await test('Agent turn：中断保留已生成内容且会话可继续', async () => {
   const s = await createAgentSession();
   const resp = await fetch(`${AGENT}/turn`, {
