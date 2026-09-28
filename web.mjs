@@ -13,6 +13,7 @@ import { exec, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { UsageLedger } from './util/usage.mjs';
 import { ErrorLog, createDeduper } from './util/errorlog.mjs';
+import { checkUpdate } from './util/update.mjs';
 import { SERVICE_LOG, servicePid, isManaged, autostartInstalled } from './util/service.mjs';
 import { ProviderStore, ProviderError, handleProviderApi } from './util/providers.mjs';
 import { pumpSse, pumpTranslated } from './util/stream.mjs';
@@ -365,6 +366,15 @@ const server = createServer(async (req, res) => {
       }
     });
     return;
+  }
+
+  // 版本更新检查（GET /api/update/check，实现见 util/update.mjs）：只告知不自动安装，
+  // 结果缓存 6 小时（<数据目录>/update-check.json），?force=1 强制重查
+  if (req.method === 'GET' && (url === '/api/update/check' || url.startsWith('/api/update/check?'))) {
+    const force = new URL(req.url, 'http://localhost').searchParams.has('force');
+    const r = await checkUpdate({ current: VERSION, dataDir: DATA_DIR, force });
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    return res.end(JSON.stringify(r));
   }
 
   // 终端 TUI 偏好（/api/settings/tui，实现见 util/tui/settings-api.mjs；终端启动时读取一次）

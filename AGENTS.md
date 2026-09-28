@@ -34,6 +34,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 | `util/wire.mjs` | 协议适配：OpenAI 兼容与 Anthropic Messages 的 URL 拼接、请求拼装（含 `tools` / `tool_choice`）、Anthropic SSE 帧翻译成 OpenAI 帧（含 `tool_use` / `input_json_delta`） |
 | `util/stream.mjs` | SSE 透传 / 翻译泵（逐帧转发 + 用量累计 + 背压 pause/resume，供 `/api/chat`）；`consumeAgentStream` 增量累积 `tool_calls` delta 供 Loop 使用 |
 | `util/usage.mjs` | 用量账本：逐行追加 + 汇总出口 + `stats()` 统计视图（近 30 天逐日补零、按模型 / 提供方 / 用途 / 会话构成，供设置页用量面板） |
+| `util/update.mjs` | 版本更新检查：查 GitHub Releases latest 比对本地版本（三段语义、忽略 v 前缀与预发布后缀），结果缓存 6 小时（`<数据目录>/update-check.json`），失败不缓存、不抛错；只告知不自动安装，`GET /api/update/check`（`?force=1` 强制重查） |
 | `util/errorlog.mjs` | 错误日志：`<数据目录>/logs/errors.log` JSON Lines 环形保留（200 行）、kind 白名单归一、detail 截断 4KB、写失败静默；`POST/GET/DELETE /api/logs/errors` 供前端全局捕获上报与设置页查看清空，同 kind+message 30 秒去重 |
 | `util/service.mjs` | LaunchAgent 生命周期：plist 生成 / 安装 / 卸载 / 状态 |
 | `util/agent/events.mjs` | AgentEvent 协议（OpenBitFun AgenticEvent 精简子集）+ SSE 帧封装；`session_renamed` 供两端实时刷新自动总结出的标题；`goal_created` / `goal_status_changed` / `goal_usage_updated` / `goal_wait_changed` / `goal_cleared` 五类 goal 事件 |
@@ -152,7 +153,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 - mock 触发词：消息含 `USE_TOOL` → 模型发起 `read_file mock.txt`；含 `USE_TOOL_WRITE` → 发起 `write_file written_by_agent.txt`；`FLAKY` 断网重试；`SLOW` 慢速；`USE_SKILL` / `USE_TODO` / `USE_EDIT` / `USE_PLAN` / `USE_SWARM` / `USE_MCP` 分别触发技能加载 / 待办维护 / diff 回传 / 计划两阶段 / 子代理派发 / MCP 工具调用；`USE_GOAL` → create_goal 全链路；`USE_GOAL_BUDGET` → 预算触顶转 budget_limited + 收尾轮；`USE_GOAL_IDLE` → 空转轮后续跑；`USE_GOAL_VERIFY_MET` / `USE_GOAL_VERIFY_NOTMET` → evaluator 裁决 met 转 complete(verifier_met) / not_met 连击转 paused(no_progress)（对齐 MiniMax repeatedGap）；`USE_GOAL_VERIFY_RETRY` → evaluator 首轮无结论恰好重试一次后采信 met；`USE_GOAL_EDIT:<会话id>` → turn 内经 REST 改写目标文本，在飞模型下一轮收到【目标已更新】并按新目标结算；`GOAL_TURN2` → REST 预建 active 目标后新用户轮首轮重述（【进行中的目标】），空转续跑后提案完成；系统提示带 `【会话标题生成】` 标记即标题生成轮（titleMode=model），回固定标题 `README 安装章节改写`
 - 前端契约测试（`/app` 服务、哈希资产、令牌 CSS 在场、零 emoji、旧路由 404、ProviderEditor 源码校验规则）守着构建产物与 `web-ui/` 的同步；改了 `web-ui/` 忘了 `build:web` 会红
 - 仓库守卫（`test/guards.mjs`，已入 `npm test`）：产品源码零 emoji、TUI 颜色单一真值源（仅 `theme.mjs` 出 SGR）、色板对比度达标、新模块 ≤500 行、文档站结构契约（中英页面一一对应 / 发布笔记标记在场 / 依赖例外登记）
-- 基线 328/328 通过。提交前 `npm test` 必须全绿；不许 `skip`，不许放宽断言迁就失败
+- 基线 332/332 通过。提交前 `npm test` 必须全绿；不许 `skip`，不许放宽断言迁就失败
 - `npm run check` 走真实上游，只在改上游集成时跑（花少量钱）
 - 跑 `npm test` 前确认 18901 无常驻 mock 占用（`pkill -f mock-longcat`）；exec 沙箱会杀后台进程，常驻服务 / mock 用 exec_command 前台会话跑
 
@@ -169,9 +170,10 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 
 ## 9. 验证基线（改动后自查）
 
-- `npm test` → 328/328
+- `npm test` → 332/332
 - `curl -s localhost:8787/api/health` → `{"ok":true,...}`；`/api/settings` → `version` / `managed` / `dataDir` 符合预期
 - 浏览器打开 http://localhost:8787 ：无 emoji、模型选择器按提供方分组、完整 turn（工具卡 / 权限卡 / 用量脚注）正常、设置弹层可开关开机自启
+- 网页快捷键：`Ctrl/Cmd+K` 新建会话、`/` 聚焦输入框（焦点不在输入控件时）；对话区上翻读历史时不抢滚动，出现「回到最新」按钮，点它或继续贴底即恢复跟随
 - 终端 `npm run chat`：`/help`、权限 y/n/a、`/sessions` 切换、`/goal` 状态与预算、`/btw` 侧边对话与 `Ctrl+/` 切换均正常
 - 改了启动 / 打包逻辑：`npm run publish` 后 `launchctl print gui/$(id -u)/com.auroraagent.app` 确认 `state = running`
 
@@ -191,7 +193,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 执行顺序：
 
 1. 改代码（一个可独立验证的小改动，例如「修复一个错误映射」「新增一个厂商标识」）
-2. `npm test` 全绿（基线 328 个测试；不绿不提交）
+2. `npm test` 全绿（基线 332 个测试；不绿不提交）
 3. `git add <具体文件>` → `git commit -m "中文描述"` → `git push`
 
 规约：

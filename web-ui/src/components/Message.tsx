@@ -1,5 +1,5 @@
 /** 单条消息渲染：用户 / 助手（思考 + 正文 + 工具 + 用量脚注）/ 系统（压缩提示）。 */
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import { Markdown } from '../markdown';
 import { IconAlert, IconBulb, IconChevronDown, IconChevronRight, IconPerson, IconSpark, IconTag } from '../icons';
 import type { MsgView } from '../types';
@@ -29,7 +29,9 @@ type Props = {
   onDecide?: (requestId: string, decision: 'allow' | 'deny' | 'always') => void;
 };
 
-export function Message({ msg, onDecide }: Props) {
+// 历史消息 memo：流式期间 App 每个 token 都会重渲染，未 memo 时整段历史的 Markdown
+// 会被反复重新解析（长会话掉帧的主因）。msg / onDecide 引用稳定时才跳过。
+export const Message = memo(function Message({ msg, onDecide }: Props) {
   if (msg.kind === 'user') {
     return (
       <div className="row row-user">
@@ -71,6 +73,6 @@ export function Message({ msg, onDecide }: Props) {
       </div>
     </div>
   );
-}
+});
 
 export { ThinkingBlock };

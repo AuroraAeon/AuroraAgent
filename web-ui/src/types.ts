@@ -144,3 +144,16 @@ export interface UsageSummary {
 
 /** 错误日志条目（<数据目录>/logs/errors.log，JSON Lines） */
 export interface ErrorLogEntry { ts: string; kind: string; message: string; detail: string; version: string }
+
+/** 版本更新检查结果（GET /api/update/check） */
+export interface UpdateInfo {
+  ok: boolean;
+  current: string;
+  latest: string | null;
+  updateAvailable: boolean;
+  url: string | null;
+  publishedAt: string | null;
+  checkedAt: number;
+  cached: boolean;
+  error: string | null;
+}

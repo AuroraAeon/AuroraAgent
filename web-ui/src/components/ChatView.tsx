@@ -7,7 +7,7 @@ import { TodoPanel } from './Todo';
 import { GoalBanner } from './GoalBanner';
 import { PlanCard } from './PlanCard';
 import { fmtCostYen } from '../projection';
-import { IconSpark } from '../icons';
+import { IconChevronDown, IconSpark } from '../icons';
 import type { GoalState, LiveTurn, MsgView, TodoItem } from '../types';
 
 const SUGGESTIONS = [
@@ -73,9 +73,26 @@ type Props = {
 
 export function ChatView({ messages, live, hasSession, onDecide, onPick, todos, onDecidePlan, goal, onGoalAction }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const stickRef = useRef(true); // 用户是否贴底：贴底才跟随滚动，上翻读历史时不抢滚动位置
+  const [atBottom, setAtBottom] = useState(true);
+
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 96;
+    setAtBottom(stickRef.current);
+  };
+
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: 'end' });
+    if (stickRef.current) endRef.current?.scrollIntoView({ block: 'end' });
   }, [messages, live]);
+
+  const jumpToBottom = () => {
+    stickRef.current = true;
+    setAtBottom(true);
+    endRef.current?.scrollIntoView({ block: 'end' });
+  };
 
   if (!hasSession) {
     return (
@@ -89,7 +106,7 @@ export function ChatView({ messages, live, hasSession, onDecide, onPick, todos, 
   }
   if (!messages.length && !live) {
     return (
-      <div className="chat-scroll">
+      <div className="chat-scroll" ref={scrollRef} onScroll={onScroll}>
         {goal && onGoalAction ? <GoalBanner goal={goal} onAction={onGoalAction} /> : null}
         <div className="chat-empty">
           <div className="empty-mark"><IconSpark size={26} /></div>
@@ -106,13 +123,18 @@ export function ChatView({ messages, live, hasSession, onDecide, onPick, todos, 
     );
   }
   return (
-    <div className="chat-scroll" id="chatScroll">
+    <div className="chat-scroll" id="chatScroll" ref={scrollRef} onScroll={onScroll}>
       <div className="chat-inner">
         {goal && onGoalAction ? <GoalBanner goal={goal} onAction={onGoalAction} /> : null}
         <TodoPanel todos={todos} />
         {messages.map((m) => <Message key={m.key} msg={m} onDecide={onDecide} />)}
         {live ? <LiveRow live={live} onDecide={onDecide} onDecidePlan={onDecidePlan} /> : null}
         <div ref={endRef} />
+        {live && !atBottom ? (
+          <button type="button" className="chat-jump" onClick={jumpToBottom}>
+            <IconChevronDown size={13} /> 回到最新
+          </button>
+        ) : null}
       </div>
     </div>
   );

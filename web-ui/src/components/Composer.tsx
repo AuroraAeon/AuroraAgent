@@ -315,11 +315,13 @@ type Props = {
   skills: SkillRow[];
   sessionId: string | null;
   disabled: boolean;
+  /** 外部聚焦请求：nonce 递增即聚焦输入框（快捷键 / 唤起） */
+  focusNonce?: number;
 };
 
 export function Composer({
   busy, onSend, onStop, models, modelStatus, model, onModel, providers, thinking, onThinking, harnesses, harness, onHarness, disabled,
-  permissionMode, onPermissionMode, titleMode, onTitleMode, planMode, onPlanMode, skills, sessionId, onGoalCommand, goalPrefill,
+  permissionMode, onPermissionMode, titleMode, onTitleMode, planMode, onPlanMode, skills, sessionId, onGoalCommand, goalPrefill, focusNonce,
 }: Props) {
   const [text, setText] = useState('');
   const [skillIdx, setSkillIdx] = useState(0);
@@ -379,6 +381,14 @@ export function Composer({
   // /goal edit 回填：nonce 是每次回填的递增令牌，重复渲染不会覆盖用户正在输入的内容
   // onlyIfEmpty（失败保留）：仅当输入框已清空时恢复原命令，不覆盖失败等待期间新敲的内容
   const lastPrefillNonce = useRef(0);
+  // 外部聚焦请求（快捷键 / goal 回填之外）：nonce 变化即聚焦，方便键盘流操作
+  const lastFocusNonce = useRef(focusNonce || 0);
+  useEffect(() => {
+    if (focusNonce !== undefined && focusNonce !== lastFocusNonce.current) {
+      lastFocusNonce.current = focusNonce;
+      taRef.current?.focus();
+    }
+  }, [focusNonce]);
   useEffect(() => {
     if (goalPrefill && goalPrefill.nonce !== lastPrefillNonce.current) {
       lastPrefillNonce.current = goalPrefill.nonce;

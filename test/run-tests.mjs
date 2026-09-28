@@ -25,6 +25,7 @@ import { connectMcp, callResultText, McpError } from '../util/mcp/client.mjs';
 import { McpRegistry, validateServerDraft, loadMcpServers, mcpToolName } from '../util/mcp/registry.mjs';
 import { UsageLedger } from '../util/usage.mjs';
 import { ErrorLog, createDeduper, normalizeErrorKind, ERROR_LOG_MAX_LINES } from '../util/errorlog.mjs';
+import { checkUpdate, hasUpdate, parseVersion } from '../util/update.mjs';
 import { runTuiToolkitTests } from './tui-toolkit.mjs';
 import { runGuardTests } from './guards.mjs';
 import { runLlmTests } from './llm.mjs';
@@ -1527,6 +1528,46 @@ await test('账本 stats：近 N 天逐日补零、按模型 / 提供方 / 用�
   rmSync(emptyDir, { recursive: true, force: true });
 });
 
+// ---------- 单元测试: 版本更新检查 ----------
+console.log('\n版本更新单元测试');
+await test('版本比较：三段语义、忽略 v 前缀与预发布后缀、非法值不误报', () => {
+  eq(parseVersion('v7.0.1').join('.'), '7.0.1');
+  eq(parseVersion('7.0').join('.'), '7.0.0', '缺 patch 段按 0');
+  eq(parseVersion('垃圾'), null);
+  assert(hasUpdate('7.0.0', '7.0.1'), '修订号更高应有更新');
+  assert(hasUpdate('7.0.0', '7.1.0'), '次版本更高应有更新');
+  assert(hasUpdate('7.0.0', '8.0.0-beta.1'), '主版本更高应有更新（含预发布后缀）');
+  assert(!hasUpdate('7.0.1', '7.0.1'), '同版本不误报');
+  assert(!hasUpdate('7.1.0', '7.0.9'), '更低版本不误报');
+  assert(!hasUpdate('x', '7.0.1'), '本地版本非法不误报');
+  assert(!hasUpdate('7.0.0', 'not-a-version'), '上游版本非法不误报');
+});
+await test('更新检查：走 GitHub latest、结果缓存 6 小时、失败不缓存', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-update-'));
+  let calls = 0;
+  const ok = (tag) => async () => {
+    calls += 1;
+    return { ok: true, json: async () => ({ tag_name: tag, html_url: 'https://github.com/x/y/releases/tag/' + tag, published_at: '2026-09-01T00:00:00Z' }) };
+  };
+  const fail = async () => { calls += 1; return { ok: false, status: 403 }; };
+  const first = await checkUpdate({ current: '7.0.0', dataDir: dir, fetchImpl: ok('v7.1.0'), now: () => 1000 });
+  assert(first.ok && first.updateAvailable, '应发现新版本');
+  eq(first.latest, '7.1.0');
+  eq(first.url, 'https://github.com/x/y/releases/tag/v7.1.0');
+  const cached = await checkUpdate({ current: '7.0.0', dataDir: dir, fetchImpl: fail, now: () => 1000 + 60_000 });
+  eq(cached.cached, true, '6 小时内应命中缓存');
+  eq(calls, 1, '命中缓存不应再请求');
+  const expired = await checkUpdate({ current: '7.0.0', dataDir: dir, fetchImpl: ok('v7.2.0'), now: () => 1000 + 7 * 3600 * 1000 });
+  eq(expired.cached, false, '过期后应重新请求');
+  eq(expired.latest, '7.2.0');
+  eq(calls, 2);
+  const failed = await checkUpdate({ current: '7.0.0', dataDir: dir, fetchImpl: fail, now: () => 1000 + 14 * 3600 * 1000 });
+  assert(!failed.ok && failed.error, '失败应返回错误文案且不抛');
+  const afterFail = await checkUpdate({ current: '7.0.0', dataDir: dir, fetchImpl: ok('v7.2.0'), now: () => 1000 + 15 * 3600 * 1000 });
+  eq(afterFail.latest, '7.2.0', '失败不写缓存，下次仍真实查询');
+  rmSync(dir, { recursive: true, force: true });
+});
+
 // ---------- e2e ----------
 console.log('\n端到端测试（mock 上游 + 真实 socket）');
 const mock = await startMock(MOCK_PORT);
@@ -1623,6 +1664,30 @@ try {
     assert(main.includes('<AppErrorBoundary>') && main.includes('installGlobalErrorHandlers()'), '入口应包错误边界并装全局捕获');
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
     assert(css.includes('.toast-viewport') && css.includes('.crash-card'), '应有通知视口与崩溃页样式');
+  });
+  await test('更新检查源码契约：设置页入口、路由与缓存语义', () => {
+    const settings = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SettingsDialog.tsx'), 'utf8');
+    assert(settings.includes('checkUpdate(true)') && settings.includes('检查更新'), '设置页应有检查更新入口');
+    assert(settings.includes('updateAvailable') && settings.includes('查看发布页与安装包'), '发现新版本应给出去发布页的链接');
+    const web = readFileSync(join(__dirname, '..', 'web.mjs'), 'utf8');
+    assert(web.includes("/api/update/check") && web.includes("checkUpdate({ current: VERSION"), 'web.mjs 应接更新检查路由');
+    const upd = readFileSync(join(__dirname, '..', 'util', 'update.mjs'), 'utf8');
+    assert(upd.includes('CACHE_TTL_MS') && upd.includes('releases/latest'), '应有 6 小时缓存与 GitHub latest 查询');
+    assert(upd.includes('FETCH_TIMEOUT_MS'), '查询应带超时，别让界面干等');
+  });
+  await test('对话区跟手与渲染性能源码契约：贴底才跟随、历史 memo、快捷键聚焦', () => {
+    const chat = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ChatView.tsx'), 'utf8');
+    assert(chat.includes('stickRef') && chat.includes('scrollHeight - el.scrollTop - el.clientHeight < 96'), '应只在贴底时跟随滚动');
+    assert(chat.includes('chat-jump') && chat.includes('回到最新'), '上翻后应有一键回到底部');
+    assert(!/endRef\?.*scrollIntoView\([^)]*\);[^}]*\}, \[messages, live\]/.test(chat) || chat.includes('if (stickRef.current)'), '滚动副作用应受贴底条件保护');
+    const msg = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Message.tsx'), 'utf8');
+    assert(msg.includes('memo(function Message'), '历史消息应 memo，避免流式期间反复重渲染整段历史');
+    const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
+    assert(app.includes("e.key.toLowerCase() === 'k'") && app.includes("e.key === '/'"), '应有 Ctrl/Cmd+K 新建与会话 / 聚焦输入框快捷键');
+    const composer = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Composer.tsx'), 'utf8');
+    assert(composer.includes('focusNonce'), '输入区应接受外部聚焦请求');
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    assert(css.includes('.chat-jump'), '应有回到底部按钮样式');
   });
   await test('用量与错误日志面板源码契约：设置弹层两块新面板在场', () => {
     const settings = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SettingsDialog.tsx'), 'utf8');

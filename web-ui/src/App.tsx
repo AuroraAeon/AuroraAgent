@@ -489,6 +489,30 @@ export default function App() {
     }
   };
 
+  // 键盘快捷键：Ctrl/Cmd+K 新建会话，/ 聚焦输入框（焦点不在可输入元素时）。
+  // 弹层打开时只保留聚焦输入（其余让位给对话框自身的按键处理）。
+  const [focusNonce, setFocusNonce] = useState(0);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      const typing = Boolean(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable));
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        if (settingsOpen) return;
+        e.preventDefault();
+        void newSession();
+        return;
+      }
+      if (e.key === '/' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const dlg = document.querySelector('dialog[open]');
+        if (dlg) return; // 弹层内的 / 是搜索输入，不抢
+        e.preventDefault();
+        setFocusNonce((n) => n + 1);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
   const providersChanged = useCallback(async () => {
     const pv = await listProviders().catch(() => null);
     if (pv) setProviders(pv.providers);
@@ -556,6 +580,7 @@ export default function App() {
           skills={skills}
           sessionId={currentId}
           disabled={!current}
+          focusNonce={focusNonce}
         />
       </main>
       <SettingsDialog

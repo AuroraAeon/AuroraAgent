@@ -1,7 +1,7 @@
 /** 设置弹层：提供方管理（移植自 public/providers.mjs）+ 开机自启 + 数据目录 / 版本。 */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  IconAlert, IconCheck, IconClose, IconGear, IconKey, IconPlus, IconSearch,
+  IconAlert, IconCheck, IconClose, IconGear, IconKey, IconPlus, IconRefresh, IconSearch,
 } from '../icons';
 import {
   createProvider, deleteProvider, discoverModels, getSettings, listProviders, setAutostart, updateProvider,
@@ -15,6 +15,8 @@ import { ProxyPanel } from './ProxyPanel';
 import { UsagePanel } from './UsagePanel';
 import { ErrorLogPanel } from './ErrorLogPanel';
 import { toast } from '../toast';
+import { checkUpdate } from '../api';
+import type { UpdateInfo } from '../types';
 import { THEME_OPTIONS, useThemePreference } from '../theme';
 
 const emptyDraft = (protocol = 'openai'): Draft => ({
@@ -59,6 +61,8 @@ export function SettingsDialog({ open, onClose, onProvidersChanged }: Props) {
   const [picker, setPicker] = useState<{ models: Candidate[]; picked: Set<string>; q: string } | null>(null);
   const [delTarget, setDelTarget] = useState<{ id: string; name: string } | null>(null);
   const [themePref, chooseTheme] = useThemePreference();
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
 
   const reload = useCallback(async () => {
     const [pv, st] = await Promise.all([listProviders(), getSettings()]);
@@ -292,8 +296,39 @@ export function SettingsDialog({ open, onClose, onProvidersChanged }: Props) {
                 <div><dt>运行状态</dt><dd>{settings?.managed ? (settings.serviceRunning ? 'LaunchAgent 托管中' : '托管中（未运行）') : '手动运行'}</dd></div>
                 <div><dt>端口</dt><dd>{settings?.port ?? '-'}</dd></div>
                 <div><dt>数据目录</dt><dd><code>{settings?.dataDir || '-'}</code></dd></div>
-                <div><dt>版本</dt><dd>v{settings?.version || '-'}</dd></div>
+                <div>
+                  <dt>版本</dt>
+                  <dd className="kv-ver">
+                    v{settings?.version || '-'}
+                    <button
+                      type="button"
+                      className="btn btn-link"
+                      disabled={updateBusy}
+                      onClick={() => {
+                        setUpdateBusy(true);
+                        checkUpdate(true)
+                          .then((r) => {
+                            setUpdate(r);
+                            if (!r.ok) toast.error('检查更新失败', { description: r.error || '请稍后重试' });
+                            else if (r.updateAvailable) toast.success(`发现新版本 v${r.latest}`, { description: '点击下方链接查看发布说明' });
+                            else toast.success('已是最新版本');
+                          })
+                          .catch((e) => toast.error('检查更新失败', { description: e instanceof Error ? e.message : String(e) }))
+                          .finally(() => setUpdateBusy(false));
+                      }}
+                    >
+                      <IconRefresh size={13} /> {updateBusy ? '检查中…' : '检查更新'}
+                    </button>
+                  </dd>
+                </div>
               </dl>
+              {update?.ok && update.updateAvailable && update.url ? (
+                <p className="pv-intro pv-update">
+                  发现新版本 <strong>v{update.latest}</strong>
+                  {update.publishedAt ? `（${new Date(update.publishedAt).toLocaleDateString('zh-CN')} 发布）` : ''}：
+                  <a href={update.url} target="_blank" rel="noreferrer">查看发布页与安装包</a>
+                </p>
+              ) : null}
             </section>
           </div>
         </div>
