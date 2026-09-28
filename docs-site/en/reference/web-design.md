@@ -100,17 +100,30 @@ The Header is always-on at `48px` (ZCode `h-12`): the inner row uses `p-2` / `ga
 - **Right group** (`gap-0.5`): help menu (docs / feedback links plus the shortcut and about panels; the trigger carries a "Help" tooltip, matching ZCode's ControlHintTooltip wrapping the DropdownMenuTrigger) + settings
 - **Top overlay** (ported from ZCode `DesktopTopOverlay`): always-on absolute layer with `pointer-events:none` outside and `auto` on the interactive container — clicks on blank space still belong to the sidebar below; the toggle button shows a `20px` brand tile (radius `6px`) at rest and fades in a `16px` panel icon on hover (absolutely centered), with a tooltip reading "toggle sidebar + ⌘B/Ctrl+B"; previous / next question (disabled below two questions); the new-task button follows the `isNewTaskButtonVisible` semantics with a `opacity` / `width` `300ms` transition (visible only when collapsed, icon taken from lucide's exact `MessageCirclePlus` path — a chat bubble plus a plus sign, not a bare plus); the update entry appears only when a new version is found (ZCode lesson: the collapsed state must not hide global entries behind a width threshold)
 - **Yielding**: when the sidebar collapses, the Header row pads its left edge (measured overlay width + `8px`); the sidebar reserves a `48px` overlay band at its top; the main column auto-collapses the sidebar below `360px` (collapse only, never auto-expand)
-- **Sidebar body** (ported from ZCode `WorkspaceSidebar`): the expanded state has no large logo — the `aside` starts with a `48px` empty drag band (the overlay floats above it) and the brand lives only inside the overlay toggle button; the first item below the band is the new-task button (ZCode `NewTaskButtonGroup`: `w-full h-8 rounded-lg` ghost, `pl-2.5 pr-2.5 gap-2`, `MessageCirclePlus 16px` + "new task" + a `12px` shortcut label on the right; no tooltip in the normal state — the button already shows its label and shortcut, another tooltip would just repeat them); appearance lives in the settings dialog's "Appearance" first-level section (ZCode `appearance` section): the interface theme is a `Select` dropdown (`260px`, options carry `Monitor` / `Moon` / `Sun` icons plus a check indicator), not a segmented control — with icons the segmented control cannot fit them, and the dropdown matches the rest of the settings page
+- **Sidebar body** (ported from ZCode `WorkspaceSidebar`): the expanded state has no large logo — the `aside` starts with a `48px` empty drag band (the overlay floats above it) and the brand lives only inside the overlay toggle button; the first item below the band is the new-task button (ZCode `NewTaskButtonGroup`: `w-full h-8 rounded-lg` ghost, `pl-2.5 pr-2.5 gap-2`, `MessageCirclePlus 16px` + "new task" + a `12px` shortcut label on the right; no tooltip in the normal state — the button already shows its label and shortcut, another tooltip would just repeat them); appearance lives in the settings dialog's "Appearance" first-level section (ZCode `appearance` section): the interface theme is a `Select` dropdown (`260px`, options carry `Monitor` / `Moon` / `Sun` icons plus a check indicator), not a segmented control — with icons the segmented control cannot fit them, and the dropdown matches the rest of the settings page (full option set in section 11)
 - Entry buttons share one spec: `28px` + radius `8px` + only background / color transitions (ZCode lesson: `transition-all` animates size changes while resizing the window)
 
-## 11. Accessibility and Long Copy
+## 11. Appearance Settings
+
+The settings dialog's "Appearance" first-level section (ported from ZCode's `appearance` section, `Palette` icon, placed right after "General") carries three blocks, all browser-local (`localStorage` persistence, pre-seeded before first paint by the inline script in `index.html`):
+
+- **Interface settings**: interface theme (`Select` dropdown, `260px`; `System` / `Dark` / `Light` options carry `Monitor` / `Moon` / `Sun` icons plus a check indicator) + interface font size (`12–20px` number field, commits on blur or Enter, clamped, Esc restores the draft).
+- **Code settings**: light and dark code themes, one `Select` each (`Default (Aurora)` / `GitHub` / `Vitesse` / `Catppuccin` / `High contrast`, each with its own `--code-key/str/num/com/fn/type` palette — the zero-dependency highlighter colors by token class, no Shiki) + show line numbers (`Switch`) + wrap long lines (`Switch`) + code font size (`12–20px`, independent of the interface font size).
+- **Code preview**: two cards side by side rendering a real Markdown code block, each overriding the palette variables; the card matching the current interface mode is badged "Active".
+
+Two engineering rules:
+
+- **Interface font size moves text only**: every `font-size` in `app.css` is rem-based (`1rem` = interface font size) with unitless line-height ratios that scale along; icons, spacing and radii stay in `px` (mirroring ZCode's "update only the font-size base variable" discipline).
+- **Line numbers follow the preference structurally**: `Markdown` splits the highlighted token sequence per line and renders line by line, with the number pinned to the scrolling left edge via `position:sticky` and a backdrop covering scrolled code; preferences broadcast through a tiny external store (`useSyncExternalStore`), so toggling the setting re-renders immediately.
+
+## 12. Accessibility and Long Copy
 
 - Keyboard is a first-class path: global shortcuts (`Ctrl/Cmd+K` new session, `Ctrl/Cmd+B` toggle sidebar, `/` focus the composer), unified `:focus-visible` rings.
 - Semantic state colors always pair with readable text; never convey state by color alone.
 - Layouts tolerate longer translations and narrow windows; icons prefer text labels (tooltips carry the explanation where labels are absent).
 - The product contains **zero emoji**; icons are inline SVG or `public/vendors/*.svg` (guard-enforced).
 
-## 12. New / Reworked UI Checklist
+## 13. New / Reworked UI Checklist
 
 - [ ] New colors landed in both themes of `tokens.css` and pass the contrast guard (body 4.5 / faint 3.0).
 - [ ] No hard-coded semantic colors in components; everything references tokens.

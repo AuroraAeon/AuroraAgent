@@ -530,7 +530,8 @@ export default function App() {
     try { await abortTurn(currentId); } catch { /* 中断失败不阻塞界面，流结束自会收尾 */ }
   }, [currentId]);
 
-  const newSession = async () => {
+  // 原始创建（删除当前会话后的空列表恢复等内部路径走这里，不受「新会话」守卫约束）
+  const createSessionNow = async () => {
     try {
       const s = await createSession({ model: current?.model, harness: current?.harness });
       setSessions((prev) => [s, ...prev]);
@@ -539,6 +540,12 @@ export default function App() {
       toast.error('新建会话失败', { description: e instanceof Error ? e.message : String(e) });
     }
   };
+
+  // 新建任务（ZCode NewTaskButtonGroup 语义）：当前会话已是空新会话（无任何轮次且未在生成）时
+  // 不再新建——否则每次点击都会在列表顶部再堆一个空会话。按钮禁用 + 快捷键静默无效；
+  // 想换模型 / 模式直接在当前新会话里改，想开新话题先发第一条消息。
+  const isPristineSession = Boolean(current && current.turns === 0 && !busy);
+  const newSession = () => { if (isPristineSession) return; void createSessionNow(); };
 
   const forkSessionById = async (id: string) => {
     try {
@@ -557,7 +564,7 @@ export default function App() {
     setSessions(list);
     if (id === currentId) {
       if (list.length) openSession(list[0].id);
-      else newSession();
+      else void createSessionNow();
     }
   };
 
@@ -651,7 +658,7 @@ export default function App() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         if (settingsOpen) return;
         e.preventDefault();
-        void newSession();
+        newSession();
         return;
       }
       // Ctrl/Cmd+B 切换侧栏收回态（与 ZCode toggleSidebar 同键位；弹层打开时让位）
@@ -695,6 +702,7 @@ export default function App() {
             currentId={currentId}
             onSelect={openSession}
             onNew={newSession}
+            newDisabled={isPristineSession}
             onDelete={removeSession}
             onFork={forkSessionById}
             onOpenSettings={() => setSettingsOpen(true)}
@@ -711,6 +719,7 @@ export default function App() {
           collapsed={rail}
           onToggle={toggleRail}
           onNew={newSession}
+          newDisabled={isPristineSession}
           onNav={requestNav}
           canNav={Boolean(current && current.turns >= 2)}
           updateUrl={update?.updateAvailable ? update.url : null}

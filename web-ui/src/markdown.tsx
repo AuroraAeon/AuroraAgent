@@ -9,7 +9,8 @@ import { MathView } from './latex';
 import { isDisplayMathStart, splitMathSegments, takeDisplayMath } from './math-split.mjs';
 import { parseTableBlock } from './md-table.mjs';
 import type { TableAlign, TableBlock } from './md-table.mjs';
-import { highlightCode } from './highlight';
+import { highlightCode, type HlToken } from './highlight';
+import { useAppearance } from './appearance';
 
 const BOLD_LINK_RE = /\*\*([^*\n]+)\*\*|\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g;
 
@@ -79,7 +80,23 @@ const UL_RE = /^\s*[-*]\s+(.*)$/;
 const OL_RE = /^\s*\d+[.)]\s+(.*)$/;
 const H_RE = /^(#{1,4})\s+(.*)$/;
 
+/** 按换行切开高亮 token 序列（行号渲染用；块注释跨行也不丢字，末尾换行不多算一行） */
+function splitTokenLines(tokens: HlToken[]): HlToken[][] {
+  const lines: HlToken[][] = [[]];
+  for (const token of tokens) {
+    const parts = token.text.split('\n');
+    parts.forEach((part, pi) => {
+      if (pi > 0) lines.push([]);
+      if (part) lines[lines.length - 1].push({ text: part, cls: token.cls });
+    });
+  }
+  if (lines.length > 1 && lines[lines.length - 1].length === 0) lines.pop();
+  return lines;
+}
+
 export function Markdown({ text }: { text: string }) {
+  // 行号是结构性的：随外观偏好即时开关（useSyncExternalStore，改设置当下重排）
+  const [{ codeLineNumbers }] = useAppearance();
   const lines = String(text || '').split('\n');
   const blocks: ReactNode[] = [];
   let i = 0;
@@ -94,10 +111,19 @@ export function Markdown({ text }: { text: string }) {
       while (i < lines.length && !/^```\s*$/.test(lines[i])) { buf.push(lines[i]); i++; }
       i++;
       const tokens = highlightCode(buf.join('\n'), lang);
+      const codeLines = splitTokenLines(tokens);
+      const span = (t: HlToken, ti: number) => (t.cls ? <span key={ti} className={t.cls}>{t.text}</span> : <span key={ti}>{t.text}</span>);
       blocks.push(
-        <pre key={k++} className={lang ? `lang-${lang}` : undefined}>
+        <pre key={k++} className={`${lang ? `lang-${lang}` : ''}${codeLineNumbers ? ' code-ln' : ''}`.trim() || undefined}>
           <code>
-            {tokens.map((t, ti) => (t.cls ? <span key={ti} className={t.cls}>{t.text}</span> : <span key={ti}>{t.text}</span>))}
+            {codeLineNumbers
+              ? codeLines.map((line, li) => (
+                  <span className="code-line" key={li}>
+                    <span className="code-no" aria-hidden="true">{li + 1}</span>
+                    {line.length ? line.map(span) : '\u200b'}
+                  </span>
+                ))
+              : tokens.map(span)}
           </code>
         </pre>,
       );

@@ -23,6 +23,8 @@ type Props = {
   collapsed: boolean;
   onToggle: () => void;
   onNew: () => void;
+  /** 当前会话已是空新会话：新建钮一并禁用（与侧栏同规则，避免收回态还能堆空会话） */
+  newDisabled?: boolean;
   /** 上一个 / 下一个提问（会话回合导航；会话不足两轮时禁用） */
   onNav: (dir: 'prev' | 'next') => void;
   canNav: boolean;
@@ -31,7 +33,7 @@ type Props = {
   updateLatest: string | null;
 };
 
-export function WorkspaceTopOverlay({ ref, collapsed, onToggle, onNew, onNav, canNav, updateUrl, updateLatest }: Props) {
+export function WorkspaceTopOverlay({ ref, collapsed, onToggle, onNew, newDisabled, onNav, canNav, updateUrl, updateLatest }: Props) {
   return (
     <div className="ws-overlay" ref={ref} aria-label="工作区快捷入口">
       <div className="ws-overlay-group">
@@ -55,7 +57,7 @@ export function WorkspaceTopOverlay({ ref, collapsed, onToggle, onNew, onNav, ca
             图标用 lucide MessageCirclePlus 精确路径（ZCode 同款：聊天气泡 + 加号，不是裸加号） */}
         <div className={`ws-overlay-new${collapsed ? ' on' : ' off'}`} aria-hidden={!collapsed}>
           <ControlTooltip title="新建任务" shortcut={newSessionLabel()} side="bottom">
-            <button type="button" className="ws-act" aria-label="新建任务" tabIndex={collapsed ? undefined : -1} onClick={onNew}>
+            <button type="button" className="ws-act" aria-label="新建任务" tabIndex={collapsed ? undefined : -1} onClick={onNew} disabled={newDisabled}>
               <IconMessageCirclePlus size={16} />
             </button>
           </ControlTooltip>

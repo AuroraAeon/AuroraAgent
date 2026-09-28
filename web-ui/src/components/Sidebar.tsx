@@ -23,6 +23,8 @@ type Props = {
   currentId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
+  /** 当前会话已是空新会话：禁止再新建（ZCode NewTaskButtonGroup disabled 语义） */
+  newDisabled?: boolean;
   onDelete: (id: string) => void;
   onFork: (id: string) => void;
   onOpenSettings: () => void;
@@ -32,7 +34,7 @@ type Props = {
 };
 
 export function Sidebar({
-  sessions, currentId, onSelect, onNew, onDelete, onFork, onOpenSettings, loading, version,
+  sessions, currentId, onSelect, onNew, newDisabled, onDelete, onFork, onOpenSettings, loading, version,
 }: Props) {
   const [q, setQ] = useState('');
   const [searchOn, setSearchOn] = useState(false);
@@ -47,8 +49,9 @@ export function Sidebar({
   return (
     <aside className="sidebar">
       {/* 新建任务（ZCode NewTaskButtonGroup）：全宽 32px ghost 钮，图标 + 文案 + 右侧快捷键。
-          正常态不带 tooltip——按钮已自带文案与快捷键，再挂就是重复（ZCode 同款纪律） */}
-      <button type="button" className="sb-new" onClick={onNew}>
+          正常态不带 tooltip——按钮已自带文案与快捷键，再挂就是重复（ZCode 同款纪律）。
+          当前会话已是空新会话时禁用（newDisabled）：再点只会堆一个空会话。 */}
+      <button type="button" className="sb-new" onClick={onNew} disabled={newDisabled}>
         <IconMessageCirclePlus size={16} />
         <span className="sb-new-label">新建任务</span>
         <span className="sb-new-key">{newSessionLabel()}</span>

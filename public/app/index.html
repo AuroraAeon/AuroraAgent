@@ -17,9 +17,26 @@
           document.documentElement.dataset.theme = 'dark';
         }
       })();
+      // 外观偏好预置（与 src/appearance.ts 同一套键名与钳制规则）：界面字号 / 代码字号 /
+      // 行号 / 换行在首帧前落好，避免切换设置后刷新回跳闪烁。
+      // 代码调色板表较大不进内联脚本，由 main.tsx 启动时补一次（同帧无感）。
+      (function () {
+        try {
+          var root = document.documentElement;
+          var clamp = function (raw, dflt) {
+            if (raw === null) return dflt; /* 读不到 = 用默认，Number(null)===0 会误钳成下限 */
+            var n = Number(raw);
+            return Number.isFinite(n) ? Math.min(20, Math.max(12, Math.round(n))) : dflt;
+          };
+          root.style.setProperty('--ui-font-size', clamp(localStorage.getItem('auroraagent.ui-font-size'), 14) + 'px');
+          root.style.setProperty('--code-font-size', clamp(localStorage.getItem('auroraagent.code-font-size'), 13) + 'px');
+          root.dataset.codeLn = localStorage.getItem('auroraagent.code-line-numbers') === '1' ? 'on' : 'off';
+          root.dataset.codeWrap = localStorage.getItem('auroraagent.code-wrap') === '1' ? 'on' : 'off';
+        } catch (e) { /* 存储不可用：全套默认值已在 tokens.css */ }
+      })();
     </script>
-    <script type="module" crossorigin src="/app/assets/index-DU5NAqPs.js"></script>
-    <link rel="stylesheet" crossorigin href="/app/assets/index-Dd-l7E9u.css">
+    <script type="module" crossorigin src="/app/assets/index-BR2Sn7yK.js"></script>
+    <link rel="stylesheet" crossorigin href="/app/assets/index-Sh4zVCjr.css">
   </head>
   <body>
     <div id="root"></div>

@@ -1773,9 +1773,9 @@ try {
     const sidebar = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Sidebar.tsx'), 'utf8');
     const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
-    // 栏体：280px 宽 / 48px 顶部浮层带 + 12px 内容上距（ZCode h-12 拖拽带 + py-3）/ 14px 基准字号 / 专用填充
+    // 栏体：280px 宽 / 48px 顶部浮层带 + 12px 内容上距（ZCode h-12 拖拽带 + py-3）/ 基准字号 1rem（=界面字号，默认 14px）/ 专用填充
     assert(css.includes('width:280px'), '侧栏宽应为 dsh 的 280px');
-    assert(css.includes('padding:60px 12px 6px; font-size:14px;'), '侧栏应留 48px 浮层带 + 12px 内容上距并保持 dsh 基准字号');
+    assert(css.includes('padding:60px 12px 6px; font-size:1rem;'), '侧栏应留 48px 浮层带 + 12px 内容上距并保持 dsh 基准字号（rem 化：1rem=界面字号）');
     assert(css.includes('background:var(--sidebar-fill)'), '侧栏应用专用填充色而非面板色');
     assert(!css.includes('.sidebar.rail'), '收回态不应再是 56px 图标导轨（ZCode 语义：左边整体消失，只留 Header）');
     // 侧栏填充必须拉满整列高：块容器里 .sidebar 的 height:auto 会塌成内容高，展开态下面留一大块空白
@@ -1791,11 +1791,11 @@ try {
     // 新建任务钮（ZCode NewTaskButtonGroup 像素级）：w-full h-8 rounded-lg ghost、pl-2.5 pr-2.5 gap-2，
     // MessageCirclePlus 16px +「新建任务」14px truncate + 右侧快捷键标签（12px 三次色 ml-auto）
     const newBtn = /\.sb-new \{[^}]*\}/.exec(css)?.[0] || '';
-    for (const decl of ['width:100%', 'height:32px', 'border-radius:8px', 'gap:8px', 'padding:0 10px', 'font-size:14px', 'line-height:20px']) {
+    for (const decl of ['width:100%', 'height:32px', 'border-radius:8px', 'gap:8px', 'padding:0 10px', 'font-size:1rem', 'line-height:1.4286']) {
       assert(newBtn.includes(decl), `新建任务钮应按 ZCode NewTaskButtonGroup 数值声明 ${decl}`);
     }
     assert(!newBtn.includes('border:1px'), 'ZCode 新建任务钮是 ghost 无描边（不是旧 dsh 细描边钮）');
-    assert(css.includes('.sb-new-key { flex:none; margin-left:auto; font-size:12px; line-height:16px; color:var(--faint); }'), '新建任务钮右侧快捷键标签应按 ZCode text-ui-xs 三次色声明');
+    assert(css.includes('.sb-new-key { flex:none; margin-left:auto; font-size:0.8571rem; line-height:1.3333; color:var(--faint); }'), '新建任务钮右侧快捷键标签应按 ZCode text-ui-xs 三次色声明（rem 化后 0.8571rem=12px）');
     assert(sidebar.includes('<IconMessageCirclePlus size={16} />') && sidebar.includes('>新建任务<') && sidebar.includes('sb-new-key') && sidebar.includes('newSessionLabel()'), '新建任务钮应含 MessageCirclePlus 图标 + 文案 + 快捷键标签');
     assert(!sidebar.includes('title="新会话"'), '按钮已自带文案与快捷键，不再挂重复 tooltip（ZCode 同款纪律）');
     // 会话区：36px 区头 + 可展开搜索 + 32px 行 / 圆角 8px / 行距 2px
@@ -1808,8 +1808,8 @@ try {
       assert(row.includes(decl), `会话行应按 dsh 数值声明 ${decl}`);
     }
     assert(css.includes('.sb-row + .sb-row { margin-top:2px; }'), '行距应为 dsh 的 2px');
-    assert(css.includes('.sb-row-title { flex:1; min-width:0; font-size:14px; line-height:20px;'), '行标题应按 dsh 14px/20px 省略');
-    assert(css.includes('.sb-row-time { flex:none; font-size:12px;'), '行时间应按 dsh 12px 三次色');
+    assert(css.includes('.sb-row-title { flex:1; min-width:0; font-size:1rem; line-height:1.4286;'), '行标题应按 dsh 14px/20px 省略（rem 化后 1rem / 1.4286）');
+    assert(css.includes('.sb-row-time { flex:none; font-size:0.8571rem;'), '行时间应按 dsh 12px 三次色（rem 化后 0.8571rem=12px）');
     assert(css.includes('.sb-row:hover .sb-row-time') && css.includes('display:none'), '悬停时时间让位给操作钮（同 dsh）');
     assert(css.includes('.sb-row-acts { display:none;') && css.includes('.sb-row:hover .sb-row-acts'), '操作钮应悬停现形');
     // 栏脚：panelRow 形态设置入口（36px / 圆角 8px / padding 7px 8px）
@@ -1871,7 +1871,7 @@ try {
     assert(css.includes('.ws-head-right { display:flex; align-items:center; gap:2px;'), 'Header 右组应按 ZCode gap-0.5 排布');
     // 标题（ZCode TID_WORKSPACE_TITLE）：14px/600 + max-w 400 + 容器查询窄档 30vw/22vw + 双击重命名
     const title = /\.ws-title \{[^}]*\}/.exec(css)?.[0] || '';
-    for (const decl of ['max-width:400px', 'font-size:14px', 'font-weight:600']) {
+    for (const decl of ['max-width:400px', 'font-size:1rem', 'font-weight:600']) {
       assert(title.includes(decl), `会话标题应按 ZCode max-w-100 + text-ui-base 规格声明 ${decl}`);
     }
     assert(css.includes('@container (max-width:560px) { .ws-title { max-width:30vw; } }'), '标题窄档应按 ZCode @max-[560px] 收 30vw');
@@ -1908,7 +1908,7 @@ try {
     assert(css.includes('.ws-overlay-new.on { width:28px; opacity:1; }') && css.includes('transition:opacity 300ms var(--ease), width 300ms var(--ease)'), '新建钮应按 ZCode isNewTaskButtonVisible 语义做 opacity/width 300ms 过渡');
     assert(app.includes('overlayInset={overlayW}'), 'Header 收回态应按实测浮层宽让位（ZCode shouldOffsetHeaderForWindowControls 同思路）');
     // 侧栏顶部留出 48px 浮层带（ZCode overlay h-14 盖住侧栏顶部同款）
-    assert(css.includes('padding:60px 12px 6px; font-size:14px;'), '侧栏应留 48px 浮层带 + 12px 内容上距（ZCode h-12 拖拽带 + py-3）');
+    assert(css.includes('padding:60px 12px 6px; font-size:1rem;'), '侧栏应留 48px 浮层带 + 12px 内容上距（ZCode h-12 拖拽带 + py-3；rem 化后 1rem=界面字号）');
     assert(css.includes('.app { position:relative;'), '布局根应 relative 让浮层绝对定位有锚点');
     // App 侧接线：浮层宽实测 / 窄窗自动收起 / 更新检查 / 导航请求 / 重命名
     assert(app.includes('overlayW') && app.includes('ResizeObserver'), 'App 应实测浮层宽度供 Header 让位');
@@ -1999,7 +1999,7 @@ try {
     assert(css.includes('@starting-style { .menu-pop[data-phase="in"]') && css.includes('.menu-pop[data-phase="out"]'), '进入 / 退出动画应由 @starting-style 与 data-phase 承担');
     assert(/transition:opacity 120ms var\(--ease\), transform 120ms var\(--ease\), visibility 120ms/.test(pop), '菜单过渡应显式枚举 opacity / transform / visibility，不退回 all');
     const item = /\.menu-item \{[^}]*\}/.exec(css)?.[0] || '';
-    for (const decl of ['border-radius:8px', 'padding:8px 10px', 'font-size:13px']) {
+    for (const decl of ['border-radius:8px', 'padding:8px 10px', 'font-size:0.9286rem']) {
       assert(item.includes(decl), `菜单项应按 ZCode 紧凑密度声明 ${decl}`);
     }
     assert(css.includes('.menu-item.danger { color:var(--danger-ink); }'), '危险项（删除会话）应走 danger 令牌');
@@ -2115,7 +2115,7 @@ try {
     assert(nav.includes('aria-label="对话问题导航"') && nav.includes('aria-posinset') && nav.includes('prefers-reduced-motion'), '应有导航语义、位置标注与减少动效适配');
     assert(nav.includes("behavior: reduced ? 'auto' : 'smooth'"), '跳转应在减少动效时改用 auto');
     const rail = /\.turn-nav-rail \{[^}]*\}/.exec(css)?.[0] || '';
-    for (const decl of ['width:36px', 'overflow-x:hidden', 'overflow-y:auto', 'max-height:calc(100% - 6rem)']) {
+    for (const decl of ['width:36px', 'overflow-x:hidden', 'overflow-y:auto', 'max-height:calc(100% - 96px)']) {
       assert(rail.includes(decl), `导航轨应按 ZCode 规格声明 ${decl}`);
     }
     const item = /\.tn-item \{[^}]*\}/.exec(css)?.[0] || '';
@@ -2232,6 +2232,92 @@ try {
     for (const marker of ['sb-new-key', 'sel-trigger', 'sel-pop', 'ap-card']) {
       assert(js.includes(marker), `构建产物应含 ${marker}（改了 web-ui 忘了 build:web 会红）`);
     }
+  });
+  await test('外观页全量迁移源码契约：ZCode appearance 的界面 / 代码 / 预览三段选项逐个在场', async () => {
+    const ap = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'AppearancePanel.tsx'), 'utf8');
+    // 第一段：界面设置（ZCode settings.appearance.interface*）
+    assert(ap.includes('界面设置') && ap.includes('设置应用主题和界面文字大小。'), '应有 ZCode「界面设置」标题与描述');
+    assert(ap.includes('界面主题') && ap.includes('选择浅色、深色或跟随系统主题。'), '界面主题行应在场');
+    assert(ap.includes('界面字号') && ap.includes('调整应用界面的文字大小，图标和布局尺寸不受影响。'), '界面字号行应在场（ZCode uiFontSize）');
+    // 第二段：代码设置（ZCode settings.lightTheme / darkTheme / showLineNumbers / wrapLongLines / fontSize）
+    assert(ap.includes('代码设置') && ap.includes('设置代码内容的主题、字号和显示方式，不受界面字号影响。'), '应有 ZCode「代码设置」标题与描述');
+    for (const row of ['浅色代码主题', '深色代码主题', '显示行号', '长行自动换行', '代码字号']) {
+      assert(ap.includes(row), `代码设置应有「${row}」行`);
+    }
+    assert((ap.match(/<Select/g) || []).length >= 3, '主题 / 浅色代码主题 / 深色代码主题三个选择都应是下拉');
+    assert((ap.match(/<Switch/g) || []).length === 2 && (ap.match(/<NumberField/g) || []).length === 2, '行号与换行走开关、界面与代码字号走数字输入');
+    assert(ap.includes('MIN_FONT_SIZE_PX') && ap.includes('MAX_FONT_SIZE_PX'), '两处字号行都应钳制 12~20');
+    // 第三段：代码预览（ZCode ThemePreviewCard ×2 + 当前生效角标）
+    assert(ap.includes('代码预览') && ap.includes('同时预览浅色与深色代码主题，当前界面使用的主题会标记为「当前生效」。'), '应有 ZCode「代码预览」标题与描述');
+    assert(ap.includes('浅色预览') && ap.includes('深色预览') && ap.includes('当前生效'), '预览卡应浅 / 深并排并带当前生效角标');
+    assert(ap.includes('<Markdown text={PREVIEW_CODE}') && ap.includes('paletteVars(codePalette('), '预览卡应跑真实 Markdown 并按模式覆写 --code-* 调色板变量');
+    assert(ap.includes('prefersDark(themePref)') && !hasEmoji(ap), '预览卡应标记当前界面明暗且零 emoji');
+    // 偏好模块：默认值 / 存储键 / 钳制 / 调色板 / 落地 / 订阅
+    const appear = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'appearance.ts'), 'utf8');
+    assert(appear.includes("auroraagent.ui-font-size") && appear.includes('auroraagent.code-font-size') && appear.includes('auroraagent.code-line-numbers') && appear.includes('auroraagent.code-wrap'), '外观偏好应落 localStorage（ZCode 同款键名纪律）');
+    assert(appear.includes('auroraagent.code-theme-light') && appear.includes('auroraagent.code-theme-dark'), '浅 / 深代码主题应分别持久化');
+    assert(appear.includes('MIN_FONT_SIZE_PX = 12') && appear.includes('MAX_FONT_SIZE_PX = 20') && appear.includes('DEFAULT_UI_FONT_SIZE_PX = 14'), '字号范围应与 ZCode 一致（12~20，默认 14）');
+    assert(appear.includes("codeLineNumbers: false") && appear.includes('codeWrap: false'), '默认值应保持现有观感：行号关、不换行');
+    for (const theme of ['aurora', 'github', 'vitesse', 'catppuccin', 'contrast']) {
+      assert(appear.includes(`${theme}: {`) && appear.includes('light: { key:') && appear.includes('dark: { key:'), `代码主题 ${theme} 应有浅 / 深两套调色板`);
+    }
+    assert(appear.includes("root.style.setProperty('--ui-font-size'") && appear.includes("root.style.setProperty('--code-font-size'"), '落地应写字号基准变量（只动字号不动布局，ZCode 同纪律）');
+    assert(appear.includes('root.dataset.codeLn') && appear.includes('root.dataset.codeWrap'), '行号 / 换行应落 dataset 供 CSS 消费');
+    assert(appear.includes('useSyncExternalStore') && appear.includes('watchAppearance'), '偏好应是迷你真外部存储且启动时补落地 + 监听系统主题');
+    // 回归：localStorage 读不到是 null，Number(null)===0 会被误当合法值钳成 12px 下限
+    assert(appear.includes("raw === null ? Number.NaN : Number(raw)") && appear.includes('const num = (key: string)'), '读偏好必须先判空再转数（无偏好 = 默认值，不是下限）');
+    // 控件：NumberField 提交语义 / Switch 语义
+    const nf = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'NumberField.tsx'), 'utf8');
+    assert(nf.includes('Math.min(max, Math.max(min, Math.round(parsed)))') && nf.includes("e.key === 'Enter'") && nf.includes("e.key === 'Escape'"), '数字输入应钳制范围、回车提交、Esc 还原（ZCode FontSizeInput 语义）');
+    assert(nf.includes('type="number"') && nf.includes('inputMode="numeric"') && !nf.includes('transition:all'), '数字输入应为数字键盘形态且禁 transition:all');
+    const sw = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'Switch.tsx'), 'utf8');
+    assert(sw.includes('role="switch"') && sw.includes('aria-checked={checked}'), '开关应挂 switch 语义');
+    // 令牌与样式：默认调色板 / html 字号基准 / 行号槽 / 换行开关
+    const tokens = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'tokens.css'), 'utf8');
+    assert(tokens.includes('--ui-font-size:14px') && tokens.includes('--code-font-size:13px'), 'tokens.css 应有界面 / 代码字号默认令牌');
+    for (const v of ['--code-key', '--code-str', '--code-num', '--code-com', '--code-fn', '--code-type']) {
+      assert(tokens.includes(`${v}:var(`), `tokens.css 应有默认调色板变量 ${v}`);
+    }
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    assert(css.includes('html { font-size: var(--ui-font-size, 14px); }'), '界面字号应经 html 基准变量生效（全文件 font-size 已 rem 化）');
+    assert(!/font-size:[0-9.]+px/.test(css) && !/line-height:[0-9.]+px/.test(css), 'app.css 不应再留 px 字号 / 行高（否则界面字号设置无效）');
+    assert(css.includes('.md pre .c-key { color:var(--code-key); }') && css.includes('.md pre .c-type { color:var(--code-type); }'), '高亮 token 应走 --code-* 调色板变量');
+    assert(css.includes('.md pre.code-ln { padding-left:48px; }') && css.includes('.md pre .code-no {') && css.includes('position:sticky; left:0;'), '行号槽应粘性钉在左缘（横向滚动不跟着跑）');
+    assert(css.includes('html[data-code-wrap="on"] .md pre { white-space:pre-wrap;'), '长行换行开关应落 CSS');
+    assert(css.includes('.tc-pre { font-size:var(--code-font-size); }'), '工具输出预览应随代码字号变');
+    assert(css.includes('.nf-input') && css.includes('.nf-suffix') && css.includes('.sw {') && css.includes('.ap-prevs {'), 'NumberField / Switch / 预览卡样式应在场');
+    assert(css.includes('font-variant-numeric:tabular-nums'), '数字输入应等宽数字（ZCode tabular-nums）');
+    // 结构侧：Markdown 按行切分 + 序号 span + 偏好订阅
+    const md = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'markdown.tsx'), 'utf8');
+    assert(md.includes('splitTokenLines') && md.includes('className="code-no"') && md.includes('useAppearance'), '代码块应按偏好切分行号结构');
+    // 首帧与启动：index.html 预置 + main.tsx 运行期落地
+    const html = readFileSync(join(__dirname, '..', 'web-ui', 'index.html'), 'utf8');
+    assert(html.includes('--ui-font-size') && html.includes('auroraagent.code-line-numbers') && html.includes('auroraagent.code-wrap'), '首帧脚本应预置界面 / 代码字号与行号 / 换行（防刷新回跳闪烁）');
+    assert(html.includes('if (raw === null) return dflt;'), '首帧脚本同样必须判空（曾因 Number(null)===0 把默认字号错钳成 12px）');
+    const main = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'main.tsx'), 'utf8');
+    assert(main.includes('watchAppearance()'), '启动应补代码调色板落地并监听系统主题翻转');
+    // 构建产物在场
+    const page = await (await fetch(`${BASE}/`)).text();
+    const js = await (await fetch(`${BASE}${/\/app\/assets\/[A-Za-z0-9._-]+\.js/.exec(page)[0]}`)).text();
+    for (const marker of ['code-ln', 'code-no', 'nf-input', 'sw-thumb', 'ap-prev']) {
+      assert(js.includes(marker), `构建产物应含 ${marker}（改了 web-ui 忘了 build:web 会红）`);
+    }
+  });
+  await test('新建任务纪律源码契约：空新会话不允许再堆一个空会话', () => {
+    const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
+    // 守卫：当前会话无任何轮次且未在生成 → 已是「空新会话」
+    assert(app.includes('const isPristineSession = Boolean(current && current.turns === 0 && !busy);'), '应判定空新会话（无轮次且未在生成）');
+    assert(app.includes('const newSession = () => { if (isPristineSession) return; void createSessionNow(); };'), '新建任务入口应受守卫约束');
+    // 恢复路径（删光会话后）必须能创建第一个会话，不能被守卫误伤
+    assert(app.includes('else void createSessionNow();'), '删除当前会话后的空列表恢复应走原始创建（不受守卫约束）');
+    // Ctrl/Cmd+K 与按钮同规则：静默无效，不弹错误
+    assert(/e\.key\.toLowerCase\(\) === 'k'[\s\S]{0,160}newSession\(\);/.test(app), 'Ctrl/Cmd+K 应走守卫后的 newSession');
+    const sidebar = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Sidebar.tsx'), 'utf8');
+    assert(sidebar.includes('newDisabled?: boolean;') && sidebar.includes('disabled={newDisabled}'), '侧栏新建任务钮应接收并落地禁用态');
+    const overlay = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'WorkspaceTopOverlay.tsx'), 'utf8');
+    assert(overlay.includes('newDisabled') && overlay.includes('disabled={newDisabled}'), '收回态浮层新建钮应与侧栏同规则禁用');
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    assert(css.includes('.sb-new:disabled { color:var(--faint); cursor:not-allowed; }') && css.includes('.sb-new:disabled:hover { background:none; }'), '禁用态应按 ZCode 纪律：沉到最弱色且不响应 hover');
   });
   await test('对话区跟手与渲染性能源码契约：贴底才跟随、历史 memo、快捷键聚焦', () => {
     const chat = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ChatView.tsx'), 'utf8');
@@ -2579,7 +2665,7 @@ await test('代码高亮源码契约：Markdown 代码块接入零依赖高亮�
     for (const decl of ['max-height:320px', 'border-radius:20px', 'padding:4px', 'bottom:calc(100% + 4px)', 'left:0; right:0', 'z-index:100']) {
       assert(menuBlock.includes(decl), `菜单应按 dsh 数值声明 ${decl}`);
     }
-    assert(css.includes('min-height:40px') && css.includes('border-radius:10px') && css.includes('font-size:14px'), '菜单行应按 dsh 数值：40px / radius10 / 14px');
+    assert(css.includes('min-height:40px') && css.includes('border-radius:10px') && css.includes('font-size:1rem'), '菜单行应按 dsh 数值：40px / radius10 / 1rem（rem 化后 1rem=界面字号 14px）');
     assert(css.includes('.cmdpal-section') && css.includes('min-height:26px'), '组标题应按 dsh 数值：26px 高');
     assert(!css.includes('.skillpal-item'), '旧调色板样式应退役');
     const com = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Composer.tsx'), 'utf8');

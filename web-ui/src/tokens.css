@@ -21,6 +21,12 @@
   --diff-add:#4ec97f; --diff-add-bg:rgb(78 201 127 / 10%); --diff-add-ink:#8fe3b4;
   --diff-del:#ff6b6b; --diff-del-bg:rgb(255 107 107 / 10%); --diff-del-ink:#ff9a9a;
   --diff-meta:#8b93a7;
+  /* 外观偏好令牌（复刻 ZCode 外观页）：界面字号与代码字号可调（12~20），
+     只动字号不动布局；代码高亮调色板默认随主题令牌派生，外观页可切
+     GitHub / Vitesse / Catppuccin / 高对比（运行时由 appearance.ts 覆写 --code-*） */
+  --ui-font-size:14px; --code-font-size:13px;
+  --code-key:var(--accent-hi); --code-str:var(--ok-ink); --code-num:var(--think);
+  --code-com:var(--faint); --code-fn:var(--text); --code-type:var(--think);
   /* 提示气泡（复刻 ZCode tooltip 规格）：深色下用面板亮一档的底 + 强边框 */
   --tooltip-bg:#232936; --tooltip-line:#39415a; --tooltip-ink:#e8ebf2;
   --kbd-bg:#39415a; --kbd-ink:#b9bdc8;
