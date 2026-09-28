@@ -104,7 +104,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 
 调试：`LOG_LEVEL=debug npm run web`；常驻服务日志在 `~/Library/Logs/com.auroraagent.app.log`。
 
-发布：push 到 `master` 触发 `.github/workflows/release.yml`——先跑 `npm test`（Linux runner 需补装 `zsh`，Node 固定 24），全绿后 release-please 按常规提交（`feat` → 次版本、`fix` → 修订号，`docs` / `chore` 等不触发）开或更新「发布 PR」（版本号只动 `package.json` 一处 + 生成 `CHANGELOG.md`）；合并发布 PR 即打 tag 并创建 GitHub Release。版本基线锚点为 tag `v7.0.0`（commit `86e2276`）；仓库须开启 「Allow GitHub Actions to create and approve pull requests」且 workflow 默认权限为 write，否则 release-please 建不了 PR。文档站发布笔记仍走本地 `npm run docs:notes`。
+发布：push 到 `master` 触发 `.github/workflows/release.yml`——先跑 `npm test`（Linux runner 需补装 `zsh`，Node 固定 24），全绿后 release-please 按常规提交（`feat` → 次版本、`fix` → 修订号，`docs` / `chore` 等不触发）开或更新「发布 PR」（版本号只动 `package.json` 一处 + 生成 `CHANGELOG.md`）；合并发布 PR 即打 tag 并创建 GitHub Release。版本基线锚点为 tag `v7.0.0`（commit `86e2276`）；仓库须开启 「Allow GitHub Actions to create and approve pull requests」且 workflow 默认权限为 write，否则 release-please 建不了 PR。文档站发布笔记仍走本地 `npm run docs:notes`。提交主题的分隔冒号须用半角 `:`（规约见第 11 节）——release-please 解析不了全角 `：`，那条提交会不进发布说明。
 
 ## 3. 数据目录与配置
 
@@ -157,7 +157,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 - mock 触发词：消息含 `USE_TOOL` → 模型发起 `read_file mock.txt`；含 `USE_TOOL_WRITE` → 发起 `write_file written_by_agent.txt`；`FLAKY` 断网重试；`SLOW` 慢速；`USE_SKILL` / `USE_TODO` / `USE_EDIT` / `USE_PLAN` / `USE_SWARM` / `USE_MCP` 分别触发技能加载 / 待办维护 / diff 回传 / 计划两阶段 / 子代理派发 / MCP 工具调用；`USE_GOAL` → create_goal 全链路；`USE_GOAL_BUDGET` → 预算触顶转 budget_limited + 收尾轮；`USE_GOAL_IDLE` → 空转轮后续跑；`USE_GOAL_VERIFY_MET` / `USE_GOAL_VERIFY_NOTMET` → evaluator 裁决 met 转 complete(verifier_met) / not_met 连击转 paused(no_progress)（对齐 MiniMax repeatedGap）；`USE_GOAL_VERIFY_RETRY` → evaluator 首轮无结论恰好重试一次后采信 met；`USE_GOAL_EDIT:<会话id>` → turn 内经 REST 改写目标文本，在飞模型下一轮收到【目标已更新】并按新目标结算；`GOAL_TURN2` → REST 预建 active 目标后新用户轮首轮重述（【进行中的目标】），空转续跑后提案完成；系统提示带 `【会话标题生成】` 标记即标题生成轮（titleMode=model），回固定标题 `README 安装章节改写`
 - 前端契约测试（`/app` 服务、哈希资产、令牌 CSS 在场、零 emoji、旧路由 404、ProviderEditor 源码校验规则）守着构建产物与 `web-ui/` 的同步；改了 `web-ui/` 忘了 `build:web` 会红
 - 仓库守卫（`test/guards.mjs`，已入 `npm test`）：产品源码零 emoji、TUI 颜色单一真值源（仅 `theme.mjs` 出 SGR）、色板对比度达标、**网页设计令牌双主题对比度达标**（`tokens.css` 的 `:root` 与 `:root[data-theme="light"]` 关键前景 / 背景组合按 WCAG 阈值校验，防止浅色主题改糊）、新模块 ≤500 行、过渡动画禁 `transition:all`（只动颜色 / 透明度 / 变换，ZCode 教训）、文档站结构契约（中英页面一一对应 / 发布笔记标记在场 / 依赖例外登记）、**文档新鲜度**（`package.json` 版本 ↔ README 标注一致，防 release-please 合并后 README 静默过期）、**架构地图覆盖**（`util/` 顶层与 `util/agent/` 每个模块都登记进第 1 节表格，基线豁免记 `test/architecture-baseline.json`，对齐 ZCode architecture-baseline 思路）
-- 基线 381/381 通过。提交前 `npm test` 必须全绿；不许 `skip`，不许放宽断言迁就失败
+- 基线 395/395 通过。提交前 `npm test` 必须全绿；不许 `skip`，不许放宽断言迁就失败
 - `npm run check` 走真实上游，只在改上游集成时跑（花少量钱）
 - 跑 `npm test` 前确认 18901 无常驻 mock 占用（`pkill -f mock-longcat`）；exec 沙箱会杀后台进程，常驻服务 / mock 用 exec_command 前台会话跑
 
@@ -197,13 +197,13 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 执行顺序：
 
 1. 改代码（一个可独立验证的小改动，例如「修复一个错误映射」「新增一个厂商标识」）
-2. `npm test` 全绿（基线 381 个测试；不绿不提交）
+2. `npm test` 全绿（基线 395 个测试；不绿不提交）
 3. `git add <具体文件>` → `git commit -m "中文描述"` → `git push`
 
 规约：
 
 - 粒度：一次提交只做一件事；大任务拆成多次提交，每次提交后仓库都必须处于可运行、测试全绿的状态
-- 提交信息：中文，一句话说清「改了什么、为什么」，如 `fix(chat): 401 错误映射补充额度不足分支`
+- 提交信息：中文，一句话说清「改了什么、为什么」，如 `fix(chat): 401 错误映射补充额度不足分支`；**前缀后的分隔冒号必须用半角 `:`**（`feat(llm): xxx`）——release-please 的提交解析器只认半角，全角 `：` 会让该条提交解析失败并静默不进发布说明（7.2.0 前的历史主题全是全角，属已知欠账；已推送的历史不改写，见本节「不得改写已推送的历史」）；正文照常中文
 - 身份与远端：`user.name=AuroraAeon` / `user.email=auroraaeon@users.noreply.github.com`；`origin` = https://github.com/AuroraAeon/AuroraAgent（public，master 分支）
 - 凡触及真实上游行为的改动（请求格式、错误映射、模型目录解析、tools 拼装），提交前额外跑一次 `npm run check`
 - 推送失败先诊断（网络 / 权限），不得 `--force` 绕过，不得改写已推送的历史
