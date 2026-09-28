@@ -37,6 +37,9 @@ export const setAutostart = (autostart: boolean) => api<{ ok: boolean }>('/api/s
 export const getAgentProxy = () => api<{ ok: boolean; agentProxy: string }>('/api/settings/proxy');
 export const setAgentProxy = (agentProxy: string) =>
   api<{ ok: boolean; agentProxy: string }>('/api/settings/proxy', { method: 'POST', body: JSON.stringify({ agentProxy }) });
+export const getFailoverSettings = () => api<{ ok: boolean; providerFailover: boolean; providerFailoverMaxAttempts: number }>('/api/settings/failover');
+export const saveFailoverSettings = (body: { providerFailover?: boolean; providerFailoverMaxAttempts?: number }) =>
+  api<{ ok: boolean; providerFailover: boolean; providerFailoverMaxAttempts: number }>('/api/settings/failover', { method: 'POST', body: JSON.stringify(body) });
 export const getTuiSettings = () => api<TuiSettings>('/api/settings/tui');
 export const saveTuiSettings = (body: { terminalTitle?: string[]; notifications?: { when?: string; method?: string; events?: string[] } }) =>
   api<{ ok: boolean; tui: TuiSettings['tui'] }>('/api/settings/tui', { method: 'POST', body: JSON.stringify(body) });

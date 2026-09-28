@@ -1772,6 +1772,31 @@ try {
     const js = await (await fetch(`${BASE}${/\/app\/assets\/[A-Za-z0-9._-]+\.js/.exec(html)[0]}`)).text();
     assert(js.includes('session_renamed'), '构建产物应含标题刷新逻辑（改了 web-ui 忘了 build:web 会红）');
   });
+  await test('多提供方故障转移源码契约：事件登记、两端渲染、配置与路由在场', () => {
+    const events = readFileSync(join(__dirname, '..', 'util', 'agent', 'events.mjs'), 'utf8');
+    assert(events.includes("'provider_switched'"), '事件协议应登记 provider_switched');
+    const types = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'types.ts'), 'utf8');
+    assert(types.includes("type: 'provider_switched'"), '前端事件类型应声明 provider_switched');
+    assert(types.includes('PROVIDER_SWITCH_REASONS'), '前端应有切换原因中文映射');
+    const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
+    assert(app.includes("ev.type === 'provider_switched'"), 'App 应处理 provider_switched 并落提示');
+    const turn = readFileSync(join(__dirname, '..', 'util', 'agent', 'terminal-turn.mjs'), 'utf8');
+    assert(turn.includes("case 'provider_switched':"), '终端渲染器应呈现切换提示');
+    const cfg = readFileSync(join(__dirname, '..', 'util', 'config.mjs'), 'utf8');
+    assert(cfg.includes('parseFailoverConfig') && cfg.includes('providerFailover'), '配置层应解析故障转移字段');
+    const web = readFileSync(join(__dirname, '..', 'web.mjs'), 'utf8');
+    assert(web.includes('handleFailoverApi') && web.includes('/api/settings/failover'), 'web.mjs 应委派故障转移设置路由');
+    assert(web.includes('candidates: () => providers.all()'), '/api/chat 应接入候选源');
+    const loop = readFileSync(join(__dirname, '..', 'util', 'agent', 'loop.mjs'), 'utf8');
+    assert(loop.includes('activeProvider') && loop.includes('failoverIo'), 'Loop 应保持 turn 内粘性并接线故障转移');
+    const prov = readFileSync(join(__dirname, '..', 'util', 'llm', 'provider.mjs'), 'utf8');
+    assert(prov.includes('isFailoverable') && prov.includes('pickFailoverCandidate'), 'openChatStream 应做转移判定与候选挑选');
+    const settings = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SettingsDialog.tsx'), 'utf8');
+    assert(settings.includes('<FailoverPanel />'), '设置弹层应接入故障转移面板');
+    const panel = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'FailoverPanel.tsx'), 'utf8');
+    assert(panel.includes('getFailoverSettings') && panel.includes('saveFailoverSettings'), '面板应走 /api/settings/failover 读写');
+    assert(!hasEmoji(panel), '故障转移面板零 emoji 铁律');
+  });
   await test('Goal 终端接线源码契约：/goal 命令、状态栏芯片与三类事件呈现', async () => {
     const term = readFileSync(join(__dirname, '..', 'util', 'agent', 'terminal.mjs'), 'utf8');
     assert(term.includes("name: 'goal'") && term.includes('parseGoalCommand(arg)'), '终端 /goal 应走共享解析器');
@@ -2397,6 +2422,113 @@ async function drainAgentStream(stream, { until, onEvent } = {}) {
     if (until && until(ev)) return events;
   }
 }
+
+  // ---------- 多提供方 429 故障转移（e2e） ----------
+  // mock 按 Authorization 里的 Key 模拟上游不可用：ak-fail → 429、ak-down → 503（与消息内容无关）
+  async function createFailoverProvider(id, apiKey) {
+    return createProvider({
+      id, name: `故障转移${id}`, protocol: 'openai',
+      baseUrl: `${MOCK_ORIGIN}/v1`, apiKey,
+      models: [{ id: 'shared-model', name: '共享模型' }],
+    });
+  }
+  await test('Agent turn：主提供方 429 时自动切换提供方，记账归属新提供方', async () => {
+    await createFailoverProvider('fo-a', 'ak-fail');
+    await createFailoverProvider('fo-b', 'ak-ok');
+    const s = await createAgentSession({ name: '故障转移会话', provider: 'fo-a', model: 'shared-model' });
+    const before = (await (await fetch(`${BASE}/api/usage`)).json()).totals.requests;
+    const resp = await fetch(`${AGENT}/turn`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: s.id, input: '随便问点什么' }),
+    });
+    const events = await drainAgentStream(openAgentStream(resp));
+    const switched = events.find((e) => e.type === 'provider_switched');
+    assert(switched, '应推送 provider_switched 事件');
+    eq(switched.from, 'fo-a', '切换源应是主提供方');
+    eq(switched.to, 'fo-b', '切换目标应是提供同模型且有 Key 的提供方');
+    eq(switched.reason, 'rate_limit', '429 的原因词应为 rate_limit');
+    eq(switched.attempt, 1, '首次尝试失败即转移');
+    assert(events.find((e) => e.type === 'turn_completed'), '转移后应正常跑完 turn');
+    const texts = events.filter((e) => e.type === 'text_chunk').map((e) => e.text).join('');
+    assert(texts.includes('shared-model'), '终稿应来自切换后的提供方');
+    const usage = await (await fetch(`${BASE}/api/usage`)).json();
+    assert(usage.totals.requests >= before + 1, '账本应记录这次请求');
+    const rows = usage.recent.filter((r) => r.provider === 'fo-b');
+    assert(rows.length >= 1, 'token 应记账到真实产出的提供方 fo-b，而非 fo-a');
+    assert(!usage.recent.some((r) => r.provider === 'fo-a'), '失败 attempt 无 token 消耗，不应记账到 fo-a');
+    await deleteProvider('fo-a');
+    await deleteProvider('fo-b');
+  });
+  await test('Agent turn：候选提供方全部不可用时报出最后一次真实错误', async () => {
+    await createFailoverProvider('fo-c', 'ak-fail');
+    await createFailoverProvider('fo-d', 'ak-fail');
+    const s = await createAgentSession({ name: '双故障会话', provider: 'fo-c', model: 'shared-model' });
+    const resp = await fetch(`${AGENT}/turn`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: s.id, input: '随便问点什么' }),
+    });
+    const events = await drainAgentStream(openAgentStream(resp));
+    const failed = events.find((e) => e.type === 'turn_failed');
+    assert(failed, '候选耗尽应以 turn_failed 收尾');
+    assert(failed.error.includes('请求过于频繁'), '应报出 429 的中文提示: ' + failed.error);
+    eq(events.filter((e) => e.type === 'provider_switched').length, 1, 'fo-c → fo-d 只转移一次（默认 3 次尝试用尽）');
+    await deleteProvider('fo-c');
+    await deleteProvider('fo-d');
+  });
+  await test('/api/chat：速测通道同样故障转移且不透出错误', async () => {
+    await createFailoverProvider('fo-e', 'ak-fail');
+    await createFailoverProvider('fo-f', 'ak-ok');
+    const s = await readStream(await chat({ messages: [{ role: 'user', content: '速测转移' }], provider: 'fo-e', model: 'shared-model' }));
+    assert(s.raw.includes('shared-model'), '应拿到切换后提供方的回答');
+    const usage = await (await fetch(`${BASE}/api/usage`)).json();
+    const row = usage.recent.find((r) => r.provider === 'fo-f');
+    assert(row, '速测账本应归属切换后的提供方');
+    await deleteProvider('fo-e');
+    await deleteProvider('fo-f');
+  });
+  await test('不可转移错误（401）不触发故障转移，原样透传', async () => {
+    await createFailoverProvider('fo-g', 'ak-401-a');
+    await createFailoverProvider('fo-h', 'ak-401-b');
+    const before = mock.state.requests.length;
+    const resp = await chat({ messages: [{ role: 'user', content: 'BAD_KEY 鉴权失败' }], provider: 'fo-g', model: 'shared-model' });
+    eq(resp.status, 401, '401 应原样透传');
+    const j = await resp.json();
+    assert(j.error.message.includes('API Key 无效'), '应保留鉴权错误的中文提示');
+    eq(mock.state.requests.length, before + 1, '401 不可转移：不应再向其它提供方发请求');
+    await deleteProvider('fo-g');
+    await deleteProvider('fo-h');
+  });
+  await test('GET/POST /api/settings/failover 读写故障转移偏好', async () => {
+    const got = await (await fetch(`${BASE}/api/settings/failover`)).json();
+    eq(got.ok, true);
+    eq(got.providerFailover, true, '缺省开启');
+    eq(got.providerFailoverMaxAttempts, 3, '缺省 3 次尝试');
+    const bad = await (await fetch(`${BASE}/api/settings/failover`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ providerFailover: 'nope' }),
+    })).json();
+    eq(bad.ok, false, '非布尔值应被拒绝');
+    const badMax = await (await fetch(`${BASE}/api/settings/failover`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ providerFailoverMaxAttempts: 99 }),
+    })).json();
+    eq(badMax.ok, false, '越界次数应被拒绝');
+    const saved = await (await fetch(`${BASE}/api/settings/failover`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ providerFailover: false, providerFailoverMaxAttempts: 2 }),
+    })).json();
+    eq(saved.ok, true);
+    eq(saved.providerFailover, false, '关闭应落盘');
+    eq(saved.providerFailoverMaxAttempts, 2, '次数应落盘');
+    const reread = await (await fetch(`${BASE}/api/settings/failover`)).json();
+    eq(reread.providerFailover, false, '重读应保持关闭');
+    // 还原缺省，避免影响后续用例
+    await (await fetch(`${BASE}/api/settings/failover`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ providerFailover: true, providerFailoverMaxAttempts: 3 }),
+    })).json();
+  });
+
 
 await test('GET /api/agent/harnesses 返回三档模式', async () => {
   const j = await (await fetch(`${AGENT}/harnesses`)).json();

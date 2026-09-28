@@ -12,6 +12,7 @@ import { McpPanel } from './McpPanel';
 import { SkillsPanel } from './SkillsPanel';
 import { TuiPanel } from './TuiPanel';
 import { ProxyPanel } from './ProxyPanel';
+import { FailoverPanel } from './FailoverPanel';
 import { UsagePanel } from './UsagePanel';
 import { ErrorLogPanel } from './ErrorLogPanel';
 import { toast } from '../toast';
@@ -262,6 +263,8 @@ export function SettingsDialog({ open, onClose, onProvidersChanged }: Props) {
             <TuiPanel />
 
             <ProxyPanel />
+
+            <FailoverPanel />
 
             <section className="pv-sec">
               <h3 className="pv-sec-t">外观</h3>

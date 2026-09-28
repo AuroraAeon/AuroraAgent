@@ -11,6 +11,7 @@ export type AgentEvent =
   | { type: 'plan_proposed'; sessionId: string; turnId: string; plan: string }
   | { type: 'plan_approved'; sessionId: string; turnId: string; plan: string }
   | { type: 'plan_rejected'; sessionId: string; turnId: string; plan: string }
+  | { type: 'provider_switched'; sessionId: string; turnId: string; from: string; fromName?: string; to: string; toName?: string; reason: string; attempt: number }
   | { type: 'token_usage_updated'; sessionId: string; turnId: string; model: string; inputTokens: number; outputTokens: number; cost: number }
   | { type: 'context_compression_started'; sessionId: string; turnId: string; headRecords: number }
   | { type: 'context_compression_completed'; sessionId: string; turnId: string; keptRecords: number }
@@ -38,6 +39,11 @@ export type GoalState = {
   lastVerification: GoalVerification | null; lastWorkerProposal: { status?: string; summary?: string; at?: number } | null;
   statusReason: string | null;
   executionWait: { reason: 'permission' | 'plan' | 'verification' | 'unknown'; sinceMs: number } | null;
+};
+
+/** 故障转移切换原因中文文案（后端 llm/failover.mjs 的 failoverReason 词表镜像，用于展示） */
+export const PROVIDER_SWITCH_REASONS: Record<string, string> = {
+  rate_limit: '上游限流', server: '上游故障', network: '网络异常', timeout: '上游超时', unknown: '上游异常',
 };
 
 /** 状态 / 等待中文文案（后端单一事实源的前端镜像，用于展示） */

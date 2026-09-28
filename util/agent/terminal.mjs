@@ -419,6 +419,9 @@ export async function runTerminal({ argv = [] } = {}) {
       model: target.model || cfg.model,
       harness: getHarness(target.harness),
       cfg, painter: painter(), ask, hooks, notifier,
+      // 故障转移与网页同源：候选=全部提供方（同模型 / 有 Key 过滤在 llm/failover.mjs）
+      failoverCandidates: () => providers.all(),
+      providerFailover: cfg.providerFailover, providerFailoverMaxAttempts: cfg.providerFailoverMaxAttempts,
       onUsage: (u) => { foot.tokens = (u.inputTokens || 0) + (u.outputTokens || 0); foot.cost = u.cost; },
       onSession: (m) => { if (side) btw.meta = m; else meta = m; },
     });

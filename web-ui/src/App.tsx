@@ -15,7 +15,7 @@ import {
 } from './api';
 import { GOAL_COMMAND_HELP, formatGoalReceipt, formatGoalSummary, parseGoalCommand } from '../../util/agent/goal/command.mjs';
 import { connectGoalEvents } from './goal-events';
-import { GOAL_STATUS_LABELS } from './types';
+import { GOAL_STATUS_LABELS, PROVIDER_SWITCH_REASONS } from './types';
 import type { AgentEvent, GoalState, Harness, LiveTurn, ModelInfo, MsgPart, MsgView, PlanView, ProviderRow, SessionMeta, SettingsInfo, TodoItem, ToolView, SkillRow } from './types';
 
 const planView = (text: string, decided: PlanView['decided']): PlanView => ({ text, decided });
@@ -210,6 +210,8 @@ export default function App() {
           // goal 事件仅投影到当前会话（对齐 MiniMax goal-flow.project 的 sessionId 首行校验：
           // 运行中切换 / 新建会话后，旧会话 turn 流仍在推送，不能污染新会话的横幅）
           else if (ev.type === 'goal_created' || ev.type === 'goal_status_changed' || ev.type === 'goal_usage_updated' || ev.type === 'goal_wait_changed') { if (ev.sessionId === currentIdRef.current) setGoal(ev.goal); }
+          // 故障转移提示（notice 不进服务端转录，turn 收尾刷新时保留，与 /goal 回执同一机制）
+          else if (ev.type === 'provider_switched') setMessages((m) => [...m, { kind: 'notice', key: `ps-${ev.turnId}-${ev.attempt}`, text: `已切换提供方：${ev.fromName || ev.from} → ${ev.toName || ev.to}（${PROVIDER_SWITCH_REASONS[ev.reason] || ev.reason}，第 ${ev.attempt} 次尝试）` }]);
           else if (ev.type === 'turn_failed') setError(ev.error || '任务失败');
           // 浏览器通知（opt-in，默认关；未授权时静默跳过）
           if ((ev.type === 'turn_completed' || ev.type === 'turn_failed') && browserNotifyEnabled() && typeof Notification !== 'undefined' && Notification.permission === 'granted') {

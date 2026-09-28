@@ -1,5 +1,5 @@
 /**
- * LongCat 上游的离线 mock：复刻真实的 SSE 帧结构（reasoning_content + content + usage、
+ * LongCat 上游的离线 mock（另支持按 Authorization 里的 Key 模拟 429/503，见下方故障转移夹具）：复刻真实的 SSE 帧结构（reasoning_content + content + usage、
  * lastOne 字段、[DONE] 收尾），并支持按消息内容触发 401/402 错误，用于测试错误映射。
  * 同时复刻一个「自定义提供方」端点 /v1/models，供自定义 Provider 的质问与路由测试使用。
  */
@@ -37,6 +37,17 @@ export function startMock(port = 18901) {
         const j = JSON.parse(body || '{}');
         state.lastChatBody = j;
         const lastText = JSON.stringify(j.messages?.at(-1)?.content ?? '');
+        // 故障转移夹具：按 API Key 模拟上游不可用（与消息内容无关，同一请求换提供方即恢复）
+        // ak-fail → 429 限流（可转移）；ak-down → 503 服务端错误（可转移）
+        const authKey = req.headers.authorization || '';
+        if (authKey.includes('ak-fail')) {
+          res.writeHead(429, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: { code: 'rate_limit_exceeded', message: 'Too Many Requests' } }));
+        }
+        if (authKey.includes('ak-down')) {
+          res.writeHead(503, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: { code: 'service_unavailable', message: 'upstream overloaded' } }));
+        }
         if (lastText.includes('BAD_KEY')) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ error: { code: 'invalid_api_key', message: 'incorrect api key' } }));
