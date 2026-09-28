@@ -1733,8 +1733,8 @@ try {
     assert(css.includes('width:280px'), '侧栏宽应为 dsh 的 280px');
     assert(css.includes('padding:6px 12px; font-size:14px;'), '侧栏内边距与基准字号应对齐 dsh');
     assert(css.includes('background:var(--sidebar-fill)'), '侧栏应用专用填充色而非面板色');
-    assert(css.includes('.sidebar.rail { width:56px;'), '收起态应为 dsh 的 56px 导轨');
-    assert(app.includes("localStorage.getItem('auroraagent.sidebar')") && app.includes("localStorage.setItem('auroraagent.sidebar'"), '导轨偏好应落 localStorage（受控后持久化随状态上移到 App）');
+    assert(!css.includes('.sidebar.rail'), '收回态不应再是 56px 图标导轨（ZCode 语义：左边整体消失，只留 Header）');
+    assert(app.includes("localStorage.getItem('auroraagent.sidebar')") && app.includes("localStorage.setItem('auroraagent.sidebar'"), '收回偏好应落 localStorage（受控后持久化随状态上移到 App）');
     // 品牌行：60px / 24px 标 / 18px/600 名 / 28px 圆钮（收起 36px）
     const logo = /\.sb-logo \{[^}]*\}/.exec(css)?.[0] || '';
     for (const decl of ['height:60px', 'justify-content:flex-end', 'gap:8px', 'padding:8px 0 8px 4px']) {
@@ -1745,7 +1745,7 @@ try {
     for (const decl of ['width:28px', 'height:28px', 'border-radius:50%']) {
       assert(iconbtn.includes(decl), `折叠钮应按 dsh 数值声明 ${decl}`);
     }
-    assert(sidebar.includes('IconPanelLeft'), '折叠钮应使用 dsh 同款 panel-left 图标');
+    assert(sidebar.includes('IconPanelLeftClose') && !sidebar.includes('sb-rail'), '折叠钮应取「关闭面板」语义图标，且 56px 导轨分支应整体退役');
     assert(sidebar.includes('className="sb-brand"') && sidebar.includes('onClick={onNew}'), '点品牌即新建会话（同 dsh 行为）');
     // 新建会话钮：38px / 圆角 12px / 14px/500
     const newBtn = /\.sb-new \{[^}]*\}/.exec(css)?.[0] || '';
@@ -1785,35 +1785,50 @@ try {
     eq(isAppleKeyboardPlatform({ platform: 'MacIntel' }), true, 'platform 命中 mac 应为 Apple 键盘平台');
     eq(isAppleKeyboardPlatform({ platform: 'Win32', userAgent: 'Mozilla/5.0 (Windows NT 10.0)' }), false, 'Windows 不应判为 Apple');
   });
-  await test('折叠导轨单按钮源码契约：像素级复刻 ZCode WorkspaceSidebarCollapsedRail', () => {
+  await test('侧栏收回源码契约：ZCode 语义——左边整体消失只留 Header，200ms 擦除动画', () => {
+    const header = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'WorkspaceHeader.tsx'), 'utf8');
     const sidebar = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Sidebar.tsx'), 'utf8');
     const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
     const tip = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'ControlTooltip.tsx'), 'utf8');
-    // 结构：导轨左上角合并为单按钮（品牌砖 + 面板图标两层），展开态仍是品牌 + 切换钮
-    assert(sidebar.includes('sb-rail-toggle') && sidebar.includes('sb-rail-logo') && sidebar.includes('sb-rail-icon'), '导轨左上角应为单按钮（logo 与面板图标两层叠加）');
-    assert(sidebar.includes('rail ? (') && sidebar.includes('onToggleRail'), '导轨态与展开态应按 rail 条件分支，切换回调受控注入');
-    assert(sidebar.includes('ControlTooltip') && sidebar.includes('title="切换侧边栏"') && sidebar.includes('sidebarToggleLabel()'), '两处切换入口都应挂 ControlTooltip 并带快捷键标签');
-    assert(sidebar.includes('side="bottom"'), '侧栏气泡应在按钮下方（ZCode side=bottom）');
-    // 按钮数值：28px / 8px 圆角 / 20px logo / 16px 图标绝对居中 / hover 只换透明度
-    const btn = /\.sb-rail-toggle \{[^}]*\}/.exec(css)?.[0] || '';
+    // 结构：侧栏不卸载但宽高归零 + 淡出（ZCode data-workspace-sidebar-panel），Header 常驻并承载全部入口
+    assert(app.includes('sb-panel') && app.includes('<WorkspaceHeader'), 'App 应把侧栏包进裁剪容器并渲染 WorkspaceHeader');
+    assert(app.includes('aria-hidden={rail || undefined}') && app.includes('inert={rail}'), '收回态侧栏应 aria-hidden + inert（不可见也不可聚焦）');
+    assert(app.includes('collapsed={rail}'), 'Header 应收住态受控（collapsed 由 rail 驱动）');
+    assert(app.includes('scope="header"') && app.includes('resetKeys={[currentId, rail]}'), 'Header 应自带分区错误边界（ZCode scope=workspace-header 同款，崩了不拖垮整列对话）');
+    assert(header.includes('ws-head') && header.includes('ws-toggle') && header.includes('ws-new') && header.includes('onOpenSettings'), 'Header 应自带切换钮 / 新建会话 / 设置入口（侧栏不可见时功能不丢）');
+    assert(!sidebar.includes('sb-rail') && !sidebar.includes('rail ?'), 'Sidebar 不应再有 56px 导轨分支');
+    // 动画规格：侧栏过渡 width / opacity、Header 过渡 height / opacity / border-color，均 200ms ease-out，且都不许退回 all
+    const panel = /\.sb-panel \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['width:280px', 'overflow:hidden', 'transition:width 200ms var(--ease), opacity 200ms var(--ease)']) {
+      assert(panel.includes(decl), `侧栏裁剪容器应按 ZCode transition-[width,opacity] 声明 ${decl}`);
+    }
+    assert(css.includes('.sb-panel.off { width:0; opacity:0; pointer-events:none; }'), '收回态应宽高归零 + 淡出 + 断指针（ZCode collapsedSidebarWidthPx=0）');
+    const head = /\.ws-head \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['height:0', 'opacity:0', 'transition:height 200ms var(--ease), opacity 200ms var(--ease), border-color 200ms var(--ease)']) {
+      assert(head.includes(decl), `Header 常驻态应按同拍动画声明 ${decl}`);
+    }
+    assert(css.includes('.ws-head.on { height:48px; opacity:1; border-bottom-color:var(--line); }'), 'Header 展开应为 ZCode h-12 + border-b');
+    assert(!/\.ws-head[^{]*\{[^}]*transition:all/.test(css) && !/\.sb-panel[^{]*\{[^}]*transition:all/.test(css), '过渡必须显式枚举属性，不许 transition:all（ZCode 同款教训）');
+    assert(css.includes('prefers-reduced-motion: reduce) { .sb-panel, .ws-head'), '减弱动效下侧栏擦除与 Header 生长应直接跳终态');
+    // Header 切换钮：ZCode DesktopTopOverlay 那枚 ghost 方钮（logo / 图标两层叠加 + 「打开面板」语义）
+    assert(header.includes('IconPanelLeftOpen') && sidebar.includes('IconPanelLeftClose'), '收回态取「打开面板」图标、展开态取「关闭面板」图标（ZCode SidebarToggleIcon 语义）');
+    assert(header.includes('ControlTooltip') && header.includes('title="切换侧边栏"') && header.includes('sidebarToggleLabel()'), 'Header 切换钮应挂 ControlTooltip 并带快捷键标签');
+    assert(header.includes('side="bottom"'), 'Header 气泡应在按钮下方（ZCode side=bottom）');
+    const btn = /\.ws-toggle \{[^}]*\}/.exec(css)?.[0] || '';
     for (const decl of ['width:28px', 'height:28px', 'border-radius:8px', 'position:relative', 'overflow:hidden']) {
-      assert(btn.includes(decl), `导轨钮应按 ZCode icon-md 规格声明 ${decl}`);
+      assert(btn.includes(decl), `切换钮应按 ZCode rounded-lg 规格声明 ${decl}`);
     }
-    const logo = /\.sb-rail-logo \{[^}]*\}/.exec(css)?.[0] || '';
+    const logo = /\.ws-toggle-logo \{[^}]*\}/.exec(css)?.[0] || '';
     for (const decl of ['width:20px', 'height:20px', 'border-radius:6px']) {
-      assert(logo.includes(decl), `非 hover 态 logo 应按 ZCode size-5 规格声明 ${decl}`);
+      assert(logo.includes(decl), `非 hover 态品牌砖应按 ZCode size-5 规格声明 ${decl}`);
     }
-    const icon = /\.sb-rail-icon \{[^}]*\}/.exec(css)?.[0] || '';
+    const icon = /\.ws-toggle-icon \{[^}]*\}/.exec(css)?.[0] || '';
     for (const decl of ['position:absolute', 'inset:0', 'margin:auto', 'width:16px', 'height:16px']) {
       assert(icon.includes(decl), `面板图标应绝对居中且按 ZCode size-4 规格声明 ${decl}`);
     }
-    assert(css.includes('.sb-rail-toggle:hover .sb-rail-logo { opacity:0; }'), 'hover 时 logo 应淡出（group-hover:opacity-0 同义）');
-    assert(css.includes('.sb-rail-toggle:hover .sb-rail-icon { opacity:1; }'), 'hover 时面板图标应淡入');
-    const head = /\.sb-rail-head \{[^}]*\}/.exec(css)?.[0] || '';
-    for (const decl of ['height:36px', 'border-bottom:1px solid var(--line)']) {
-      assert(head.includes(decl), `导轨头应按 ZCode h-9 + border-b 规格声明 ${decl}`);
-    }
+    assert(css.includes('.ws-toggle:hover .ws-toggle-logo { opacity:0; }'), 'hover 时品牌砖应淡出（group-hover:opacity-0 同义）');
+    assert(css.includes('.ws-toggle:hover .ws-toggle-icon { opacity:1; }'), 'hover 时面板图标应淡入');
     // 气泡工程与视觉：portal 单例 root、role=tooltip、Esc 可关、8px 圆角壳、16px 键帽
     assert(tip.includes('createPortal') && tip.includes("root.id = 'tooltip-root'"), '气泡应经 portal 挂模块级单例 root（绕开 overflow 裁剪，别按实例建上下文）');
     assert(tip.includes('role="tooltip"') && tip.includes("e.key === 'Escape'"), '气泡应有 role=tooltip 且 Esc 可关');
@@ -1825,9 +1840,9 @@ try {
     for (const decl of ['height:16px', 'border-radius:6px', 'background:var(--kbd-bg)']) {
       assert(kbd.includes(decl), `快捷键键帽应按 ZCode 规格声明 ${decl}`);
     }
-    // 快捷键绑定与持久化：Cmd/Ctrl+B 切换导轨，偏好随受控状态落 App
-    assert(app.includes("e.key.toLowerCase() === 'b'") && app.includes('setRail((v) => !v)'), 'App 应绑 Cmd/Ctrl+B 切换导轨');
-    assert(app.includes('toggleRail') && app.includes('rail={rail}'), 'App 应持有导轨态并下传受控 props');
+    // 快捷键绑定与持久化：Cmd/Ctrl+B 切换收回态，偏好随受控状态落 App
+    assert(app.includes("e.key.toLowerCase() === 'b'") && app.includes('setRail((v) => !v)'), 'App 应绑 Cmd/Ctrl+B 切换收回态');
+    assert(app.includes('toggleRail') && app.includes('onToggleRail={toggleRail}'), 'App 应持有收回态并把切换回调注入侧栏与 Header');
     const tokens = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'tokens.css'), 'utf8');
     assert(tokens.includes('--tooltip-bg:') && tokens.includes('--kbd-bg:') && tokens.includes('--tooltip-ink:') && tokens.includes('--kbd-ink:'), 'tokens.css 双主题应提供 tooltip / kbd 令牌');
     assert((tokens.match(/--tooltip-bg:/g) || []).length === 2 && (tokens.match(/--kbd-bg:/g) || []).length === 2, 'tooltip / kbd 令牌应深浅双主题各一份');

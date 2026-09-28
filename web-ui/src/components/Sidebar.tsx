@@ -1,16 +1,16 @@
 /** 侧栏：像素级对齐 dsh web 的 SidebarRoot + WorkspaceBrowser 组合。
  *  数值自 @deepseek-ai/dsh-client-ui-sidebar 与 dsh-client-ui-workspace 的 CSS 模块迁移：
- *  栏宽 280px（右侧圆钮可收成 56px 导轨，偏好落 localStorage）、内边距 6px 12px、基准字号 14px；
+ *  栏宽 280px（右侧圆钮可整块收起：收回后左边只留 Header，偏好落 localStorage）、内边距 6px 12px、基准字号 14px；
  *  品牌行 60px（24px 标 + 18px/600 名 + 右侧 28px 圆钮，点品牌即新建会话——同 dsh）；
  *  新建会话钮 38px / 圆角 12px / 细描边 / 悬浮底 / 14px/500；
  *  会话区：36px 区头（「会话」标签 + 可展开搜索）+ 32px 行（圆角 8px、悬停底色、14px 标题、
  *  12px 相对时间悬停隐去、16px 操作钮悬停现形）；栏脚是 panelRow 形态的设置入口。
  *
- *  折叠成 56px 导轨后，左上角合并为单按钮——像素级复刻 ZCode WorkspaceSidebarCollapsedRail：
- *  36px 行高 + 通栏底边框，28px ghost 方钮静止显 20px 品牌砖、hover 淡出并淡入 16px 面板图标，
- *  提示气泡「切换侧边栏 + ⌘B/Ctrl+B」（Cmd/Cmd+B 快捷键在 App 绑定），点击展开侧栏。 */
+ *  折叠后侧栏整块消失（ZCode 语义：不存在左侧边，只剩 WorkspaceHeader 承载入口），
+ *  品牌行这枚 28px 圆钮即展开态唯一的切换入口，图标取「关闭面板」语义的 IconPanelLeftClose，
+ *  气泡挂 ControlTooltip 显示「切换侧边栏 + ⌘B/Ctrl+B」（Cmd/Ctrl+B 快捷键在 App 绑定）。 */
 import { useRef, useState } from 'react';
-import { IconClose, IconCopy, IconGear, IconPanelLeft, IconPlus, IconSearch, IconSpark, IconTrash } from '../icons';
+import { IconClose, IconCopy, IconGear, IconPanelLeftClose, IconPlus, IconSearch, IconSpark, IconTrash } from '../icons';
 import { ControlTooltip } from '../ControlTooltip';
 import { sidebarToggleLabel } from '../shortcut';
 import { fmtRel } from '../projection';
@@ -27,13 +27,13 @@ type Props = {
   /** 首屏会话列表未回：显示骨架行，别把「加载中」显示成「还没有会话」 */
   loading?: boolean;
   version: string;
-  /** 导轨态（受控：偏好持久化与 Ctrl/Cmd+B 快捷键都在 App 侧） */
-  rail: boolean;
+  /** 收回侧栏（受控：偏好持久化与 Ctrl/Cmd+B 快捷键都在 App 侧）；
+   *  收回态由 App 把本组件连同裁剪容器一起淡出，这里不再有图标态变体。 */
   onToggleRail: () => void;
 };
 
 export function Sidebar({
-  sessions, currentId, onSelect, onNew, onDelete, onFork, onOpenSettings, loading, version, rail, onToggleRail,
+  sessions, currentId, onSelect, onNew, onDelete, onFork, onOpenSettings, loading, version, onToggleRail,
 }: Props) {
   const [q, setQ] = useState('');
   const [searchOn, setSearchOn] = useState(false);
@@ -46,36 +46,25 @@ export function Sidebar({
   const closeSearch = () => { setSearchOn(false); setQ(''); };
 
   return (
-    <aside className={`sidebar${rail ? ' rail' : ''}`}>
-      {rail ? (
-        <div className="sb-rail-head">
-          <ControlTooltip title="切换侧边栏" shortcut={sidebarToggleLabel()} side="bottom">
-            <button type="button" className="sb-rail-toggle" aria-label="切换侧边栏" onClick={onToggleRail}>
-              <span className="sb-rail-logo" aria-hidden="true"><IconSpark size={13} /></span>
-              <IconPanelLeft size={16} className="sb-rail-icon" />
-            </button>
-          </ControlTooltip>
-        </div>
-      ) : (
-        <div className="sb-logo">
-          <button type="button" className="sb-brand" aria-label="新建会话" onClick={onNew}>
-            <span className="sb-brand-mark" aria-hidden="true"><IconSpark size={15} /></span>
-            <span className="sb-brand-name">AuroraAgent</span>
+    <aside className="sidebar">
+      <div className="sb-logo">
+        <button type="button" className="sb-brand" aria-label="新建会话" onClick={onNew}>
+          <span className="sb-brand-mark" aria-hidden="true"><IconSpark size={15} /></span>
+          <span className="sb-brand-name">AuroraAgent</span>
+        </button>
+        <ControlTooltip title="切换侧边栏" shortcut={sidebarToggleLabel()} side="bottom">
+          <button
+            type="button"
+            className="sb-iconbtn sb-toggle"
+            aria-label="切换侧边栏"
+            onClick={onToggleRail}
+          >
+            <IconPanelLeftClose size={16} />
           </button>
-          <ControlTooltip title="切换侧边栏" shortcut={sidebarToggleLabel()} side="bottom">
-            <button
-              type="button"
-              className="sb-iconbtn sb-toggle"
-              aria-label="切换侧边栏"
-              onClick={onToggleRail}
-            >
-              <IconPanelLeft size={16} />
-            </button>
-          </ControlTooltip>
-        </div>
-      )}
+        </ControlTooltip>
+      </div>
       <button type="button" className="sb-new" onClick={onNew} title="新会话">
-        <IconPlus size={rail ? 18 : 14} />
+        <IconPlus size={14} />
         <span className="sb-new-label">新会话</span>
       </button>
       <div className="sb-region">

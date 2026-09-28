@@ -56,7 +56,7 @@ Base unit is `4px`. Repeat only a few steps; no arbitrary values:
 ## 5. Icon and Control Sizes
 
 - **`16px` is the default icon baseline**; secondary toolbar icons may use `13`–`15px` but stay consistent within a screen.
-- Three control heights dominate: `28px` (icon buttons / compact controls), `32px` (list rows), `36px` (section heads / rail button rows); primary buttons `38px`. Reuse existing steps instead of inventing new height systems.
+- Three control heights dominate: `28px` (icon buttons / compact controls), `32px` (list rows), `36px` (section heads); primary buttons `38px`. Reuse existing steps instead of inventing new height systems.
 - Icon-only buttons stay square. Do not promote every action to primary; keep a clear action hierarchy within each panel.
 
 ## 6. Radius Hierarchy

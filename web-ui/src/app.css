@@ -9,7 +9,14 @@
   background:var(--sidebar-fill); border-right:1px solid var(--line);
   padding:6px 12px; font-size:14px;
 }
-.sidebar.rail { width:56px; padding:18px 10px 6px; }
+/* 侧栏裁剪容器（ZCode data-workspace-sidebar-panel）：收回时宽高归零 + 淡出，
+   200ms ease-out 只过渡 width / opacity；内层 .sidebar 保持 280px 定宽不随外包重排，
+   于是收起是一段「擦除」动画，会话列表不会被挤压变形 */
+.sb-panel {
+  width:280px; flex:none; min-height:0; overflow:hidden;
+  transition:width 200ms var(--ease), opacity 200ms var(--ease);
+}
+.sb-panel.off { width:0; opacity:0; pointer-events:none; }
 
 /* 品牌行：60px 高，品牌在左、折叠钮在右（dsh logoRow） */
 .sb-logo { display:flex; align-items:center; justify-content:flex-end; gap:8px; height:60px; margin-bottom:8px; padding:8px 0 8px 4px; flex:none; overflow:hidden; }
@@ -25,28 +32,6 @@
   transition:background .15s var(--ease), color .15s var(--ease);
 }
 .sb-iconbtn:hover { background:var(--sidebar-hover); color:var(--text); }
-
-/* 折叠导轨左上角单按钮（像素级复刻 ZCode WorkspaceSidebarCollapsedRail）：
-   36px 行高 + 通栏底边框；28px ghost 方钮（8px 圆角），静止显 20px 品牌砖，
-   hover 时品牌砖淡出、16px 面板图标淡入（均只动透明度，150ms），点击展开侧栏 */
-.sb-rail-head {
-  height:36px; flex:none; display:flex; align-items:center; justify-content:center;
-  margin:0 -10px 12px; padding:0 10px; border-bottom:1px solid var(--line);
-}
-.sb-rail-toggle {
-  position:relative; width:28px; height:28px; border:0; border-radius:8px; overflow:hidden;
-  display:inline-grid; place-items:center; background:none; color:var(--text); cursor:pointer;
-  transition:background-color 150ms var(--ease);
-}
-.sb-rail-toggle:hover { background:var(--sidebar-hover); }
-.sb-rail-logo {
-  width:20px; height:20px; border-radius:6px; display:grid; place-items:center; flex:none;
-  background:linear-gradient(135deg, var(--accent), #7cc4f6); color:var(--accent-ink);
-  transition:opacity 150ms var(--ease);
-}
-.sb-rail-toggle:hover .sb-rail-logo { opacity:0; }
-.sb-rail-icon { position:absolute; inset:0; margin:auto; width:16px; height:16px; opacity:0; transition:opacity 150ms var(--ease); }
-.sb-rail-toggle:hover .sb-rail-icon { opacity:1; }
 
 /* 提示气泡（复刻 ZCode ControlHintTooltip 规格，挂载于 body 下的 #tooltip-root） */
 #tooltip-root { position:fixed; left:0; top:0; z-index:120; pointer-events:none; }
@@ -79,13 +64,9 @@
 }
 .sb-new:hover { background:var(--surface-hover); }
 .sb-new-label { white-space:nowrap; }
-.sidebar.rail .sb-new { width:36px; height:36px; margin:0 0 12px; padding:0; background:none; border-color:transparent; }
-.sidebar.rail .sb-new:hover { background:var(--sidebar-hover); }
-.sidebar.rail .sb-new-label { display:none; }
 
 /* 会话区（dsh regionArea + WorkspaceBrowser）：负外 margin 让滚动条溢出到栏边 */
 .sb-region { flex:1; min-height:0; display:flex; flex-direction:column; margin-left:-4px; margin-right:-12px; padding-left:4px; }
-.sidebar.rail .sb-region { display:none; }
 .sb-sechead { height:36px; display:flex; align-items:center; justify-content:flex-end; gap:4px; margin:2px -4px 4px 0; padding-left:4px; border-radius:12px; color:var(--faint); flex:none; }
 .sb-seclabel { line-height:20px; white-space:nowrap; min-width:0; }
 .sb-search { display:flex; align-items:center; width:28px; height:28px; border-radius:50%; margin-left:auto; transition:width .18s var(--ease), border-color .18s var(--ease), background-color .18s var(--ease); }
@@ -137,9 +118,56 @@
 }
 .sb-foot-row:hover { background:var(--sidebar-hover); color:var(--text); }
 .sb-ver { margin-left:auto; color:var(--faint); font-size:11px; }
-.sidebar.rail .sb-foot { align-items:center; }
-.sidebar.rail .sb-foot-row { width:36px; justify-content:center; padding:0; }
-.sidebar.rail .sb-foot-label, .sidebar.rail .sb-ver { display:none; }
+/* ---------- 工作台 Header（复刻 ZCode WorkspaceHeader：侧栏收回后左边只剩这条 header） ---------- */
+/* 常驻不卸载，展开态高 0 + 淡出 + inert；height / opacity / border-color 三段同拍 200ms ease-out，
+   与侧栏「擦除」合成一段动画。ZCode 的教训是 transition-property 必须显式枚举，不能退回 all */
+.ws-head {
+  box-sizing:border-box; /* 折叠态 height:0 要连边框一起吃掉，别在主区顶部留 1px 透明缝 */
+  flex:none; height:0; opacity:0; overflow:hidden; border-bottom:1px solid transparent;
+  transition:height 200ms var(--ease), opacity 200ms var(--ease), border-color 200ms var(--ease);
+}
+.ws-head.on { height:48px; opacity:1; border-bottom-color:var(--line); }
+.ws-head-row { display:flex; align-items:center; justify-content:space-between; gap:8px; height:48px; padding:0 8px; }
+.ws-head-left { display:flex; align-items:center; gap:4px; min-width:0; }
+.ws-head-right { display:flex; align-items:center; gap:4px; flex:none; }
+
+/* 切换钮：ZCode DesktopTopOverlay 同款 28px ghost 方钮（rounded-lg + overflow-hidden），
+   静止显 20px 品牌砖，hover 淡出并淡入 16px「打开面板」图标（inset-0 m-auto 绝对居中），
+   只动背景色与透明度，150ms */
+.ws-toggle {
+  position:relative; width:28px; height:28px; border:0; border-radius:8px; overflow:hidden;
+  display:inline-grid; place-items:center; background:none; color:var(--text); cursor:pointer; flex:none;
+  transition:background-color 150ms var(--ease);
+}
+.ws-toggle:hover { background:var(--sidebar-hover); }
+.ws-toggle:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.ws-toggle-logo {
+  width:20px; height:20px; border-radius:6px; display:grid; place-items:center; flex:none;
+  background:linear-gradient(135deg, var(--accent), #7cc4f6); color:var(--accent-ink);
+  transition:opacity 150ms var(--ease);
+}
+.ws-toggle:hover .ws-toggle-logo { opacity:0; }
+.ws-toggle-icon { position:absolute; inset:0; margin:auto; width:16px; height:16px; opacity:0; transition:opacity 150ms var(--ease); }
+.ws-toggle:hover .ws-toggle-icon { opacity:1; }
+
+/* 收回态入口：新建会话随 ZCode isNewTaskButtonVisible 语义进 header，设置与版本号收在右侧 */
+.ws-new {
+  box-sizing:border-box; display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 10px; flex:none;
+  border:1px solid var(--line-strong); border-radius:8px; background:var(--surface); color:var(--text);
+  font-size:13px; font-weight:500; cursor:pointer;
+  transition:background .15s var(--ease), border-color .15s var(--ease);
+}
+.ws-new:hover { background:var(--surface-hover); }
+.ws-new-label { white-space:nowrap; }
+.ws-ver { color:var(--faint); font-size:11px; padding:0 4px; white-space:nowrap; }
+.ws-iconbtn {
+  width:28px; height:28px; border:0; border-radius:8px; background:none; color:var(--dim);
+  display:inline-grid; place-items:center; cursor:pointer; flex:none;
+  transition:background .15s var(--ease), color .15s var(--ease);
+}
+.ws-iconbtn:hover { background:var(--sidebar-hover); color:var(--text); }
+.ws-iconbtn:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+
 /* ---------- 主区 ---------- */
 .main { flex:1; display:flex; flex-direction:column; min-width:0; min-height:0; position:relative; }
 .err-banner {
@@ -959,7 +987,7 @@
 ::-webkit-scrollbar-track { background:transparent; }
 
 @media (max-width: 760px) {
-  .sidebar { width:220px; }
+  .sidebar, .sb-panel { width:220px; }
   .chat-inner { padding:16px 12px 8px; }
   .composer { padding:8px 12px 10px; }
 }
@@ -985,3 +1013,5 @@
 .tn-tip-ai-text { color:var(--dim); }
 .tn-tip-ai-empty, .tn-tip-ai-running { color:var(--faint); }
 @media (prefers-reduced-motion: reduce) { .tn-bar, .turn-nav, .tn-tip { transition:none; } }
+/* 侧栏擦除与 header 生长同受减弱动效约束：直接跳到终态，不跑过渡 */
+@media (prefers-reduced-motion: reduce) { .sb-panel, .ws-head, .ws-toggle, .ws-toggle-logo, .ws-toggle-icon { transition:none; } }

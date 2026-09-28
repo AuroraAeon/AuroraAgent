@@ -22,7 +22,7 @@
 | 提供方 | provider | An upstream API supplier: built-in (read-only) and custom (`providers.json`) | "channel", "vendor" (spoken only) |
 | 故障转移 | failover | On connection-phase errors (429 / 5xx / network), automatically retry via another provider of the same model | "retry" (failover switches route), "load balancing" |
 | 账本 | usage ledger | The append-only `usage.jsonl` usage record, priced per provider | "billing", "fee table" |
-| 导轨态 | rail mode | The sidebar collapsed into a 56px icon rail: one top-left button showing the brand mark at rest and the toggle icon plus shortcut hint on hover | "mini sidebar", "icon mode" |
+| 收回态 | collapsed mode | The sidebar is gone entirely and only a 48px top Header remains: one top-left button showing the brand mark at rest and the open-panel icon plus shortcut hint on hover, with the sidebar wipe and header growth sharing one 200ms animation | "mini sidebar", "icon mode", rail mode |
 | 数据目录 | data directory | The config and session root with three-level fallback (env var / same directory / `~/Library`) | "config directory" (only part of it) |
 
 ## 2. Copy Rules

@@ -4,6 +4,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
+import { WorkspaceHeader } from './components/WorkspaceHeader';
 import { ScopedErrorBoundary } from './ScopedErrorBoundary';
 import { ChatView } from './components/ChatView';
 import { Composer } from './components/Composer';
@@ -579,7 +580,8 @@ export default function App() {
     }
   };
 
-  // 侧栏导轨态：偏好只影响本机浏览器（与主题同思路）；Ctrl/Cmd+B 与下方快捷键共用同一状态
+  // 侧栏收回态：偏好只影响本机浏览器（与主题同思路）；Ctrl/Cmd+B 与下方快捷键共用同一状态。
+  // 语义对齐 ZCode：收回后左侧边整体消失，只留 WorkspaceHeader 承载入口（不是 56px 图标导轨）。
   const [rail, setRail] = useState(() => { try { return localStorage.getItem('auroraagent.sidebar') === 'rail'; } catch { return false; } });
   useEffect(() => {
     try { localStorage.setItem('auroraagent.sidebar', rail ? 'rail' : 'wide'); } catch { /* 无痕模式等场景下静默 */ }
@@ -631,23 +633,37 @@ export default function App() {
 
   return (
     <div className="app">
-      <ScopedErrorBoundary scope="sidebar" resetKeys={[currentId]}>
-        <Sidebar
-          sessions={sessions}
-          currentId={currentId}
-          onSelect={openSession}
-          onNew={newSession}
-          onDelete={removeSession}
-          onFork={forkSessionById}
-          onOpenSettings={() => setSettingsOpen(true)}
-          loading={booting}
-          version={settings?.version || '4.0.0'}
-          rail={rail}
-          onToggleRail={toggleRail}
-        />
-      </ScopedErrorBoundary>
+      {/* 侧栏裁剪容器：收回时宽高归零 + 淡出（ZCode transition-[width,opacity]），
+          组件本身不卸载，于是这段 200ms 是「擦除」而不是「消失再出现」 */}
+      <div className={`sb-panel${rail ? ' off' : ''}`} aria-hidden={rail || undefined} inert={rail}>
+        <ScopedErrorBoundary scope="sidebar" resetKeys={[currentId]}>
+          <Sidebar
+            sessions={sessions}
+            currentId={currentId}
+            onSelect={openSession}
+            onNew={newSession}
+            onDelete={removeSession}
+            onFork={forkSessionById}
+            onOpenSettings={() => setSettingsOpen(true)}
+            loading={booting}
+            version={settings?.version || '4.0.0'}
+            onToggleRail={toggleRail}
+          />
+        </ScopedErrorBoundary>
+      </div>
       <ScopedErrorBoundary scope="main" resetKeys={[currentId]}>
         <main className="main">
+          {/* 收回态唯一的 chrome：侧栏不可见时切换 / 新建 / 设置都收在这里（ZCode WorkspaceHeader，
+              自带分区错误边界——header 崩了不该把整列对话拖下去） */}
+          <ScopedErrorBoundary scope="header" resetKeys={[currentId, rail]} variant="inline">
+            <WorkspaceHeader
+              collapsed={rail}
+              onToggle={toggleRail}
+              onNew={newSession}
+              onOpenSettings={() => setSettingsOpen(true)}
+              version={settings?.version || '4.0.0'}
+            />
+          </ScopedErrorBoundary>
           {error ? (
             <div className="err-banner" role="alert">
               <IconAlert size={14} />
