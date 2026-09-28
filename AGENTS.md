@@ -59,6 +59,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 | `util/settings-generation.mjs` | 生成参数与 API Key 的 HTTP 面：`GET/POST /api/settings/generation`（temperature 0~1 / maxTokens 正整数 ≤1000000，局部合并）、`GET/POST /api/settings/key`（写入落盘；GET 只回 `hasKey` 不回钥；环境变量 Key 优先时 409）；网页斜杠命令 /temp /max /key 与设置页「通用」面板共用，下一轮请求即时生效 |
 | `util/proxy.mjs` | 本机代理（Agent 沙箱出站请求的出路）：`parseAgentProxy` 地址归一化与校验（`http://host:port` 或裸 `host:port`，空 = 直连，socks5 拒绝）、`proxyFetch` 零依赖抓取（http 目标走正向代理绝对 URI、https 目标走 CONNECT 隧道 + TLS、跟随重定向封顶 5 跳、错误中文化）、`handleAgentProxyApi` 的 `GET/POST /api/settings/proxy` HTTP 面（设置页「网络」面板，web.mjs 一行委派）；Node 内置 fetch 不读 `HTTP_PROXY`，故自行实现隧道 |
 | `util/agent/side-session.mjs` | 侧边对话（`/btw`）：内存门面，继承主会话自洽历史前缀（无悬空工具调用的最后边界），不落盘不进 `/sessions`、不接管 goal、不派发子代理；`util/agent/http.mjs` 以 `sides` Map 按主会话 id 托管，网页与终端同源 |
+| `util/workspace.mjs` | 工作区上下文（只读）：`readWorkspaceInfo` 路径校验 + home + git 分支（零依赖直读 `.git/HEAD`，兼容 worktree 的 `.git` 文件形态，不调 git 命令、不统计 dirty）；`handleWorkspaceApi` 的 `GET /api/workspace?path=`（Header 工作区卡片数据源，移植 ZCode 工作区系统：Header 常驻展示 workspace 上下文） |
 | `util/agent/files.mjs` | `@` 提及时只读文件搜索：`resolveInside` 路径禁锢仅列会话工作目录，跳过依赖目录（`GET /api/files/search`） |
 | `tools/perf/` | 性能基准（本地回归参考，非门禁）：`mock-upstream.mjs` 可播大上下文 SSE mock、`scenarios.mjs` startup / upstream-100 / history-300 三场景、`run.mjs` 临时数据目录拉起真实服务采样 wall / CPU / peak-RSS 输出 JSON + Markdown |
 | `util/agent/transcript.mjs` | 转录投影层：工具标签 / 图标键 / 资源摘要 / 费用格式化的单一真值源 + `projectTurns` 记录分组规则（同一用户轮内文本与工具按时间线交错存 `parts`，回答不被工具调用切断；Web 投影与流式 turn 同形态；配套 `transcript.d.mts` 供 TS 取类型） |

@@ -1,5 +1,5 @@
 /** API 客户端：全部走 web.mjs 的同源 /api/*；turn 用 fetch 读 SSE（EventSource 不支持 POST） */
-import type { AgentEvent, ErrorLogEntry, GoalState, UpdateInfo, Harness, McpServerRow, ModelInfo, ProviderRow, SessionMeta, SessionRecord, SettingsInfo, SkillRow, TuiSettings, UsageSummary } from './types';
+import type { AgentEvent, ErrorLogEntry, GoalState, UpdateInfo, Harness, McpServerRow, ModelInfo, ProviderRow, SessionMeta, SessionRecord, SettingsInfo, SkillRow, TuiSettings, UsageSummary, WorkspaceInfo } from './types';
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(path, {
@@ -24,6 +24,7 @@ export const forkSession = (id: string) =>
 export const getUsage = (lite = false) => api<UsageSummary>(`/api/usage${lite ? '?lite=1' : ''}`);
 /** 版本更新检查（默认走 6 小时缓存；force=1 强制重查 GitHub Releases） */
 export const checkUpdate = (force = false) => api<UpdateInfo>(`/api/update/check${force ? '?force=1' : ''}`);
+export const getWorkspace = (path: string) => api<WorkspaceInfo>(`/api/workspace?path=${encodeURIComponent(path)}`);
 /** 错误日志：查看最近 N 条 / 清空 */
 export const listErrorLogs = (limit = 50) => api<{ ok: boolean; entries: ErrorLogEntry[]; total: number }>(`/api/logs/errors?limit=${limit}`);
 export const clearErrorLogs = () => api<{ ok: boolean; cleared: number }>('/api/logs/errors', { method: 'DELETE' });

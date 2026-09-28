@@ -42,6 +42,7 @@ import { runTitleTests } from './title.mjs';
 import { runGoalTests } from './goal.mjs';
 import { completePrefix, SideSession } from '../util/agent/side-session.mjs';
 import { searchWorkspaceFiles } from '../util/agent/files.mjs';
+import { readWorkspaceInfo, readGitBranch } from '../util/workspace.mjs';
 import { TITLE_MAX_TOKENS } from '../util/agent/title-model.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -161,6 +162,49 @@ await test('files: searchWorkspaceFiles 关键字匹配、跳过依赖目录且�
   assert(!all.some((f) => f.includes('node_modules')), '依赖目录必须跳过');
   // 坏工作目录不炸
   eq(searchWorkspaceFiles(join(dir, 'nope'), 'x').length, 0, '不存在目录返回空');
+});
+
+await test('workspace: git 分支直读 .git/HEAD，非 git 目录与坏路径说清原因', () => {
+  const plain = mkdtempSync(join(tmpdir(), 'ws-plain-'));
+  const info = readWorkspaceInfo(plain);
+  eq(info.isGit, false, '无 .git 目录应判非 git');
+  eq(info.branch, null, '非 git 目录无分支');
+  eq(info.path, plain, '路径应原样 resolve');
+  assert(info.home.length > 1, '应带回主目录供路径缩写');
+
+  const repo = mkdtempSync(join(tmpdir(), 'ws-repo-'));
+  mkdirSync(join(repo, '.git'), { recursive: true });
+  writeFileSync(join(repo, '.git', 'HEAD'), 'ref: refs/heads/feature/port-zcode\n');
+  const gitInfo = readWorkspaceInfo(repo);
+  eq(gitInfo.isGit, true, '有 .git 目录应判 git');
+  eq(gitInfo.branch, 'feature/port-zcode', '应解析 refs/heads/ 后的分支名');
+
+  // detached HEAD：裸短 SHA
+  writeFileSync(join(repo, '.git', 'HEAD'), '9f1c2ab3def\n');
+  eq(readWorkspaceInfo(repo).branch, '9f1c2ab', 'detached HEAD 应取 7 位短 SHA');
+
+  // worktree / submodule 形态：.git 是文件，gitdir 指向真实 git 目录
+  const realGit = mkdtempSync(join(tmpdir(), 'wt-real-'));
+  mkdirSync(join(realGit, 'worktrees', 'wt1'), { recursive: true });
+  writeFileSync(join(realGit, 'worktrees', 'wt1', 'HEAD'), 'ref: refs/heads/main\n');
+  const wt = mkdtempSync(join(tmpdir(), 'ws-wt-'));
+  writeFileSync(join(wt, '.git'), `gitdir: ${join(realGit, 'worktrees', 'wt1')}\n`);
+  eq(readWorkspaceInfo(wt).branch, 'main', 'worktree 的 .git 文件应跟一指到真实 HEAD');
+
+  // 坏路径：说清原因，不抛裸栈
+  for (const bad of ['', 'relative/path']) {
+    let msg = '';
+    try { readWorkspaceInfo(bad); } catch (e) { msg = e.message; }
+    eq(msg, '工作目录应为绝对路径', `非绝对路径应拒绝：${JSON.stringify(bad)}`);
+  }
+  try { readWorkspaceInfo(join(plain, 'nope')); assert(false, '应抛错'); }
+  catch (e) { assert(e.message.includes('工作目录不存在'), '不存在应说清原因'); }
+  const f = join(plain, 'a.txt');
+  writeFileSync(f, 'x');
+  try { readWorkspaceInfo(f); assert(false, '应抛错'); }
+  catch (e) { eq(e.message, `不是目录：${f}`, '文件路径应提示不是目录'); }
+
+  eq(readGitBranch(plain).isGit, false, '纯函数入口同样可用');
 });
 
 await test('btw: SideSession 内存门面——继承快照、不进列表、不派发子代理', () => {
@@ -3693,6 +3737,25 @@ await test('GET /api/files/search：会话工作目录内只读搜索，跳过�
   assert(!all.files.some((f) => f.includes('node_modules')), 'node_modules 不出列');
   const miss = await fetch(`${BASE}/api/files/search?sessionId=00000000-0000-0000-0000-000000000000&q=x`);
   eq(miss.status, 404, '会话不存在 404');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+await test('GET /api/workspace：Header 工作区卡片数据源，坏路径 400、方法 405', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'workspace-api-'));
+  mkdirSync(join(dir, '.git'), { recursive: true });
+  writeFileSync(join(dir, '.git', 'HEAD'), 'ref: refs/heads/master\n');
+  const got = await (await fetch(`${BASE}/api/workspace?path=${encodeURIComponent(dir)}`)).json();
+  eq(got.ok, true, '正常目录应 ok');
+  eq(got.branch, 'master', '应带回 git 分支');
+  assert(got.home.length > 1, '应带回主目录');
+  const plain = await (await fetch(`${BASE}/api/workspace?path=${encodeURIComponent(tmpdir())}`)).json();
+  eq(plain.isGit, false, '非 git 目录 isGit=false');
+  const bad = await fetch(`${BASE}/api/workspace?path=relative/nope`);
+  eq(bad.status, 400, '相对路径 400');
+  const gone = await fetch(`${BASE}/api/workspace?path=${encodeURIComponent(join(dir, 'nope'))}`);
+  eq(gone.status, 400, '不存在目录 400');
+  const post = await fetch(`${BASE}/api/workspace?path=${encodeURIComponent(dir)}`, { method: 'POST' });
+  eq(post.status, 405, '非 GET 405');
   rmSync(dir, { recursive: true, force: true });
 });
 

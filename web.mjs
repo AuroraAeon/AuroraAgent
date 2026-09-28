@@ -23,6 +23,7 @@ import { handleGenerationApi } from './util/settings-generation.mjs';
 import { createAgentApi } from './util/agent/http.mjs';
 import { handleTuiSettingsApi } from './util/tui/settings-api.mjs';
 import { handleAgentProxyApi } from './util/proxy.mjs';
+import { handleWorkspaceApi } from './util/workspace.mjs';
 import { resolveDataDir, loadConfig, saveConfig, PRICE } from './util/config.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -530,6 +531,9 @@ const server = createServer(async (req, res) => {
   }
 
   if (url.startsWith('/api/agent') || url.startsWith('/api/mcp') || url.startsWith('/api/files')) { await agentApi(req, res, url); return; }
+
+  // 工作区上下文（GET /api/workspace，实现见 util/workspace.mjs）：Header 工作区卡片数据源
+  if (await handleWorkspaceApi(req, res, url)) return;
 
   res.writeHead(404, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ error: { message: 'not found' } }));

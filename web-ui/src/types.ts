@@ -152,6 +152,18 @@ export interface UsageSummary {
 /** 错误日志条目（<数据目录>/logs/errors.log，JSON Lines） */
 export interface ErrorLogEntry { ts: string; kind: string; message: string; detail: string; version: string }
 
+/** 工作区上下文（GET /api/workspace）：Header 工作区卡片数据源（ZCode 工作区系统移植） */
+export interface WorkspaceInfo {
+  ok: boolean;
+  /** 已 resolve 的工作目录绝对路径（会话 meta.workspace） */
+  path: string;
+  /** 本机主目录（路径 ~ 缩写用） */
+  home: string;
+  isGit: boolean;
+  /** 分支名；detached 为短 SHA；非 git 目录或读不到为 null */
+  branch: string | null;
+}
+
 /** 版本更新检查结果（GET /api/update/check） */
 export interface UpdateInfo {
   ok: boolean;
