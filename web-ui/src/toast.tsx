@@ -8,8 +8,14 @@
  * 细节：同标题 + 描述 3 秒内只弹一条（合并计数，避免重复点击刷屏）；最多同屏 4 条，超出丢最旧；
  * 鼠标悬停暂停全部计时；error 8s、warning 6s、其余 4s、loading 常驻直到被 update/dismiss；
  * 视口 aria-live，错误用 role=alert；prefers-reduced-motion 时不做位移动画。
+ *
+ * 工程：视口经 createPortal 挂「最上层打开的模态 dialog，否则 body」——模态 <dialog> 在
+ * top-layer，挂在 body 的 fixed 视口会被整个对话框盖住（设置页 / 删除确认里的 toast 曾因此
+ * 不可见，与 Select 的 portal 宿主同一条教训）；计时与去重都在模块级 store 里，换挂载点只
+ * 重挂 DOM，不影响存活期。
  */
-import { useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
+import { createPortal } from 'react-dom';
 import { IconAlert, IconCheck, IconClose, IconInfo, IconWarn } from './icons';
 
 export type ToastLevel = 'success' | 'error' | 'warning' | 'info' | 'loading';
@@ -112,11 +118,30 @@ export const toast = {
 function subscribe(onChange: () => void) { listeners.add(onChange); return () => { listeners.delete(onChange); }; }
 function snapshot() { return items; }
 
-/** 通知视口：挂在应用根部一次即可 */
+/** portal 宿主：模态 dialog 内必须挂进 dialog 本身（top-layer 盖住 body 子节点），嵌套 dialog 取最上层 */
+function resolveHost(): HTMLElement {
+  const open = Array.from(document.querySelectorAll<HTMLDialogElement>('dialog[open]')).filter((d) => d.isConnected);
+  return open.length ? open[open.length - 1] : document.body;
+}
+
+/** 通知视口：挂在应用根部一次即可；有模态 dialog 开合时自动跟着换挂载点 */
 export function ToastViewport() {
   const list = useSyncExternalStore(subscribe, snapshot, snapshot);
+  const [host, setHost] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const sync = () => setHost(resolveHost());
+    sync();
+    // showModal() / close() 只改 open 内容属性，属性监听即可覆盖任意组件里开合的 dialog
+    const mo = new MutationObserver(sync);
+    mo.observe(document.documentElement, { attributes: true, subtree: true, attributeFilter: ['open'] });
+    return () => mo.disconnect();
+  }, []);
+
+  // 兜底：dialog 被直接卸载（没走 close()）时宿主会失联，退回 body 也不能让 toast 消失
+  const target = host && host.isConnected ? host : document.body;
   if (!list.length) return null;
-  return (
+  return createPortal(
     <div
       className="toast-viewport"
       role="region"
@@ -147,6 +172,7 @@ export function ToastViewport() {
           <button type="button" className="toast-close" aria-label="关闭通知" onClick={() => dismiss(t.id)}><IconClose size={13} /></button>
         </div>
       ))}
-    </div>
+    </div>,
+    target,
   );
 }
