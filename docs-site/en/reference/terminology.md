@@ -22,7 +22,9 @@
 | 提供方 | provider | An upstream API supplier: built-in (read-only) and custom (`providers.json`) | "channel", "vendor" (spoken only) |
 | 故障转移 | failover | On connection-phase errors (429 / 5xx / network), automatically retry via another provider of the same model | "retry" (failover switches route), "load balancing" |
 | 账本 | usage ledger | The append-only `usage.jsonl` usage record, priced per provider | "billing", "fee table" |
-| 收回态 | collapsed mode | The sidebar is gone entirely and only a 48px top Header remains: one top-left button showing the brand mark at rest and the open-panel icon plus shortcut hint on hover, with the sidebar wipe and header growth sharing one 200ms animation | "mini sidebar", "icon mode", rail mode |
+| 收回态 | collapsed mode | The sidebar is gone entirely and only the always-on top overlay and 48px Header remain: one overlay button showing the brand tile at rest and the open-panel icon plus shortcut hint on hover, with a 200ms sidebar wipe; the Header keeps showing the workspace context, title, and menus | "mini sidebar", "icon mode", rail mode |
+| 顶部浮层 | top overlay | The always-on entry group floating above the sidebar (ported from ZCode DesktopTopOverlay): toggle sidebar, previous / next question, new session, update; it floats to the screen edge when collapsed | floating ball, floating toolbar |
+| 工作区 | workspace | A session's working-directory context: path (home-abbreviated), last activity, git branch; read-only display, no file management | project (that is what goals are for), workbench (that is the whole UI) |
 | 数据目录 | data directory | The config and session root with three-level fallback (env var / same directory / `~/Library`) | "config directory" (only part of it) |
 
 ## 2. Copy Rules

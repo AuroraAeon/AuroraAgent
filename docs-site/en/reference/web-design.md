@@ -92,14 +92,24 @@ Tooltip spec (replicating ZCode's `ControlHintTooltip`, implemented dependency-f
 
 Menus: compact rows, `8px` rounded shell, low-contrast hover / selected fills, fixed small gaps between option rows. Each submenu is an independent overlay; its shell radius does not inherit the trigger.
 
-## 10. Accessibility and Long Copy
+## 10. Workspace Header and Top Overlay
+
+The Header is always-on at `48px` (ZCode `h-12`): the inner row uses `p-2` / `gap-2` / `justify-between` / `overflow-hidden`, and the title area sizes to its content instead of stretching (its parent is the drag region; stretching it would leave blank space undraggable). The divider is an inset shadow rather than a border (it does not participate in layout, so it aligns exactly with the top of the main area).
+
+- **Left group** (`gap-1`): workspace context button (`28px` ghost square; hover reveals an info card, click pins it — workspace path with `~` abbreviation, last activity, git branch, the branch read straight from `.git/HEAD` by `GET /api/workspace`), session title (`14px` / `600`, `max-width:400px`, container-query narrow tiers `30vw` / `22vw`, double-click to rename in place), and a more menu (`28px` ghost, closes on select)
+- **Right group** (`gap-0.5`): help menu (docs / feedback links plus shortcut and about panels) + settings
+- **Top overlay** (ported from ZCode `DesktopTopOverlay`): always-on absolute layer with `pointer-events:none` outside and `auto` on the interactive container — clicks on blank space still belong to the sidebar below; the toggle button shows a `20px` brand tile (radius `6px`) at rest and fades in a `16px` panel icon on hover (absolutely centered), with a tooltip reading "toggle sidebar + ⌘B/Ctrl+B"; previous / next question (disabled below two questions); the new-session button follows the `isNewTaskButtonVisible` semantics with a `opacity` / `width` `300ms` transition (visible only when collapsed); the update entry appears only when a new version is found (ZCode lesson: the collapsed state must not hide global entries behind a width threshold)
+- **Yielding**: when the sidebar collapses, the Header row pads its left edge (measured overlay width + `8px`); the sidebar reserves a `48px` overlay band at its top; the main column auto-collapses the sidebar below `360px` (collapse only, never auto-expand)
+- Entry buttons share one spec: `28px` + radius `8px` + only background / color transitions (ZCode lesson: `transition-all` animates size changes while resizing the window)
+
+## 11. Accessibility and Long Copy
 
 - Keyboard is a first-class path: global shortcuts (`Ctrl/Cmd+K` new session, `Ctrl/Cmd+B` toggle sidebar, `/` focus the composer), unified `:focus-visible` rings.
 - Semantic state colors always pair with readable text; never convey state by color alone.
 - Layouts tolerate longer translations and narrow windows; icons prefer text labels (tooltips carry the explanation where labels are absent).
 - The product contains **zero emoji**; icons are inline SVG or `public/vendors/*.svg` (guard-enforced).
 
-## 11. New / Reworked UI Checklist
+## 12. New / Reworked UI Checklist
 
 - [ ] New colors landed in both themes of `tokens.css` and pass the contrast guard (body 4.5 / faint 3.0).
 - [ ] No hard-coded semantic colors in components; everything references tokens.
