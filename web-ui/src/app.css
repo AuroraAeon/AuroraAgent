@@ -12,7 +12,7 @@ html { font-size: var(--ui-font-size, 14px); }
 .sidebar {
   width:280px; flex:none; display:flex; flex-direction:column; min-height:0;
   background:var(--sidebar-fill); border-right:1px solid var(--line);
-  /* 顶部 48px 是 DesktopTopOverlay 浮层带：切换 / 上一个 / 下一个 / 更新钮浮在这条带上，
+  /* 顶部 48px 是 DesktopTopOverlay 浮层带：切换 / 后退 / 前进 / 更新钮浮在这条带上，
      侧栏自己没有大 Logo（ZCode 同款：aside 首段就是 h-12 空拖拽带，品牌只在浮层切换钮里）；
      再往下 12px（ZCode py-3）才是新建任务钮——合计 padding-top 60px */
   padding:60px 12px 6px; font-size:1rem;
@@ -135,23 +135,33 @@ html { font-size: var(--ui-font-size, 14px); }
 .sb-search-clear { width:24px; height:24px; border:0; border-radius:50%; background:none; color:var(--dim); display:grid; place-items:center; cursor:pointer; flex:none; }
 .sb-search-clear:hover { background:var(--sidebar-hover); color:var(--text); }
 
-/* 会话列表：行高 32px / 圆角 8px / 行距 2px（dsh Rows.module.css） */
+/* 会话列表（ZCode TaskListItem 形态）：行高 32px / 圆角 8px / 行距 2px；
+   左侧 10px 内距 + 16px 前置槽 + 8px 间距把标题整体右移，槽位留给运行态指示 */
 .sb-list { flex:1; min-height:0; overflow-y:auto; display:flex; flex-direction:column; margin-left:-4px; margin-right:2px; padding-left:4px; padding-right:2px; padding-bottom:16px; scrollbar-gutter:stable; }
-.sb-row { position:relative; display:flex; align-items:center; height:32px; border-radius:8px; animation:sb-row-in .15s var(--ease); }
+.sb-row { position:relative; display:flex; align-items:center; gap:8px; height:32px; border-radius:8px; padding:0 4px 0 10px; animation:sb-row-in .15s var(--ease); }
 .sb-row + .sb-row { margin-top:2px; }
 .sb-row:hover, .sb-row.on { background:var(--sidebar-hover); }
-.sb-row-main { flex:1; min-width:0; height:100%; display:flex; align-items:center; gap:6px; padding:0 8px; background:none; border:0; cursor:pointer; color:var(--text); font:inherit; text-align:left; }
+/* 前置 16px 槽（ZCode leading slot）：静止留空；会话正在运行时填灰色加载圈 */
+.sb-row-lead { flex:none; width:16px; height:16px; display:grid; place-items:center; }
+.sb-spin {
+  width:14px; height:14px; border-radius:50%;
+  border:2px solid var(--line-strong); border-top-color:var(--faint);
+  animation:spin .7s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) { .sb-spin { animation-duration:1.6s; } }
+.sb-row-main { flex:1; min-width:0; height:100%; display:flex; align-items:center; gap:6px; padding:0 4px; background:none; border:0; cursor:pointer; color:var(--text); font:inherit; text-align:left; }
 .sb-row-title { flex:1; min-width:0; font-size:1rem; line-height:1.4286; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .sb-row-time { flex:none; font-size:0.8571rem; line-height:1.4286; color:var(--faint); }
 .sb-row:hover .sb-row-time, .sb-row.on .sb-row-time { display:none; }
-.sb-row-acts { display:none; align-items:center; gap:12px; height:20px; padding-right:8px; flex:none; }
+.sb-row-acts { display:none; align-items:center; gap:12px; height:20px; padding-right:4px; flex:none; }
 .sb-row:hover .sb-row-acts, .sb-row.on .sb-row-acts { display:inline-flex; }
 .sb-act { width:16px; height:16px; border:0; border-radius:4px; background:none; color:var(--faint); display:grid; place-items:center; cursor:pointer; padding:0; }
 .sb-act:hover { color:var(--text); }
 .sb-act-del:hover { color:var(--danger-ink); }
 @keyframes sb-row-in { from { opacity:0; } }
 .sb-empty { color:var(--faint); font-size:0.9286rem; padding:16px 12px; }
-.sb-skel { height:32px; border-radius:8px; display:flex; align-items:center; padding:0 8px; }
+.sb-skel { height:32px; border-radius:8px; display:flex; align-items:center; gap:8px; padding:0 4px 0 10px; }
+.sb-skel-lead { flex:none; width:16px; height:16px; }
 .sb-skel + .sb-skel { margin-top:2px; }
 .sb-skel-line { display:block; height:10px; border-radius:99px; background:var(--surface); position:relative; overflow:hidden; }
 .sb-skel-line.w1 { width:56%; }
@@ -545,38 +555,65 @@ html { font-size: var(--ui-font-size, 14px); }
 .side-banner-acts { display:flex; align-items:center; gap:6px; flex:none; }
 .side-banner .btn-link { color:var(--accent-hi); font-size:0.8929rem; padding:2px 4px; }
 .side-banner .btn-link.danger { color:var(--danger-ink); }
-/* ---------- 输入区 ---------- */
+/* ---------- 输入区（排版复刻 ZCode ChatPromptEditor：壳 gap-3 / p-3 / rounded-2xl，
+   工具栏 items-end gap-3，左组 flex-1 右组 ml-auto，入口统一 28px ghost 方钮） ---------- */
 .composer { padding:10px 20px 14px; }
 .composer-card {
   position:relative;
   max-width:840px; margin:0 auto; background:var(--surface); border:1px solid var(--line-strong);
-  border-radius:18px; padding:12px 12px 9px; display:flex; flex-direction:column; gap:8px;
-  transition:border-color .15s var(--ease), box-shadow .15s var(--ease);
+  border-radius:16px; padding:12px; display:flex; flex-direction:column; gap:12px;
+  transition:border-color .15s var(--ease), background-color .15s var(--ease);
 }
-.composer-card:focus-within { border-color:var(--accent-line); box-shadow:0 0 0 3px var(--accent-glow); }
+/* ZCode focus-within 只换边框与底色（bg-input-focused），不铺 glow——输入框不该像报错一样发亮 */
+.composer-card:focus-within { border-color:var(--accent-line); background:var(--surface-hover); }
 .composer-card textarea {
   width:100%; border:0; background:none; color:var(--text); resize:none; outline:none;
   font:inherit; font-size:1.0357rem; line-height:1.65; padding:2px 4px; max-height:200px;
 }
 .composer-card textarea::placeholder { color:var(--faint); }
-.composer-bar { display:flex; align-items:center; flex-wrap:wrap; gap:7px; row-gap:8px; min-width:0; }
-/* 工具组：芯片宽度按最长标签固定（模式/权限/标题切换不改变行宽，输入框内部不重排） */
-.composer-tools { display:flex; align-items:center; flex-wrap:wrap; gap:7px; row-gap:8px; min-width:0; }
+/* 工具栏（ZCode flex items-end gap-3）：左组吃剩余宽度，右组贴右不收缩 */
+.composer-bar { display:flex; align-items:flex-end; gap:12px; min-width:0; }
+.composer-tools { flex:1; min-width:0; display:flex; align-items:center; }
+/* 左组内层（ZCode data-composer-leading-content：shrink-0 + gap-1）——整体不被压缩，
+   窄屏由 data-compact 收标签，绝不换行把输入框顶跳 */
+.composer-tools-inner { display:flex; align-items:center; gap:4px; flex:none; min-width:0; }
+.composer-tail { margin-left:auto; display:flex; align-items:center; justify-content:flex-end; gap:6px; flex:none; min-width:0; }
 .tchip-text { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* 窄屏收纳（ZCode useComposerToolbarFit 首档语义）：标签整组隐藏、钮收成图标方钮 */
+.composer-bar[data-compact="1"] .tchip-text,
+.composer-bar[data-compact="1"] .mpick-label,
+.composer-bar[data-compact="1"] .mpick-effort,
+.composer-bar[data-compact="1"] .composer-plan-text { display:none; }
+.composer-bar[data-compact="1"] .tchip { padding:0 6px; }
+.composer-bar[data-compact="1"] .tchip-harness,
+.composer-bar[data-compact="1"] .tchip-perm,
+.composer-bar[data-compact="1"] .tchip-title { min-width:0; }
+/* ghost 入口钮（ZCode Button ghost size sm：h-7 rounded-lg px-2 gap-1，只过渡颜色） */
+.tchip {
+  display:inline-flex; align-items:center; gap:4px; height:28px; border:0; border-radius:8px;
+  background:none; color:var(--dim); font-size:0.9286rem; padding:0 8px; cursor:pointer;
+  flex:none; white-space:nowrap;
+  transition:color .15s var(--ease), background-color .15s var(--ease);
+}
+.tchip:hover { color:var(--text); background:var(--surface-hover); }
 .tchip-harness { min-width:116px; justify-content:flex-start; }
 .tchip-perm { min-width:128px; justify-content:flex-start; }
 .tchip-title { min-width:116px; justify-content:flex-start; }
-.composer-flex { flex:1; }
-.composer-tail { margin-left:auto; display:flex; align-items:center; gap:7px; min-width:0; }
-.tchip {
-  display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:99px;
-  background:var(--panel); color:var(--dim); font-size:0.8929rem; padding:5px 11px; cursor:pointer;
-  flex:none; white-space:nowrap;
-  transition:color .15s var(--ease), border-color .15s var(--ease), background .15s var(--ease);
-}
-.tchip:hover { color:var(--text); border-color:var(--line-strong); }
-.tchip[aria-pressed="true"] { color:var(--think); border-color:var(--think); background:var(--think-soft); }
 .tchip-model { color:var(--text); max-width:250px; min-width:0; flex:0 1 auto; }
+/* 添加上下文加号钮（ZCode ChatPromptActionMenu 触发器：ghost icon-md，28px 方钮） */
+.composer-plus {
+  width:28px; height:28px; border:0; border-radius:8px; background:none; color:var(--dim);
+  display:grid; place-items:center; cursor:pointer; flex:none;
+  transition:color .15s var(--ease), background-color .15s var(--ease);
+}
+.composer-plus:hover { color:var(--text); background:var(--surface-hover); }
+/* 计划模式标记（ZCode plan marker：1px 分隔 + 灯泡图标 + 标签，只作状态提示） */
+.composer-plan {
+  display:inline-flex; align-items:center; gap:6px; height:28px; padding:0 8px 0 0;
+  color:var(--warn-ink); font-size:0.9286rem; flex:none; white-space:nowrap;
+}
+.composer-plan-sep { width:1px; height:12px; background:var(--line-strong); flex:none; }
+.composer-file { display:none; }
 .tchip-model .mpick-label { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 /* 触发钮上的思考强度（caption 调，与 dsh web 的 triggerEffort 同语义） */
 .mpick-effort { flex:none; color:var(--faint); font-size:0.8214rem; }
@@ -585,15 +622,16 @@ html { font-size: var(--ui-font-size, 14px); }
 .mpick-mark { width:14px; height:14px; border-radius:4px; }
 .mpick-tag, .hpick-rounds { font-size:0.75rem; color:var(--faint); }
 .sendbtn {
-  width:34px; height:34px; border-radius:50%; border:0; flex:none; display:grid; place-items:center;
+  width:28px; height:28px; border-radius:8px; border:0; flex:none; display:grid; place-items:center;
   background:var(--accent); color:var(--accent-ink); cursor:pointer;
-  transition:filter .15s var(--ease), transform .1s var(--ease);
+  transition:filter .15s var(--ease), background-color .15s var(--ease), transform .1s var(--ease);
 }
 .sendbtn:hover:not(:disabled) { filter:brightness(1.12); }
 .sendbtn:active:not(:disabled) { transform:scale(.94); }
 .sendbtn:disabled { background:var(--surface-hover); color:var(--faint); cursor:not-allowed; }
-.sendbtn-stop { background:var(--danger-bg-hi); color:var(--danger-ink); border:1px solid var(--danger-line); }
-.sendbtn-stop:hover { filter:brightness(1.2); }
+/* 停止钮（ZCode submitControl 的 secondary 变体）：中性底 + 方形图标，不抢发送钮的品牌色 */
+.sendbtn-stop { background:var(--surface-hover); color:var(--text); border:1px solid var(--line-strong); }
+.sendbtn-stop:hover { background:var(--line); filter:none; }
 /* ---------- 斜杠命令菜单（数值对齐 dsh web MenuView：320px / radius20 / 行40px radius10） ---------- */
 .cmdpal {
   position:absolute; bottom:calc(100% + 4px); left:0; right:0; z-index:100;
@@ -630,11 +668,6 @@ html { font-size: var(--ui-font-size, 14px); }
 .composer-cmdhint.ok { color:var(--ok-ink); }
 .composer-cmdhint.warn { color:var(--warn-ink); }
 .composer-cmdhint b { font-weight:600; }
-/* 计划模式提示芯片：原独立开关钮已并入 /plan 斜杠命令，这里只作状态提示（不可点） */
-.tchip-plan-on {
-  display:inline-flex; align-items:center; gap:6px; border:1px solid var(--warn-line); border-radius:99px;
-  background:var(--warn-bg); color:var(--warn-ink); font-size:0.8929rem; padding:5px 11px; flex:none; white-space:nowrap;
-}
 /* ---------- 代码高亮 token（零依赖高亮器；颜色一律走 --code-* 调色板变量，
    外观页「代码主题」即切换这组变量，默认值随主题令牌派生，见 tokens.css） ---------- */
 .md pre .c-key { color:var(--code-key); }
@@ -661,7 +694,9 @@ html[data-code-wrap="on"] .md pre { white-space:pre-wrap; overflow-x:visible; wo
 @media (prefers-reduced-motion: reduce) { .md pre .code-no { transition:none; } }
 
 /* ---------- 模型 / 模式选择器 ---------- */
-.mpick, .hpick { position:relative; min-width:0; }
+/* 选择器外壳走 flex：按钮成为弹性项而非行内盒——行内盒会按基线留 1px 下行空间，
+   工具栏 items-end 时左组比右组矮 1px，像素级对齐就破了 */
+.mpick, .hpick { position:relative; min-width:0; display:flex; align-items:center; }
 .mpick-menu, .hpick-menu {
   position:absolute; bottom:calc(100% + 8px); right:0; min-width:250px; max-width:320px;
   background:var(--panel); border:1px solid var(--line-strong); border-radius:12px;

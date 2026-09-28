@@ -11,7 +11,7 @@
  *     全局入口时反而看不到」——两种状态都常驻（仅发现有新版时出现）。 */
 import { IconArrowLeft, IconArrowRight, IconMessageCirclePlus, IconPanelLeftClose, IconPanelLeftOpen, IconRefresh, IconSpark } from '../icons';
 import { ControlTooltip } from '../ControlTooltip';
-import { newSessionLabel, sidebarToggleLabel } from '../shortcut';
+import { navBackLabel, navForwardLabel, newSessionLabel, sidebarToggleLabel } from '../shortcut';
 import type { Ref } from 'react';
 
 type Props = {
@@ -25,15 +25,17 @@ type Props = {
   onNew: () => void;
   /** 当前会话已是空新会话：新建钮一并禁用（与侧栏同规则，避免收回态还能堆空会话） */
   newDisabled?: boolean;
-  /** 上一个 / 下一个提问（会话回合导航；会话不足两轮时禁用） */
-  onNav: (dir: 'prev' | 'next') => void;
-  canNav: boolean;
+  /** 后退 / 前进（会话导航历史，ZCode taskNav：浏览器式前进后退栈，栈首 / 栈尾禁用） */
+  onBack: () => void;
+  onForward: () => void;
+  canBack: boolean;
+  canForward: boolean;
   /** 发现新版本：发布页 URL 与版本号（null = 无更新，不渲染该钮） */
   updateUrl: string | null;
   updateLatest: string | null;
 };
 
-export function WorkspaceTopOverlay({ ref, collapsed, onToggle, onNew, newDisabled, onNav, canNav, updateUrl, updateLatest }: Props) {
+export function WorkspaceTopOverlay({ ref, collapsed, onToggle, onNew, newDisabled, onBack, onForward, canBack, canForward, updateUrl, updateLatest }: Props) {
   return (
     <div className="ws-overlay" ref={ref} aria-label="工作区快捷入口">
       <div className="ws-overlay-group">
@@ -43,13 +45,16 @@ export function WorkspaceTopOverlay({ ref, collapsed, onToggle, onNew, newDisabl
             {collapsed ? <IconPanelLeftOpen size={16} className="ws-toggle-icon" /> : <IconPanelLeftClose size={16} className="ws-toggle-icon" />}
           </button>
         </ControlTooltip>
-        <ControlTooltip title="上一个提问" shortcut="↑" side="bottom">
-          <button type="button" className="ws-act" aria-label="上一个提问" disabled={!canNav} onClick={() => onNav('prev')}>
+        {/* 后退 / 前进（ZCode taskNav.back / taskNav.forward）：会话导航历史的浏览器式回退与重放，
+            不是消息内的上一条 / 下一条（那是对话区左缘的梯状轨 TurnNavigator 的职责）。
+            栈首 / 栈尾禁用；键位与 ZCode navigateBack / navigateForward 同为 CmdOrCtrl+[ / ] */}
+        <ControlTooltip title="后退" shortcut={navBackLabel()} side="bottom">
+          <button type="button" className="ws-act" aria-label="后退" disabled={!canBack} onClick={onBack}>
             <IconArrowLeft size={16} />
           </button>
         </ControlTooltip>
-        <ControlTooltip title="下一个提问" shortcut="↓" side="bottom">
-          <button type="button" className="ws-act" aria-label="下一个提问" disabled={!canNav} onClick={() => onNav('next')}>
+        <ControlTooltip title="前进" shortcut={navForwardLabel()} side="bottom">
+          <button type="button" className="ws-act" aria-label="前进" disabled={!canForward} onClick={onForward}>
             <IconArrowRight size={16} />
           </button>
         </ControlTooltip>

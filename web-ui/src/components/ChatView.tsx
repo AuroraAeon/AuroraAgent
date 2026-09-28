@@ -59,9 +59,6 @@ function LiveRow({ live, onDecide, onDecidePlan }: { live: LiveTurn; onDecide?: 
   );
 }
 
-/** 顶部浮层的上一个 / 下一个提问请求（App 持 state，nonce 变化即执行一次） */
-export type NavRequest = { dir: 'prev' | 'next'; nonce: number } | null;
-
 type Props = {
   messages: MsgView[];
   live: LiveTurn | null;
@@ -70,10 +67,9 @@ type Props = {
   onPick: (text: string) => void;
   todos: TodoItem[];
   onDecidePlan?: (decision: 'approve' | 'reject') => void;
-  navRequest?: NavRequest;
 };
 
-export function ChatView({ messages, live, hasSession, onDecide, onPick, todos, onDecidePlan, navRequest }: Props) {
+export function ChatView({ messages, live, hasSession, onDecide, onPick, todos, onDecidePlan }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true); // 用户是否贴底：贴底才跟随滚动，上翻读历史时不抢滚动位置
@@ -138,7 +134,7 @@ export function ChatView({ messages, live, hasSession, onDecide, onPick, todos, 
           ) : null}
         </div>
       </div>
-      <TurnNavigator views={messages} live={live} scrollRef={scrollRef} navRequest={navRequest} />
+      <TurnNavigator views={messages} live={live} scrollRef={scrollRef} />
     </div>
   );
 }

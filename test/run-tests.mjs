@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { SseParser, estimateTokens } from '../util/sse.mjs';
 import { sidebarToggleLabel, newSessionLabel, isAppleKeyboardPlatform } from '../web-ui/src/shortcut.ts';
 import { buildTurnNavItems, normalizePreviewText, resolveBarVisualState, resolveActiveItemIndex, resolveVisibleRange, resolveRailScrollTopForActive } from '../web-ui/src/turn-nav.mjs';
+import { createNavHistory, pushNav, goBack, goForward, canGoBack, canGoForward, removeNav, NAV_HISTORY_MAX } from '../web-ui/src/nav-history.mjs';
 import { splitMathSegments, takeDisplayMath, isDisplayMathStart, mathDisplay, MATH_ENVIRONMENTS } from '../web-ui/src/math-split.mjs';
 import { startMock } from './mock-longcat.mjs';
 import { ProviderStore, ProviderError, parseCapacity, formatCapacity, normalizeEndpoint, validateProviderDraft, chatUrl, modelsUrl, messagesUrl } from '../util/providers.mjs';
@@ -1712,7 +1713,7 @@ try {
     const pickers = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ComposerPickers.tsx'), 'utf8');
     assert(pickers.includes('PERM_LABEL') && pickers.includes('always_ask') && pickers.includes('never_ask'), '输入区应有权限三档选择器');
     const composer = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Composer.tsx'), 'utf8');
-    assert(composer.includes('tchip-plan-on') && composer.includes('planMode'), '计划模式应在输入区作状态提示（开关已并入 /plan 斜杠命令）');
+    assert(composer.includes('composer-plan') && composer.includes('composer-plan-sep') && composer.includes('planMode'), '计划模式应在输入区作状态标记（开关已并入 /plan 斜杠命令）');
     const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
     assert(app.includes("case 'plan':") && app.includes('changePlan(arg !== '), 'App 应经 /plan on|off 切换计划模式');
     const te = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'turn-events.ts'), 'utf8');
@@ -1900,7 +1901,10 @@ try {
     const icons = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'icons.tsx'), 'utf8');
     assert(icons.includes('IconMessageCirclePlus') && icons.includes('M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29'), 'MessageCirclePlus 应取 lucide 1.17.0 精确路径（ZCode 同版本）');
     assert(overlay.includes('<IconMessageCirclePlus size={16} />') && overlay.includes('newSessionLabel()'), '新建任务钮应带 MessageCirclePlus 图标与 ⌘K/Ctrl+K 快捷键提示（对齐 ZCode newTaskShortcutLabel）');
-    assert(overlay.includes('IconArrowLeft') && overlay.includes('IconArrowRight') && overlay.includes('canNav'), '浮层应承载上一个 / 下一个提问导航（会话不足两轮禁用）');
+    assert(overlay.includes('IconArrowLeft') && overlay.includes('IconArrowRight'), '浮层左组应有后退 / 前进箭头（ZCode taskNav 形态）');
+    assert(overlay.includes('canBack') && overlay.includes('canForward') && overlay.includes('onBack') && overlay.includes('onForward'), '后退 / 前进应各自由 canBack / canForward 门控（栈首 / 栈尾禁用）');
+    assert(overlay.includes('title="后退"') && overlay.includes('title="前进"'), '箭头气泡应是「后退 / 前进」，不是消息内的上一条 / 下一条');
+    assert(overlay.includes('navBackLabel()') && overlay.includes('navForwardLabel()'), '后退 / 前进气泡应带快捷键键帽（⌘[ / ⌘]，与 ZCode navigateBack / navigateForward 同键位）');
     assert(overlay.includes('IconPanelLeftOpen') && overlay.includes('IconPanelLeftClose'), '切换钮应按 ZCode SidebarToggleIcon 语义取「打开 / 关闭面板」双图标');
     assert(overlay.includes('ControlTooltip') && overlay.includes('title="切换侧边栏"') && overlay.includes('sidebarToggleLabel()'), '浮层切换钮应挂 ControlTooltip 并带快捷键标签');
     assert(overlay.includes('updateUrl') && overlay.includes('ws-upd'), '发现新版本时浮层应出现更新入口（ZCode 教训：收回态不能按宽度阈值隐藏全局更新入口）');
@@ -1917,7 +1921,7 @@ try {
     assert(overlay.includes('ref={ref}') && overlay.includes('ref?: Ref<HTMLDivElement>'), '浮层组件应声明并透出根节点 ref');
     assert(app.includes('mainRef') && app.includes('360'), '主列过窄时应自动收回侧栏（ZCode AUTO_COLLAPSE 阈值 360px 同款）');
     assert(app.includes('checkUpdate') && app.includes('UpdateInfo'), 'App 进页面应拉一次版本更新状态');
-    assert(app.includes('requestNav') && app.includes('navRequest={sideActive ? null : navReq}'), '浮层导航请求应经 ChatView 透传给 TurnNavigator');
+    assert(!app.includes('navReq') && !app.includes('requestNav'), '浮层箭头改后退 / 前进（会话导航历史）后，消息内导航不再需要外部请求管道——梯状轨自己的点击 / 悬浮即入口');
     assert(app.includes('renameCurrent') && app.includes('patchSession(current.id, { name })'), 'Header 重命名应走 PATCH 落 meta');
     assert(!/\.ws-head[^{]*\{[^}]*transition:all/.test(css) && !/\.sb-panel[^{]*\{[^}]*transition:all/.test(css), '过渡必须显式枚举属性，不许 transition:all（ZCode 同款教训）');
     assert(css.includes('prefers-reduced-motion: reduce) { .sb-panel, .ws-overlay-new'), '减弱动效下侧栏擦除与浮层过渡应直接跳终态');
@@ -2127,6 +2131,93 @@ try {
       assert(bar.includes(decl), `短棒应按 ZCode h-0.5 w-3 rounded-full 规格声明 ${decl}`);
     }
     assert(css.includes('transition:height 150ms var(--ease), opacity 150ms var(--ease), transform 150ms var(--ease), background-color 150ms var(--ease)'), '短棒过渡应只动高度 / 透明度 / 变换 / 背景色');
+  });
+  await test('会话导航历史：浏览器式前进 / 后退栈（复刻 ZCode taskNavigationHistory）', () => {
+    let h = createNavHistory();
+    assert(h.cursor === -1 && h.entries.length === 0 && !canGoBack(h) && !canGoForward(h), '空历史两个方向都不可走');
+    h = pushNav(h, 'a'); h = pushNav(h, 'b'); h = pushNav(h, 'c');
+    assert(h.entries.join(',') === 'a,b,c' && h.cursor === 2, '连续打开应按序入栈');
+    assert(canGoBack(h) && !canGoForward(h), '栈尾只能后退');
+    const back = goBack(h); h = back.history;
+    assert(back.id === 'b' && h.cursor === 1, '后退一步回到上一个会话');
+    const fwd = goForward(h); h = fwd.history;
+    assert(fwd.id === 'c' && h.cursor === 2, '前进一步重放');
+    assert(goBack(createNavHistory()) === null && goForward(createNavHistory()) === null, '空历史进退都返回 null');
+    // 相邻去重：回退到当前会话、重复点当前行都不该重新入栈
+    h = pushNav(h, 'c'); h = pushNav(h, 'c');
+    assert(h.entries.join(',') === 'a,b,c' && h.cursor === 2, '相邻去重：重复入栈不增生条目');
+    // 后退后打开新会话：截断 cursor 之后的前进历史（浏览器式语义）
+    h = goBack(h).history;
+    h = pushNav(h, 'd');
+    assert(h.entries.join(',') === 'a,b,d' && h.cursor === 2 && !canGoForward(h), '新入栈应截断前进历史');
+    // 删除会话：当前条目被摘则沿用旧位置选最近目标；未被摘则 cursor 按索引位移
+    let r = removeNav(h, 'd');
+    assert(r.entries.join(',') === 'a,b' && r.cursor === 1, '删当前会话：回退到最近目标');
+    h = pushNav(createNavHistory(), 'a'); h = pushNav(h, 'b'); h = pushNav(h, 'c'); h = pushNav(h, 'a');
+    r = removeNav(h, 'b');
+    assert(r.entries.join(',') === 'a,c,a' && r.cursor === 2, '删中间会话：cursor 左移被摘条数，仍指向同一会话');
+    assert(removeNav(h, 'zz').entries.length === 4, '删不存在的会话：历史原样返回');
+    assert(removeNav(createNavHistory(), 'a').cursor === -1, '删空历史的会话：仍是空历史');
+    // 封顶 50：溢出丢最旧条目，cursor 随之回移
+    let big = createNavHistory();
+    for (let i = 0; i < NAV_HISTORY_MAX + 10; i += 1) big = pushNav(big, `s${i}`);
+    assert(big.entries.length === NAV_HISTORY_MAX && big.cursor === NAV_HISTORY_MAX - 1, '历史封顶 50 条');
+    assert(big.entries[0] === 's10' && big.entries[big.entries.length - 1] === `s${NAV_HISTORY_MAX + 9}`, '溢出丢弃最旧条目');
+    assert(pushNav(h, '').entries.length === 4, '空 id 不入栈');
+  });
+  await test('会话导航与运行态源码契约：后退 / 前进接线、侧栏加载圈、Composer 添加上下文', () => {
+    const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
+    const overlay = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'WorkspaceTopOverlay.tsx'), 'utf8');
+    const sidebar = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Sidebar.tsx'), 'utf8');
+    const com = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Composer.tsx'), 'utf8');
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    const shortcut = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'shortcut.ts'), 'utf8');
+    // 后退 / 前进接线
+    assert(app.includes("import { canGoBack, canGoForward, createNavHistory, goBack, goForward, pushNav, removeNav } from './nav-history.mjs'"), 'App 应接导航历史纯函数层');
+    assert(app.includes('const navGo = useCallback'), '应有 navGo 后退 / 前进执行器');
+    assert(app.includes("if (record) setNavHist((h) => pushNav(h, id));"), '用户主动打开 / 新建会话才入栈（后退 / 前进不重复入栈）');
+    assert(app.includes("void openSession(step.id, false);"), '后退 / 前进目标照常打开但不再入栈');
+    assert(app.includes("setNavHist((h) => removeNav(h, id));"), '删除会话应把它从历史里摘掉');
+    assert(/e\.key === '\[' \|\| e\.key === '\]'/.test(app), '应绑 Cmd/Ctrl+[ 与 Cmd/Ctrl+]（ZCode navigateBack / navigateForward 同键位）');
+    assert(app.includes("onBack={() => navGo('back')}") && app.includes('canBack={canGoBack(navHist)}'), '浮层应拿 canBack / canForward 门控');
+    assert(shortcut.includes("export function navBackLabel") && shortcut.includes("export function navForwardLabel"), '应有后退 / 前进的平台相关快捷键标签');
+    assert(overlay.includes('navBackLabel()') && overlay.includes('navForwardLabel()'), '浮层箭头气泡应带快捷键键帽');
+    // 侧栏运行态：16px 前置槽 + 灰色加载圈
+    assert(sidebar.includes('className="sb-row-lead"') && sidebar.includes('className="sb-spin"') && sidebar.includes('running?.has(s.id)'), '侧栏行应有 16px 前置槽，运行中填加载圈');
+    assert(sidebar.includes('running?: ReadonlySet<string>'), '运行态应由 App 以 id 集合下发（运行中可切会话，不能拿 busy && currentId 推导）');
+    assert(app.includes('const [running, setRunning] = useState<Set<string>>(() => new Set());'), 'App 应持运行中会话集合');
+    assert(app.includes("setRunning((prev) => new Set(prev).add(cur.id));"), '主 / 侧边 turn 开始应登记运行态');
+    assert(app.includes('next.delete(sessionId); return next;'), 'turn 收尾应摘掉运行态');
+    const lead = /\.sb-row-lead \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['flex:none', 'width:16px', 'height:16px']) {
+      assert(lead.includes(decl), `前置槽应按 ZCode size-4 leading slot 声明 ${decl}`);
+    }
+    const row = /\.sb-row \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['gap:8px', 'padding:0 4px 0 10px']) {
+      assert(row.includes(decl), `会话行应按 ZCode gap-2 pl-2.5 pr-1 声明 ${decl}（标题整体右移）`);
+    }
+    const spin = /\.sb-spin \{[^}]*\}/.exec(css)?.[0] || '';
+    assert(spin.includes('border-radius:50%') && spin.includes('animation:spin'), '加载圈应为旋转圆环（零依赖，不引图标库）');
+    assert(css.includes('.sb-spin {') && /prefers-reduced-motion[^}]*\.sb-spin/.test(css.replace(/\n/g, ' ')), '减少动效时应放慢加载圈');
+    // Composer 添加上下文（ZCode ChatPromptActionMenu）
+    assert(com.includes('className="composer-plus"') && com.includes('aria-label="添加上下文"'), '输入区应有「添加上下文」加号钮');
+    assert(com.includes('label="添加上下文"') && com.includes('上传文件') && com.includes('引用工作目录文件'), '加号菜单应含上传文件与引用工作目录文件两项');
+    assert(com.includes('type="file"') && com.includes('uploadFiles') && com.includes('ATTACH_MAX_BYTES'), '上传应走隐藏 file input 并带上限守门');
+    assert(com.includes('openMention') && com.includes('barRef') && com.includes('dataset.compact'), '应有提及唤起与窄屏紧凑收纳');
+    const plus = /\.composer-plus \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['width:28px', 'height:28px', 'border-radius:8px']) {
+      assert(plus.includes(decl), `加号钮应按 ZCode ghost icon-md 声明 ${decl}`);
+    }
+    const shell = /\.composer-card \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['border-radius:16px', 'padding:12px', 'gap:12px']) {
+      assert(shell.includes(decl), `输入壳应按 ZCode rounded-2xl + p-3 + gap-3 声明 ${decl}`);
+    }
+    assert(css.includes('.composer-card:focus-within { border-color:var(--accent-line); background:var(--surface-hover); }'), '聚焦只换边框与底色，不铺 glow（ZCode focus-within 语义）');
+    const send = /\.sendbtn \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['width:28px', 'height:28px', 'border-radius:8px']) {
+      assert(send.includes(decl), `发送钮应按 ZCode icon-md 声明 ${decl}`);
+    }
+    assert(com.includes('<IconArrowUp size={16} />') && com.includes('sendbtn-stop'), '发送用 ArrowUp，生成中换方形停止钮');
   });
   await test('更新检查源码契约：设置页入口、路由与缓存语义', () => {
     const general = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'GeneralPanel.tsx'), 'utf8');
@@ -2401,7 +2492,18 @@ try {
     const com = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Composer.tsx'), 'utf8');
     assert(com.includes('className="composer-tail"'), '模型选择器与发送键应收进尾部组，窄屏整组换行不拆散');
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
-    assert(/\.composer-bar\s*\{[^}]*flex-wrap:wrap/.test(css) && /\.composer-bar\s*\{[^}]*row-gap:8px/.test(css), '工具栏应允许换行并留行距');
+    const bar = /\.composer-bar \{[^}]*\}/.exec(css)?.[0] || '';
+    assert(!bar.includes('flex-wrap:wrap'), '工具栏不应换行（ZCode 用紧凑收纳代替换行：换行会把输入框顶跳）');
+    for (const decl of ['display:flex', 'align-items:flex-end', 'gap:12px']) {
+      assert(bar.includes(decl), `工具栏应按 ZCode flex items-end gap-3 声明 ${decl}`);
+    }
+    const tools = /\.composer-tools \{[^}]*\}/.exec(css)?.[0] || '';
+    assert(tools.includes('flex:1') && tools.includes('min-width:0'), '左组应吃剩余宽度并可被压缩（ZCode leading actions）');
+    const inner = /\.composer-tools-inner \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['display:flex', 'align-items:center', 'gap:4px', 'flex:none']) {
+      assert(inner.includes(decl), `左组内层应按 ZCode shrink-0 + gap-1 声明 ${decl}`);
+    }
+    assert(css.includes('.composer-bar[data-compact="1"] .tchip-text'), '窄屏应收成图标钮（ZCode useComposerToolbarFit 首档语义）');
     assert(/\.tchip\s*\{[^}]*flex:none/.test(css), '芯片应禁止收缩，窄屏不被压扁');
     assert(/\.tchip\s*\{[^}]*white-space:nowrap/.test(css), '芯片文字应禁止折行（窄屏标签两行错字的根因）');
     assert(css.includes('.composer-tail {') && css.includes('margin-left:auto'), '尾部组应右对齐，换行后仍贴右');
@@ -2677,7 +2779,7 @@ await test('代码高亮源码契约：Markdown 代码块接入零依赖高亮�
     assert(com.includes('Enter 不拦截，落到下方统一提交'), '无匹配时 Enter 不拦截，/goal 与未知 /xxx 仍能直接发出');
     assert(com.includes('slashDismissed'), 'Esc 只关菜单（用 dismissed 标记防同一内容立刻重开）');
     assert(!com.includes('className="tchip tchip-plan"') && !com.includes('onPlanMode'), '独立计划按钮应退役，开关并入 /plan 命令');
-    assert(com.includes('tchip-plan-on') && com.includes('role="status"'), '计划模式改为状态提示芯片');
+    assert(com.includes('className="composer-plan"') && com.includes('composer-plan-sep') && com.includes('role="status"'), '计划模式改为状态标记（ZCode plan marker：分隔线 + 图标 + 标签）');
     // 命令分发：App 侧落地
     const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
     assert(app.includes('handleCommand') && app.includes('onCommand={'), 'App 应接线斜杠命令分发');

@@ -25,6 +25,7 @@ import { setThemePreference } from './theme';
 import type { ThemePreference } from './theme';
 import type { GoalState, Harness, LiveTurn, ModelInfo, MsgView, ProviderRow, SessionMeta, SettingsInfo, TodoItem, SkillRow, UpdateInfo } from './types';
 import { createTurnEventHandlers, finishTurnProjection } from './turn-events';
+import { canGoBack, canGoForward, createNavHistory, goBack, goForward, pushNav, removeNav } from './nav-history.mjs';
 import { discardSide } from './api';
 
 import { IconAlert, IconClose } from './icons';
@@ -51,6 +52,9 @@ export default function App() {
   const [titleMode, setTitleMode] = useState('local');
   const [planOn, setPlanOn] = useState(false);
   const [busy, setBusy] = useState(false);
+  // 正在运行的会话 id 集合（侧栏行左侧灰色加载圈的数据源）：主 / 侧边 turn 开始时登记、收尾移除。
+  // 运行中允许切换会话，旧的 turn 仍在跑——故不能简单用 busy && currentId 推导
+  const [running, setRunning] = useState<Set<string>>(() => new Set());
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelStatus, setModelStatus] = useState('idle');
   const [providers, setProviders] = useState<ProviderRow[]>([]);
@@ -81,7 +85,14 @@ export default function App() {
     }
   }, []);
 
-  const openSession = useCallback(async (id: string) => {
+  // 会话导航历史（ZCode taskNav：浏览器式前进 / 后退栈）。用户主动打开 / 新建 / 派生会话入栈，
+  // 后退 / 前进只移 cursor 不再入栈；删除会话时把它的条目摘掉。ref 供快捷键等处读最新值。
+  const [navHist, setNavHist] = useState(createNavHistory);
+  const navHistRef = useRef(navHist);
+  useEffect(() => { navHistRef.current = navHist; }, [navHist]);
+
+  const openSession = useCallback(async (id: string, record = true) => {
+    if (record) setNavHist((h) => pushNav(h, id));
     setCurrentId(id);
     setError('');
     setLive(null);
@@ -134,6 +145,7 @@ export default function App() {
     const cur = current;
     if (!cur || busy || !text.trim()) return;
     setBusy(true);
+    setRunning((prev) => new Set(prev).add(cur.id));
     setError('');
     setMessages((prev) => [...prev, { kind: 'user', key: `opt-${Date.now()}`, text }]);
     setLive({ turnId: '', parts: [], thinking: '', usage: null, compression: null, plan: null, round: 0, startedAt: Date.now() });
@@ -149,6 +161,7 @@ export default function App() {
     if (!cur || !text.trim()) return;
     setSide((prev) => ({ msgs: [...(prev?.msgs || []), { kind: 'user', key: `side-opt-${Date.now()}`, text }], live: { turnId: '', parts: [], thinking: '', usage: null, compression: null, plan: null, round: 0, startedAt: Date.now() }, busy: true }));
     setSideActive(true);
+    setRunning((prev) => new Set(prev).add(cur.id)); // 侧边对话也是该会话的活跃工作：侧栏同样转圈
     await runTurnStream('side', cur.id, text, {
       scope: 'side',
       setMsgs: (updater) => setSide((prev) => (prev ? { ...prev, msgs: typeof updater === 'function' ? updater(prev.msgs) : updater } : prev)),
@@ -189,6 +202,7 @@ export default function App() {
       } catch { /* 刷新失败保留当前界面 */ }
       if (scope === 'main') { setBusy(false); setLive(null); }
       else setSide((prev) => (prev ? { ...prev, live: null, busy: false } : prev));
+      setRunning((prev) => { const next = new Set(prev); next.delete(sessionId); return next; });
     }
   };
 
@@ -547,6 +561,14 @@ export default function App() {
   const isPristineSession = Boolean(current && current.turns === 0 && !busy);
   const newSession = () => { if (isPristineSession) return; void createSessionNow(); };
 
+  // 后退 / 前进（ZCode taskNav.goBack / goForward）：只移 cursor，目标会话照常打开但不再入栈
+  const navGo = useCallback((dir: 'back' | 'forward') => {
+    const step = dir === 'back' ? goBack(navHistRef.current) : goForward(navHistRef.current);
+    if (!step) return;
+    setNavHist(step.history);
+    void openSession(step.id, false);
+  }, [openSession]);
+
   const forkSessionById = async (id: string) => {
     try {
       const s = await forkSession(id);
@@ -559,6 +581,7 @@ export default function App() {
 
   const removeSession = async (id: string) => {
     try { await deleteSession(id); } catch { /* 继续本地移除 */ }
+    setNavHist((h) => removeNav(h, id)); // 被删会话的条目摘掉，后退 / 前进不再指向它
     let list: SessionMeta[] = [];
     try { list = await listSessions(); } catch { /* 忽略 */ }
     setSessions(list);
@@ -644,10 +667,6 @@ export default function App() {
     }).catch(() => toast.error('检查更新失败', { description: '网络异常，稍后再试' }));
   }, []);
 
-  // 浮层上一个 / 下一个提问（回合导航；会话不足两轮时禁用）
-  const [navReq, setNavReq] = useState<{ dir: 'prev' | 'next'; nonce: number } | null>(null);
-  const requestNav = useCallback((dir: 'prev' | 'next') => setNavReq({ dir, nonce: Date.now() }), []);
-
   // 键盘快捷键：Ctrl/Cmd+K 新建会话，Ctrl/Cmd+B 切换侧栏收回态，/ 聚焦输入框（焦点不在可输入元素时）。
   // 弹层打开时只保留聚焦输入（其余让位给对话框自身的按键处理）。
   const [focusNonce, setFocusNonce] = useState(0);
@@ -659,6 +678,14 @@ export default function App() {
         if (settingsOpen) return;
         e.preventDefault();
         newSession();
+        return;
+      }
+      // Ctrl/Cmd+[ 后退、Ctrl/Cmd+] 前进（会话导航历史；与 ZCode navigateBack / navigateForward 同键位，
+      // 弹层打开时让位给对话框自身的按键处理）
+      if ((e.metaKey || e.ctrlKey) && (e.key === '[' || e.key === ']') && !e.shiftKey && !e.altKey) {
+        if (settingsOpen) return;
+        e.preventDefault();
+        navGo(e.key === '[' ? 'back' : 'forward');
         return;
       }
       // Ctrl/Cmd+B 切换侧栏收回态（与 ZCode toggleSidebar 同键位；弹层打开时让位）
@@ -707,12 +734,13 @@ export default function App() {
             onFork={forkSessionById}
             onOpenSettings={() => setSettingsOpen(true)}
             loading={booting}
+            running={running}
             version={settings?.version || '4.0.0'}
           />
         </ScopedErrorBoundary>
       </div>
       {/* 顶部浮层（ZCode DesktopTopOverlay）：常驻不卸载，盖在侧栏上方 / 收回态浮到最左，
-          切换 / 上一个 / 下一个 / 新建 / 更新入口都在这；自带分区错误边界 */}
+          切换 / 后退 / 前进 / 新建 / 更新入口都在这；自带分区错误边界 */}
       <ScopedErrorBoundary scope="top-overlay" resetKeys={[currentId, rail]} variant="inline">
         <WorkspaceTopOverlay
           ref={overlayRef}
@@ -720,8 +748,10 @@ export default function App() {
           onToggle={toggleRail}
           onNew={newSession}
           newDisabled={isPristineSession}
-          onNav={requestNav}
-          canNav={Boolean(current && current.turns >= 2)}
+          onBack={() => navGo('back')}
+          onForward={() => navGo('forward')}
+          canBack={canGoBack(navHist)}
+          canForward={canGoForward(navHist)}
           updateUrl={update?.updateAvailable ? update.url : null}
           updateLatest={update?.updateAvailable ? update.latest : null}
         />
@@ -770,7 +800,6 @@ export default function App() {
             onDecidePlan={decidePlan}
             onPick={sideActive ? sendSide : send}
             todos={sideActive ? [] : todos}
-            navRequest={sideActive ? null : navReq}
           />
           {!sideActive && goal ? <GoalBar goal={goal} onAction={decideGoal} /> : null}
           <Composer

@@ -98,12 +98,20 @@ Header 常驻 `48px`（ZCode `h-12`）：内行 `p-2` / `gap-2` / `justify-betwe
 
 - **左组**（`gap-1`）：工作区上下文钮（`28px` ghost 方钮，hover 即显信息卡、点击 pin；卡内三行——工作目录 home 缩写 / 最近活动 / git 分支，分支由 `GET /api/workspace` 零依赖直读 `.git/HEAD`）+ 会话标题（`14px` / `600`、`max-width:400px`、容器查询窄档 `30vw` / `22vw`、双击原位重命名）+ 更多菜单（`28px` ghost，菜单项选中即关）
 - **右组**（`gap-0.5`）：帮助菜单（文档 / 反馈外链 + 快捷键与关于两个信息面板；触发器挂「帮助」气泡，复刻 ZCode「ControlHintTooltip 包住 DropdownMenuTrigger」）+ 设置
-- **顶部浮层**（复刻 ZCode `DesktopTopOverlay`）：absolute 常驻，外层 `pointer-events:none`、交互容器 `auto`——空白处的点击仍归侧栏；切换钮静止显 `20px` 品牌砖（圆角 `6px`）、hover 淡出并淡入 `16px` 面板图标（绝对居中），气泡显示「切换侧边栏 + ⌘B/Ctrl+B」；上一个 / 下一个提问（会话不足两轮禁用）；新建任务钮随 `isNewTaskButtonVisible` 语义做 `opacity` / `width` `300ms` 过渡（收回态才显，图标取 lucide `MessageCirclePlus` 精确路径——聊天气泡 + 加号，不是裸加号）；更新入口仅发现有新版时出现（ZCode 教训：收回态不能按宽度阈值隐藏全局入口）
+- **顶部浮层**（复刻 ZCode `DesktopTopOverlay`）：absolute 常驻，外层 `pointer-events:none`、交互容器 `auto`——空白处的点击仍归侧栏；切换钮静止显 `20px` 品牌砖（圆角 `6px`）、hover 淡出并淡入 `16px` 面板图标（绝对居中），气泡显示「切换侧边栏 + ⌘B/Ctrl+B」；后退 / 前进（会话导航历史，复刻 ZCode `taskNav`：浏览器式前进后退栈，栈首 / 栈尾禁用，`Ctrl/Cmd+[` 与 `Ctrl/Cmd+]` 同效——与对话区左缘梯状轨 TurnNavigator 分工：那是消息内的上一条 / 下一条，这是会话间的后退 / 前进）；新建任务钮随 `isNewTaskButtonVisible` 语义做 `opacity` / `width` `300ms` 过渡（收回态才显，图标取 lucide `MessageCirclePlus` 精确路径——聊天气泡 + 加号，不是裸加号）；更新入口仅发现有新版时出现（ZCode 教训：收回态不能按宽度阈值隐藏全局入口）
 - **让位**：侧栏收回时 Header 内行加左侧内距（实测浮层宽 + `8px`）；侧栏顶部留 `48px` 浮层带；主列窄于 `360px` 时自动收回侧栏（只收不展）
-- **侧栏本体**（复刻 ZCode `WorkspaceSidebar`）：展开态没有大 Logo——`aside` 首段是 `48px` 空拖拽带（浮层盖在上面），品牌只存在于浮层那枚切换钮；带下第一件是新建任务钮（ZCode `NewTaskButtonGroup`：`w-full h-8 rounded-lg` ghost、`pl-2.5 pr-2.5 gap-2`、`MessageCirclePlus 16px` +「新建任务」+ 右侧 `12px` 快捷键标签；正常态不挂 tooltip——按钮已自带文案与快捷键，再挂就是重复）；设置外观在设置弹层「外观」一级目录（ZCode `appearance` section）：界面主题是 `Select` 下拉（`260px`、选项带 `Monitor` / `Moon` / `Sun` 图标 + 对勾指示），不是分段按钮——选项带图标时分段控件排不下，且下拉与设置页其它选择器语言一致（全量选项见第 11 节）
+- **侧栏本体**（复刻 ZCode `WorkspaceSidebar`）：展开态没有大 Logo——`aside` 首段是 `48px` 空拖拽带（浮层盖在上面），品牌只存在于浮层那枚切换钮；会话行是 32px（ZCode `TaskListItem`）：左 `10px` 内距 + `16px` 前置槽 + `8px` 间距把标题整体右移，槽位在会话运行中填 `14px` 灰色加载圈（转圈即「这个会话有活在跑」——运行中允许切换会话，旧 turn 仍在跑，加载圈按 sessionId 集合点亮而非「当前会话 + busy」推导；`prefers-reduced-motion` 下放慢转速）；带下第一件是新建任务钮（ZCode `NewTaskButtonGroup`：`w-full h-8 rounded-lg` ghost、`pl-2.5 pr-2.5 gap-2`、`MessageCirclePlus 16px` +「新建任务」+ 右侧 `12px` 快捷键标签；正常态不挂 tooltip——按钮已自带文案与快捷键，再挂就是重复）；设置外观在设置弹层「外观」一级目录（ZCode `appearance` section）：界面主题是 `Select` 下拉（`260px`、选项带 `Monitor` / `Moon` / `Sun` 图标 + 对勾指示），不是分段按钮——选项带图标时分段控件排不下，且下拉与设置页其它选择器语言一致（全量选项见第 12 节）
 - 入口钮统一 `28px` + 圆角 `8px` + 只过渡背景色 / 颜色（ZCode 教训：`transition-all` 会在缩放窗口时把尺寸变化也动画化）
 
-## 11. 外观设置页
+## 11. 输入区（Composer，复刻 ZCode `ChatPromptEditor`）
+
+- **输入壳**：`border-radius:16px`、内距 `12px`、区块间距 `12px`；`:focus-within` 只换边框色与底色，不铺 glow——焦点态不该像报错一样发亮。
+- **工具栏**：`flex` + `align-items:flex-end` + `gap:12px`，永远单行不换行；左组 `flex:1 min-width:0`（内容左对齐、可被压缩的是空白），右组 `margin-left:auto` + `shrink:0` + `gap:6px`（模型选择器与发送 / 停止贴右）。
+- **入口钮**：工具栏全部入口统一 `28px` ghost 方钮（圆角 `8px`、无描边、`padding:0 8px`、图标与文字间距 `4px`、只过渡背景色 / 颜色）——加号、模式、权限、标题同规格，不建新高度；发送是 `28px` 品牌钮（`IconArrowUp`），生成中换中性底方形停止钮。
+- **「添加上下文」加号菜单**：左组第一枚（复用零依赖 `Menu`：portal 单例 root、ARIA 键盘全集、Esc / Tab / 点外关闭）。两项：**上传文件**——读本机文本文件，以 `<file name="…">…</file>` 块插入输入框（后端没有附件存储，插入内容即「添加上下文」的落地形态，模型当场能读到；单文件上限 `200KB`、一次最多 `5` 个，二进制 / 超限说清原因并给出下一步，不静默丢弃）；**引用工作目录文件**——在文末补一个 `@`，唤起既有提及调色板（与 `@` 提及时同一套只读文件搜索）。
+- **窄屏收纳**：工具栏超宽时整组收成图标钮（隐藏文字标签、钮保持方形），不放宽、不换行——输入框宽度稳定，不随标签显隐跳动（ZCode `useComposerToolbarFit` 首档语义）。
+
+## 12. 外观设置页
 
 设置弹层「外观」一级目录（复刻 ZCode `appearance` section，`Palette` 图标，排在「通用」之后）承载三段内容，全部只影响本机浏览器（`localStorage` 持久化，首帧由 `index.html` 内联脚本预置防闪）：
 
@@ -116,14 +124,14 @@ Header 常驻 `48px`（ZCode `h-12`）：内行 `p-2` / `gap-2` / `justify-betwe
 - **界面字号只动文字**：`app.css` 全文件 `font-size` 一律 rem（`1rem` ＝ 界面字号），行高用无单位比值随之缩放；图标、间距、圆角保持 `px` 不动（对齐 ZCode「只更新字号 Token 基准变量」的做法）。
 - **行号结构随偏好切分**：`Markdown` 把高亮 token 序列按换行切开逐行渲染，序号用 `position:sticky` 钉在滚动左缘并带底纹盖住滚过的代码；偏好经迷你真外部存储（`useSyncExternalStore`）广播，改设置当下重排。
 
-## 12. 可访问性与长文案
+## 13. 可访问性与长文案
 
-- 键盘是一等路径：全局快捷键（`Ctrl/Cmd+K` 新建会话、`Ctrl/Cmd+B` 折叠 / 展开侧栏、`/` 聚焦输入框），焦点环统一 `:focus-visible`。
+- 键盘是一等路径：全局快捷键（`Ctrl/Cmd+K` 新建会话、`Ctrl/Cmd+B` 折叠 / 展开侧栏、`Ctrl/Cmd+[` 后退与 `Ctrl/Cmd+]` 前进、`/` 聚焦输入框），焦点环统一 `:focus-visible`。
 - 语义状态色必须配可读文字，不单靠颜色传达状态。
 - 布局容忍长翻译与窄窗口；图标优先配文字标签（tooltip 承担无标签处的说明）。
 - 产品内**零 emoji**，图标一律内联 SVG 或 `public/vendors/*.svg`（守卫强制）。
 
-## 13. 新增 / 改造界面自查清单
+## 14. 新增 / 改造界面自查清单
 
 - [ ] 新颜色进了 `tokens.css` 双主题，且通过对比度守卫（正文 4.5 / 弱信息 3.0）。
 - [ ] 组件内无硬编码语义色，全部引用令牌变量。

@@ -24,3 +24,13 @@ export function sidebarToggleLabel(info?: PlatformInfo): string {
 export function newSessionLabel(info?: PlatformInfo): string {
   return isAppleKeyboardPlatform(info) ? '⌘K' : 'Ctrl+K';
 }
+
+/** 会话导航「后退」的展示标签：与 App 里 CmdOrCtrl+[ 的实际绑定一一对应（ZCode navigateBack 同键位） */
+export function navBackLabel(info?: PlatformInfo): string {
+  return isAppleKeyboardPlatform(info) ? '⌘[' : 'Ctrl+[';
+}
+
+/** 会话导航「前进」的展示标签：与 App 里 CmdOrCtrl+] 的实际绑定一一对应（ZCode navigateForward 同键位） */
+export function navForwardLabel(info?: PlatformInfo): string {
+  return isAppleKeyboardPlatform(info) ? '⌘]' : 'Ctrl+]';
+}

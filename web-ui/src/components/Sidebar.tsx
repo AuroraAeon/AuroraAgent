@@ -5,8 +5,10 @@
  *   - 新建任务钮（ZCode NewTaskButtonGroup）：w-full h-8 rounded-lg ghost，
  *     pl-2.5 pr-2.5 gap-2 hover:bg-surface-hover；内容 = lucide MessageCirclePlus 16px
  *     +「新建任务」14px truncate + 右侧快捷键标签（12px 三次色，ml-auto）；
- *   - 会话区：36px 区头（「会话」标签 + 可展开搜索）+ 32px 行（圆角 8px、悬停底色、14px 标题、
- *     12px 相对时间悬停隐去、16px 操作钮悬停现形）；栏脚是 panelRow 形态的设置入口。
+ *   - 会话区：36px 区头（「会话」标签 + 可展开搜索）+ 32px 行（ZCode TaskListItem 形态：
+ *     左 10px 内距 + 16px 前置槽 + 8px 间距把标题整体右移，槽位在会话运行中填灰色加载圈；
+ *     圆角 8px、悬停底色、14px 标题、12px 相对时间悬停隐去、16px 操作钮悬停现形）；
+ *     栏脚是 panelRow 形态的设置入口。
  *
  *  折叠后侧栏整块消失（ZCode 语义：不存在左侧边，只剩顶部浮层与 WorkspaceHeader 承载入口）。
  *  切换入口统一在 WorkspaceTopOverlay 那枚「静止显品牌砖、hover 显面板图标」的 28px 幽灵钮上
@@ -30,11 +32,13 @@ type Props = {
   onOpenSettings: () => void;
   /** 首屏会话列表未回：显示骨架行，别把「加载中」显示成「还没有会话」 */
   loading?: boolean;
+  /** 正在运行的会话 id 集合：行左侧 16px 槽位显示灰色加载圈（ZCode leadingIndicator=loading） */
+  running?: ReadonlySet<string>;
   version: string;
 };
 
 export function Sidebar({
-  sessions, currentId, onSelect, onNew, newDisabled, onDelete, onFork, onOpenSettings, loading, version,
+  sessions, currentId, onSelect, onNew, newDisabled, onDelete, onFork, onOpenSettings, loading, running, version,
 }: Props) {
   const [q, setQ] = useState('');
   const [searchOn, setSearchOn] = useState(false);
@@ -83,6 +87,7 @@ export function Sidebar({
         <nav className="sb-list" aria-label="会话列表" aria-busy={loading ? 'true' : undefined}>
           {loading ? [0, 1, 2].map((i) => (
             <div className="sb-skel" key={i} aria-hidden="true">
+              <span className="sb-skel-lead" />
               <span className="sb-skel-line w1" />
               <span className="sb-skel-line w2" />
             </div>
@@ -91,11 +96,16 @@ export function Sidebar({
           {!loading && sessions.length > 0 && shown.length === 0 ? <div className="sb-empty">无匹配会话</div> : null}
           {shown.map((s) => (
             <div key={s.id} className={`sb-row${s.id === currentId ? ' on' : ''}`}>
+              {/* 前置 16px 槽（ZCode TaskListItem leading slot）：静止留空，正在运行的会话
+                  填灰色加载圈——转圈即「这个会话有活在跑」，切过去能看到实时进度 */}
+              <span className="sb-row-lead" aria-hidden="true">
+                {running?.has(s.id) ? <span className="sb-spin" /> : null}
+              </span>
               <button
                 type="button"
                 className="sb-row-main"
                 aria-current={s.id === currentId ? 'true' : undefined}
-                title={`${s.name || '新会话'}${s.preview ? ` · ${s.preview}` : ''}`}
+                title={`${s.name || '新会话'}${running?.has(s.id) ? ' · 正在运行' : ''}${s.preview ? ` · ${s.preview}` : ''}`}
                 onClick={() => onSelect(s.id)}
               >
                 <span className="sb-row-title">{s.name || '新会话'}</span>

@@ -1,12 +1,23 @@
-/** 输入区：自适应文本框 + 工具栏（模式 / 权限 / 标题 + 模型与思考强度二级选择器）+ 发送 / 停止。
+/** 输入区：自适应文本框 + 工具栏（ZCode ChatPromptEditor 排版）+ 发送 / 停止。
+ * ZCode 规格原文：输入壳 = relative flex flex-col gap-3 rounded-2xl border bg-input p-3
+ * （focus-within 只换边框与底色，不铺 glow）；工具栏 = flex items-end gap-3，
+ * 左组 flex min-w-0 flex-1（内层 flex shrink-0 items-center gap-1：添加上下文加号钮 +
+ * 模式 / 权限 / 标题 ghost 钮 + 计划标记），右组 ml-auto flex shrink-0 items-center
+ * justify-end gap-1.5（模型选择器 + 停止 / 发送）。入口钮统一 28px ghost 方钮
+ * （h-7 rounded-lg px-2 gap-1，图标 16px + 标签 + 14px 箭号，只过渡颜色）；
+ * 发送是 28px rounded-lg 品牌钮（ArrowUp，生成中换方形停止钮 secondary）。
+ * 窄屏不放宽换行，按 ZCode useComposerToolbarFit 的首档语义整组收成图标钮
+ * （data-compact 隐藏标签）——工具栏永远单行，输入框不跳。
  * 模型选择器对齐 dsh web 的两级结构：根菜单是「模型 / 思考强度」两行（标签 + 当前值 + 右箭），
  * 各自钻进列表；触发钮同时显示模型名与思考强度（caption 调）。
  * 斜杠菜单对齐 dsh web 的 slash source：`/` 触发即列全部合法命令（含技能），随输入实时过滤，
  * 无参数命令回车即执行、带参数命令只补全；计划模式开关从工具栏挪进 /plan 命令，原位置改为状态提示芯片。 */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
-  Dots, IconCheck, IconChevronDown, IconChevronRight, IconList, IconSend, IconSpark, IconStop,
+  Dots, IconArrowUp, IconAt, IconCheck, IconChevronDown, IconChevronRight, IconList, IconPaperclip, IconPlus, IconSpark, IconStop,
 } from '../icons';
+import { ControlTooltip } from '../ControlTooltip';
+import { Menu, MenuItem, MenuSeparator } from '../Menu';
 import type { Harness, ModelInfo, ProviderRow, SkillRow } from '../types';
 import { buildRows, findEntry, rowImmediate, rowName } from '../slash-commands';
 import type { SlashRow } from '../slash-commands';
@@ -15,6 +26,7 @@ import { HarnessPicker, PermPicker, TitlePicker } from './ComposerPickers';
 import { MentionPalette } from './MentionPalette';
 import type { MentionItem } from './MentionPalette';
 import { searchFiles } from '../api';
+import { toast } from '../toast';
 
 /** 厂商标识：按模型 ID 前缀匹配（web.mjs 的 /vendor/ 白名单路由放行），接入新厂商时在此追加 */
 const VENDOR_MARKS: { match: string; icon: string }[] = [{ match: 'LongCat', icon: '/vendor/meituan.svg' }];
@@ -37,6 +49,10 @@ function groupByProvider(models: ModelInfo[], providers: ProviderRow[]) {
     models: by[pid],
   }));
 }
+
+/** 上传附件上限（前端守门：超限说清原因并给出下一步，不静默丢弃） */
+const ATTACH_MAX_FILES = 5;
+const ATTACH_MAX_BYTES = 200 * 1024;
 
 /** 思考强度档位（会话级，PATCH 落 meta.thinking）。当前上游只表达思考开 / 关两态，
  *  档位表按 dsh 的 reasoning.efforts 形态组织——上游支持分档思考后在此追加即可。 */
@@ -230,6 +246,7 @@ export function Composer({
   const [mentionIdx, setMentionIdx] = useState(0);
   const [mentionFiles, setMentionFiles] = useState<string[]>([]);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   // 斜杠命令菜单：行首或空白之后的 / 开始一个词时展开（对齐 dsh 的 slash 触发：词首才认，
   // https:// 这类URL 里的斜杠不当触发）；随输入实时过滤（命令 + 技能两组）
   const slash = /(^|\s)\/([^\s]*)$/.exec(text);
@@ -334,6 +351,63 @@ export function Composer({
     taRef.current?.focus();
   };
 
+  /** 添加上上下文 → 引用工作目录文件：等价于在手柄里敲一个 @，直接唤起提及调色板 */
+  const openMention = () => {
+    setText((prev) => (/(^|\s)@[^\s@]*$/.test(prev) ? prev : `${prev.replace(/\s*$/, '')}${prev.trim() ? ' ' : ''}@`));
+    setTimeout(() => taRef.current?.focus(), 0);
+  };
+
+  /** 添加上下文 → 上传文件：读本机文本文件，以 <file name="…"> 块插入输入框。
+   *  后端没有附件存储，插入内容即「添加上下文」的落地形态——模型当场能读到；
+   *  二进制 / 超限文件说清原因并给出下一步，不静默丢弃。 */
+  const uploadFiles = async (files: FileList | null) => {
+    const list = files ? Array.from(files) : [];
+    if (!list.length) return;
+    if (list.length > ATTACH_MAX_FILES) {
+      toast.error('一次最多上传 5 个文件', { description: `本次选择了 ${list.length} 个，请分批上传` });
+      return;
+    }
+    const blocks: string[] = [];
+    for (const file of list) {
+      if (file.size > ATTACH_MAX_BYTES) {
+        toast.error(`${file.name} 太大`, { description: `单个文件上限 200 KB，当前 ${(file.size / 1024).toFixed(1)} KB；可改为用 @ 引用工作目录内的文件，让模型自行读取` });
+        continue;
+      }
+      try {
+        const text = await file.text();
+        if (text.includes('\u0000')) {
+          toast.error(`${file.name} 疑似二进制文件`, { description: '只能上传文本类文件；工作目录内的文件可用 @ 引用，让模型自行读取' });
+          continue;
+        }
+        blocks.push(`<file name="${file.name}">\n${text.trim()}\n</file>`);
+      } catch (e) {
+        toast.error(`${file.name} 读取失败`, { description: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    if (!blocks.length) return;
+    setText((prev) => `${prev.trim() ? `${prev.replace(/\s*$/, '')}\n\n` : ''}${blocks.join('\n\n')}`);
+    setTimeout(() => taRef.current?.focus(), 0);
+  };
+
+  /** 窄屏收纳（ZCode useComposerToolbarFit 首档语义）：工具栏内容超宽时整组收成图标钮，
+   *  标签隐藏但不换行——输入框宽度稳定，不随标签显隐跳动 */
+  const barRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+    const fit = () => {
+      const lead = bar.querySelector<HTMLElement>('.composer-tools-inner');
+      const tail = bar.querySelector<HTMLElement>('.composer-tail');
+      if (!lead || !tail) return;
+      const overflow = lead.scrollWidth + tail.scrollWidth + 12 - bar.clientWidth;
+      bar.dataset.compact = overflow > 0 ? '1' : '0';
+    };
+    const ro = new ResizeObserver(fit);
+    ro.observe(bar);
+    fit();
+    return () => ro.disconnect();
+  }, []);
+
   /** 补全：把行尾这个 /词 换成 /<name> （带参数的留一个空格续写，对齐 dsh 的 leadingClaim token） */
   const completeSlash = (r: SlashRow) => {
     setText((prev) => prev.replace(/\/([^\s]*)$/, `/${rowName(r)} `));
@@ -430,32 +504,66 @@ export function Composer({
               : <>未知命令 <b>/{leadName}</b> · 未登记，将作为普通消息发给模型</>}
           </p>
         ) : null}
-        <div className="composer-bar">
+        <div className="composer-bar" ref={barRef}>
+          {/* 左组（ZCode leading actions）：加号「添加上下文」+ 模式 / 权限 / 标题 + 计划标记 */}
           <div className="composer-tools">
-            <HarnessPicker harnesses={harnesses} harness={harness} onHarness={onHarness} openNonce={pickerNonce} />
-            <PermPicker mode={permissionMode} onMode={onPermissionMode} />
-            <TitlePicker mode={titleMode} onMode={onTitleMode} />
-            {planMode ? (
-              <span className="tchip-plan-on" role="status" title="计划模式已开启：下一轮先出计划，批准才执行（/plan off 关闭）">
-                <IconList size={14} />
-                计划模式
-              </span>
-            ) : null}
+            <div className="composer-tools-inner">
+              <Menu
+                label="添加上下文"
+                align="start"
+                tip={{ title: '添加上下文' }}
+                trigger={(
+                  <button type="button" className="composer-plus" aria-label="添加上下文">
+                    <IconPlus size={16} />
+                  </button>
+                )}
+              >
+                <MenuItem icon={<IconPaperclip size={16} />} onSelect={() => fileRef.current?.click()}>上传文件</MenuItem>
+                <MenuItem icon={<IconAt size={16} />} shortcut="@" onSelect={openMention}>引用工作目录文件</MenuItem>
+                <MenuSeparator />
+                <MenuItem icon={<IconList size={16} />} disabled>斜杠命令 / 与技能调用随输入展开</MenuItem>
+              </Menu>
+              <HarnessPicker harnesses={harnesses} harness={harness} onHarness={onHarness} openNonce={pickerNonce} />
+              <PermPicker mode={permissionMode} onMode={onPermissionMode} />
+              <TitlePicker mode={titleMode} onMode={onTitleMode} />
+              {planMode ? (
+                <span className="composer-plan" role="status" title="计划模式已开启：下一轮先出计划，批准才执行（/plan off 关闭）">
+                  <span className="composer-plan-sep" aria-hidden="true" />
+                  <IconList size={14} />
+                  <span className="composer-plan-text">计划模式</span>
+                </span>
+              ) : null}
+            </div>
           </div>
+          {/* 右组（ZCode trailing actions）：模型选择器 + 停止 / 发送 */}
           <div className="composer-tail">
             <ModelPicker models={models} modelStatus={modelStatus} model={model} providers={providers} effort={effort} onModel={onModel} onEffort={onEffort} openNonce={pickerNonce} />
             {busy ? (
-              <button type="button" className="sendbtn sendbtn-stop" title="停止（Esc）" aria-label="停止" onClick={onStop}>
-                <IconStop size={14} />
-              </button>
+              <ControlTooltip title="停止" shortcut="Esc" side="top">
+                <button type="button" className="sendbtn sendbtn-stop" aria-label="停止" onClick={onStop}>
+                  <IconStop size={14} />
+                </button>
+              </ControlTooltip>
             ) : (
-              <button type="button" className="sendbtn" title="发送" aria-label="发送" disabled={disabled || !text.trim()} onClick={submit}>
-                <IconSend size={16} />
-              </button>
+              <ControlTooltip title="发送" shortcut="Enter" side="top">
+                <button type="button" className="sendbtn" aria-label="发送" disabled={disabled || !text.trim()} onClick={submit}>
+                  <IconArrowUp size={16} />
+                </button>
+              </ControlTooltip>
             )}
           </div>
         </div>
       </div>
+      {/* 隐藏文件选择器（ZCode 同款：web 平台没有原生 picker，回落到 input[type=file]） */}
+      <input
+        ref={fileRef}
+        type="file"
+        multiple
+        className="composer-file"
+        aria-hidden="true"
+        tabIndex={-1}
+        onChange={(e) => { void uploadFiles(e.target.files); e.target.value = ''; }}
+      />
     </div>
   );
 }
