@@ -172,7 +172,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 
 ## 9. 验证基线（改动后自查）
 
-- `npm test` → 358/358
+- `npm test` → 359/359
 - `curl -s localhost:8787/api/health` → `{"ok":true,...}`；`/api/settings` → `version` / `managed` / `dataDir` 符合预期
 - 浏览器打开 http://localhost:8787 ：无 emoji、模型选择器按提供方分组、完整 turn（工具卡 / 权限卡 / 用量脚注）正常、设置弹层可开关开机自启
 - 网页快捷键：`Ctrl/Cmd+K` 新建会话、`/` 聚焦输入框（焦点不在输入控件时）；对话区上翻读历史时不抢滚动，出现「回到最新」按钮，点它或继续贴底即恢复跟随
