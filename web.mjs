@@ -18,6 +18,7 @@ import { SERVICE_LOG, servicePid, isManaged, autostartInstalled } from './util/s
 import { ProviderStore, ProviderError, handleProviderApi } from './util/providers.mjs';
 import { pumpSse, pumpTranslated } from './util/stream.mjs';
 import { openChatStream } from './util/llm/provider.mjs';
+import { handleFailoverApi } from './util/llm/failover.mjs';
 import { createAgentApi } from './util/agent/http.mjs';
 import { handleTuiSettingsApi } from './util/tui/settings-api.mjs';
 import { handleAgentProxyApi } from './util/proxy.mjs';
@@ -48,6 +49,7 @@ const agentApi = createAgentApi({
   dataDir: DATA_DIR,
   usage,
   resolveChatProvider,
+  providerStore: providers,
   loadConfig,
   pickModel: (raw, fallback) => (MODEL_RE.test(String(raw || '')) ? String(raw) : fallback),
   log: (level, msg, extra) => log(level, msg, extra),
@@ -386,6 +388,10 @@ const server = createServer(async (req, res) => {
   if (url.startsWith('/api/settings/proxy')) {
     if (await handleAgentProxyApi(req, res, url, { loadConfig, saveConfig, log })) return;
   }
+  // 多提供方故障转移偏好（/api/settings/failover，实现见 util/llm/failover.mjs；下一轮请求即时生效）
+  if (url.startsWith('/api/settings/failover')) {
+    if (await handleFailoverApi(req, res, url, { loadConfig, saveConfig, log })) return;
+  }
 
   if (req.method === 'POST' && url === '/api/abort') {
     let raw = '';
@@ -452,19 +458,31 @@ const server = createServer(async (req, res) => {
 
         // 连接期退避重试：仅网络层失败且未产生任何字节时重试（借鉴 dsh retry-policy 的安全重试思想）
         // 内置提供方沿用全局 maxTokens/temperature/thinking；自定义提供方只在显式声明后发送，
-        // 避免上游把未支持的字段当 400 拒绝
+        // 避免上游把未支持的字段当 400 拒绝（故障转移换到另一家时按目标提供方口径重新拼）
+        const genFor = (p) => ({
+          sendThinking: p.builtin || Boolean(p.thinking),
+          thinkingOn: body.thinking !== false,
+          maxTokens: p.builtin ? cfg.maxTokens : p.maxTokens,
+          temperature: p.builtin ? cfg.temperature : p.temperature,
+        });
         // LLM 抽象层统一入口（与 Agent Loop 同源）：构造请求 + 连接期重试 + 错误话术 + 帧翻译选择
+        // + 多提供方故障转移（429/5xx/网络错误时换到提供同模型的其它提供方，用户无感知）
         let opened;
         try {
-          opened = await openChatStream(provider, {
-            model, messages,
-            sendThinking: provider.builtin || Boolean(provider.thinking),
-            thinkingOn: body.thinking !== false,
-            maxTokens: provider.builtin ? cfg.maxTokens : provider.maxTokens,
-            temperature: provider.builtin ? cfg.temperature : provider.temperature,
-          }, {
+          opened = await openChatStream(provider, { model, messages, ...genFor(provider) }, {
             signal: entry.controller.signal,
             onRetry: (n, e) => log('warn', '上游连接失败，准备重试', { attempt: n, error: String(e) }),
+            failover: {
+              enabled: cfg.providerFailover !== false,
+              maxAttempts: cfg.providerFailoverMaxAttempts,
+              candidates: () => providers.all(),
+              // 记账归属跟随真实产出 token 的提供方（settleUsage 在收尾时读 entry）
+              onSwitch: ({ from, to, reason, attempt }) => {
+                entry.provider = to.id;
+                entry.price = to.price;
+                log('warn', '上游暂不可用，已切换提供方重试', { from: from.id, to: to.id, reason, attempt });
+              },
+            },
           });
         } catch (e) {
           // 上游非 2xx：原样透传状态码与中文提示；网络层异常走下方统一兜底

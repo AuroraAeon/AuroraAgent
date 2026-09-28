@@ -16,6 +16,7 @@ export const EVENT_TYPES = [
   'plan_proposed',
   'plan_approved',
   'plan_rejected',
+  'provider_switched',
   'token_usage_updated',
   'context_compression_started',
   'context_compression_completed',

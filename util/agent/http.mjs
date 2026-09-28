@@ -36,11 +36,13 @@ function json(res, status, obj) {
 }
 
 /**
- * @param deps { dataDir, usage, resolveChatProvider, loadConfig, pickModel, log, builtinPrice }
+ * @param deps { dataDir, usage, resolveChatProvider, providerStore, loadConfig, pickModel, log, builtinPrice }
  * @returns {(req, res, url) => Promise<void>} 只处理 /api/agent/ 前缀的请求
  */
 export function createAgentApi(deps) {
-  const { dataDir, usage, resolveChatProvider, loadConfig, pickModel, log = () => {}, builtinPrice } = deps;
+  const { dataDir, usage, resolveChatProvider, providerStore = null, loadConfig, pickModel, log = () => {}, builtinPrice } = deps;
+  // 故障转移候选源：全部提供方（内置在前）；挑选时的同模型 / 有 Key / 排除已试过滤在 llm/failover.mjs
+  const failoverCandidates = providerStore ? () => providerStore.all() : null;
   const sessions = new SessionStore(dataDir, { warn: (m, e) => log('warn', m, e) });
   // Goal 存储：<数据目录>/goals/<sessionId>.json（一会话一个目标）
   const goals = new GoalStore(dataDir, { warn: (m, e) => log('warn', m, e) });
@@ -345,6 +347,8 @@ export function createAgentApi(deps) {
           gen: { maxTokens: cfg.maxTokens, temperature: cfg.temperature, thinkingOn: body.thinking !== false },
           emit, controller, permissionMode, planMode, titleMode, extraTools: mcpTools(),
           agentProxy: cfg.agentProxy,
+          providerFailover: cfg.providerFailover, providerFailoverMaxAttempts: cfg.providerFailoverMaxAttempts,
+          failoverCandidates,
           goalStore: goals, goalCfg: cfg.goal,
           requestPermission: ({ requestId }) => new Promise((resolve) => {
             pendingPermissions.set(requestId, { resolve, sessionId });

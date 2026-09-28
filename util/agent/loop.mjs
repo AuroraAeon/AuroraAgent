@@ -19,6 +19,7 @@ import { DEFAULT_SESSION_NAME } from './session.mjs';
 import { DEFAULT_TITLE_MODE } from '../config.mjs';
 import { PLAN_MAX_ROUNDS, PLAN_MODE_PROMPT, planExecutionNote, planToolNames } from './plan.mjs';
 import { assembleMessages, needsCompaction, planCompaction, compactionMessages, contextWindowOf } from './context.mjs';
+import { FAILOVER_DEFAULTS } from '../llm/failover.mjs';
 import { createGoalRuntime } from './goal/runtime.mjs';
 import { GOAL_WRAPUP_NOTE } from './goal/continuation.mjs';
 
@@ -51,36 +52,65 @@ export async function runAgentTurn(ctx) {
     gen = {}, skills = [], extraTools = [], emit, controller, requestPermission, requestPlanDecision,
     permissionMode = 'ask_when_needed', planMode = false, titleMode = DEFAULT_TITLE_MODE, depth = 0,
     agentProxy = '', goalStore = null, goalCfg = null, log = () => {},
+    // 多提供方故障转移：candidates 由 HTTP 面按模型目录注入（直连 Loop 的旧调用方不传即不转移）
+    providerFailover = true, providerFailoverMaxAttempts = FAILOVER_DEFAULTS.maxAttempts, failoverCandidates = null,
   } = ctx;
   const sessionId = session.id;
   const turnId = randomUUID();
   const started = Date.now();
-  const price = settlePrice(provider, builtinPrice);
+  // turn 内粘性：连接期故障转移成功后，后续轮次继续用新提供方（activeProvider），
+  // 单价与记账随之归属到真实产出 token 的那一家，避免同一 turn 里两家来回抖动
+  let activeProvider = provider;
+  const priceOf = () => settlePrice(activeProvider, builtinPrice);
+  // 提供方相关的请求参数：内置提供方走全局 gen；自定义提供方只发送显式声明过的字段，
+  // 避免上游把未支持字段当 400 拒绝（故障转移换到另一家时按目标提供方口径重新拼）
+  const requestGen = (p) => ({
+    sendThinking: p.builtin || Boolean(p.thinking),
+    thinkingOn: gen.thinkingOn !== false,
+    maxTokens: p.builtin ? gen.maxTokens : p.maxTokens,
+    temperature: p.builtin ? gen.temperature : p.temperature,
+  });
+  // 故障转移接线（判定与配置见 llm/failover.mjs）：只在流尚未打开时换路，
+  // 已产出字节后的失败按既有行为传播（客户端已收到部分内容，不能透明换路）
+  const failoverIo = () => ({
+    failover: {
+      enabled: providerFailover !== false && typeof failoverCandidates === 'function',
+      maxAttempts: providerFailoverMaxAttempts,
+      candidates: (cur) => failoverCandidates(cur),
+      onSwitch: ({ from, to, reason, attempt }) => {
+        activeProvider = to;
+        log('warn', '上游暂不可用，已切换提供方重试', { from: from.id, to: to.id, reason, attempt, sessionId });
+        emit('provider_switched', { sessionId, turnId, from: from.id, fromName: from.name, to: to.id, toName: to.name, reason, attempt, round });
+      },
+    },
+  });
 
   store.append(sessionId, { t: 'user', text: input });
   store.patch(sessionId, { turns: (session.turns || 0) + 1 });
 
   let totIn = 0, totOut = 0, totCost = 0;
   const recordRoundUsage = (u, stopped = false) => {
+    const price = priceOf();
     const inTok = u?.prompt_tokens || 0;
     const outTok = u?.completion_tokens || 0;
     const cost = (inTok * price.input + outTok * price.output) / 1_000_000;
     totIn += inTok; totOut += outTok; totCost = Number((totCost + cost).toFixed(6));
     store.append(sessionId, { t: 'usage', inputTokens: inTok, outputTokens: outTok, cost });
     store.patch(sessionId, { inputTokens: totIn, outputTokens: totOut, cost: totCost });
-    usage.record({ kind: 'agent', requestId: turnId, sessionId, model, provider: provider.id, ms: Date.now() - started, inputTokens: inTok, outputTokens: outTok, reasoningTokens: u?.completion_tokens_details?.reasoning_tokens || 0, cost: Number(cost.toFixed(6)), stopped });
+    usage.record({ kind: 'agent', requestId: turnId, sessionId, model, provider: activeProvider.id, ms: Date.now() - started, inputTokens: inTok, outputTokens: outTok, reasoningTokens: u?.completion_tokens_details?.reasoning_tokens || 0, cost: Number(cost.toFixed(6)), stopped });
     emit('token_usage_updated', { sessionId, turnId, model, inputTokens: inTok, outputTokens: outTok, cost: Number(cost.toFixed(6)) });
   };
 
   /** 附加请求记账（titleMode=model 的标题轮 / goal 验证轮）：同一套单价，进账本与会话汇总，但不进转录与轮次脚注（渲染口径与本地模式一致） */
   const recordExtraUsage = (u, ms, purpose) => {
     if (!u) return;
+    const price = priceOf();
     const inTok = u.prompt_tokens || 0;
     const outTok = u.completion_tokens || 0;
     const cost = (inTok * price.input + outTok * price.output) / 1_000_000;
     totIn += inTok; totOut += outTok; totCost = Number((totCost + cost).toFixed(6));
     store.patch(sessionId, { inputTokens: totIn, outputTokens: totOut, cost: totCost });
-    usage.record({ kind: 'agent', requestId: `${purpose}_${turnId}`, sessionId, model, provider: provider.id, ms, inputTokens: inTok, outputTokens: outTok, reasoningTokens: 0, cost: Number(cost.toFixed(6)), purpose });
+    usage.record({ kind: 'agent', requestId: `${purpose}_${turnId}`, sessionId, model, provider: activeProvider.id, ms, inputTokens: inTok, outputTokens: outTok, reasoningTokens: 0, cost: Number(cost.toFixed(6)), purpose });
   };
   const recordTitleUsage = (u, ms) => recordExtraUsage(u, ms, 'title');
 
@@ -95,7 +125,7 @@ export async function runAgentTurn(ctx) {
     if (titleMode === 'model') {
       const t0 = Date.now();
       try {
-        const r = await generateTitleText({ provider, model, input, answer, controller });
+        const r = await generateTitleText({ provider: activeProvider, model, input, answer, controller });
         recordTitleUsage(r.usage, Date.now() - t0);
         title = deriveTitle(r.text);
       } catch (e) {
@@ -127,6 +157,8 @@ export async function runAgentTurn(ctx) {
     runTurn: runAgentTurn, store, usage, provider, model, harness, skills, builtinPrice,
     emit, controller, requestPermission, permissionMode, titleMode, rules: sessionRules, gen, extraTools,
     workspace: session.workspace, depth, log,
+    // 子代理继承同一套故障转移配置与候选源：父层换过的路，子代理也能自己换
+    providerFailover, providerFailoverMaxAttempts, failoverCandidates,
   });
   // Goal 运行时：仅顶层会话启用（子代理不接管目标）；工具经 allTools 进请求与解析，
   // 钩子（beginTurn / afterRound / finish）驱动用量入账、熔断、预算与提案结算。
@@ -144,12 +176,12 @@ export async function runAgentTurn(ctx) {
   /** 超长时把早期记录折叠成一条 summary（压缩本身花一轮模型调用，失败不阻塞主流程） */
   const maybeCompact = async () => {
     const messages = assembleMessages({ harness, workspace: session.workspace, records, skills });
-    if (!needsCompaction(messages, { windowTokens: contextWindowOf(provider), ratio: harness.compactRatio })) return;
+    if (!needsCompaction(messages, { windowTokens: contextWindowOf(activeProvider), ratio: harness.compactRatio })) return;
     const plan = planCompaction(records);
     if (!plan) return;
     emit('context_compression_started', { sessionId, turnId, headRecords: plan.head.length });
     try {
-      const opened = await openChatStream(provider, { model, messages: compactionMessages(plan.head), maxTokens: 1024 }, { signal: controller.signal });
+      const opened = await openChatStream(activeProvider, { model, messages: compactionMessages(plan.head), maxTokens: 1024 }, { signal: controller.signal, ...failoverIo() });
       let summary = '';
       await consumeAgentStream(opened.reader, { controller, usage: null }, { onText: (t) => { summary += t; } }, { translate: opened.translate });
       if (!summary.trim()) throw new Error('压缩结果为空');
@@ -200,17 +232,13 @@ export async function runAgentTurn(ctx) {
     try {
       // LLM 抽象层统一入口：构造请求 + 连接期重试 + 中文错误话术 + 协议帧翻译选择；
       // extraTools（MCP 等外部工具）的 schema 经此进入请求，模型才看得见这些工具
-      opened = await openChatStream(provider, {
-        model, messages, toolNames, extraTools: allTools,
-        sendThinking: provider.builtin || Boolean(provider.thinking),
-        thinkingOn: gen.thinkingOn !== false,
-        maxTokens: provider.builtin ? gen.maxTokens : provider.maxTokens,
-        temperature: provider.builtin ? gen.temperature : provider.temperature,
-      }, { signal: controller.signal, onRetry: (n, e) => log('warn', '上游连接失败，准备重试', { attempt: n, error: String(e) }) });
+      opened = await openChatStream(activeProvider, {
+        model, messages, toolNames, extraTools: allTools, ...requestGen(activeProvider),
+      }, { signal: controller.signal, onRetry: (n, e) => log('warn', '上游连接失败，准备重试', { attempt: n, error: String(e) }), ...failoverIo() });
     } catch (e) {
       // 中止走统一取消路径（保留已生成内容）；其余（上游非 2xx / 网络失败）以 turn_failed 收尾
       if (controller.signal.aborted || e?.name === 'AbortError') throw e;
-      log('warn', '上游错误', { kind: e.kind, status: e.status, provider: provider.id, sessionId });
+      log('warn', '上游错误', { kind: e.kind, status: e.status, provider: activeProvider.id, sessionId });
       emit('turn_failed', { sessionId, turnId, error: e.message, round });
       return { failed: true };
     }
