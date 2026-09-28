@@ -102,6 +102,7 @@ export default function App() {
   const [settings, setSettings] = useState<SettingsInfo | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [error, setError] = useState('');
+  const [booting, setBooting] = useState(true); // 首屏会话列表未回：侧栏显示骨架而非「还没有会话」
   const booted = useRef(false);
 
   const current = sessions.find((s) => s.id === currentId) || null;
@@ -158,6 +159,7 @@ export default function App() {
       let list: SessionMeta[] = [];
       try { list = await listSessions(); } catch { /* 列表失败不阻塞：仍可新建 */ }
       setSessions(list);
+      setBooting(false);
       if (list.length) { openSession(list[0].id); return; }
       try {
         const s = await createSession({});
@@ -532,6 +534,7 @@ export default function App() {
         harness={current?.harness || 'standard'}
         onHarness={changeHarness}
         onOpenSettings={() => setSettingsOpen(true)}
+        loading={booting}
         version={settings?.version || '4.0.0'}
       />
       <main className="main">

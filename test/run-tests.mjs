@@ -1665,6 +1665,17 @@ try {
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
     assert(css.includes('.toast-viewport') && css.includes('.crash-card'), '应有通知视口与崩溃页样式');
   });
+  await test('首屏骨架源码契约：会话列表加载中不与空态混淆', () => {
+    const sidebar = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Sidebar.tsx'), 'utf8');
+    assert(sidebar.includes('loading') && sidebar.includes('sess-skel'), '侧栏应有加载骨架');
+    assert(sidebar.includes('aria-busy'), '加载态应标记 aria-busy 供读屏软件感知');
+    assert(sidebar.includes('!loading && sessions.length === 0'), '空态文案应在加载结束后才出现');
+    const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
+    assert(app.includes('setBooting(false)') && app.includes('loading={booting}'), 'App 应在会话列表回来后收起骨架');
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    assert(css.includes('.sess-skel-line') && css.includes('@keyframes shimmer'), '骨架应有微光动画');
+    assert(css.includes('prefers-reduced-motion'), '动画应尊重系统减少动效设置');
+  });
   await test('更新检查源码契约：设置页入口、路由与缓存语义', () => {
     const settings = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SettingsDialog.tsx'), 'utf8');
     assert(settings.includes('checkUpdate(true)') && settings.includes('检查更新'), '设置页应有检查更新入口');

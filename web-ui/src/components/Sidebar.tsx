@@ -14,11 +14,13 @@ type Props = {
   harness: string;
   onHarness: (id: string) => void;
   onOpenSettings: () => void;
+  /** 首屏会话列表未回：显示骨架行，别把「加载中」显示成「还没有会话」 */
+  loading?: boolean;
   version: string;
 };
 
 export function Sidebar({
-  sessions, currentId, onSelect, onNew, onDelete, onFork, harnesses, harness, onHarness, onOpenSettings, version,
+  sessions, currentId, onSelect, onNew, onDelete, onFork, harnesses, harness, onHarness, onOpenSettings, loading, version,
 }: Props) {
   return (
     <aside className="sidebar">
@@ -33,8 +35,14 @@ export function Sidebar({
         <IconPlus size={15} />
         新建会话
       </button>
-      <nav className="sess-list" aria-label="会话列表">
-        {sessions.length === 0 ? <div className="sess-empty">还没有会话</div> : null}
+      <nav className="sess-list" aria-label="会话列表" aria-busy={loading ? 'true' : undefined}>
+        {loading ? [0, 1, 2].map((i) => (
+          <div className="sess-skel" key={i} aria-hidden="true">
+            <span className="sess-skel-line w1" />
+            <span className="sess-skel-line w2" />
+          </div>
+        )) : null}
+        {!loading && sessions.length === 0 ? <div className="sess-empty">还没有会话</div> : null}
         {sessions.map((s) => (
           <div key={s.id} className={`sess ${s.id === currentId ? 'cur' : ''}`}>
             <button type="button" className="sess-main" onClick={() => onSelect(s.id)} title={s.name}>
