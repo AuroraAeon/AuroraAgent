@@ -108,7 +108,7 @@ export const IconSend = (p: IconProps) => (
   <Svg {...p}><line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" /></Svg>
 );
 export const IconStop = (p: IconProps) => (
-  <Svg {...p}><rect x="7" y="7" width="10" height="10" rx="2.2" fill="currentColor" stroke="none" /></Svg>
+  <Svg {...p}><rect x="4.5" y="4.5" width="15" height="15" rx="4.5" fill="currentColor" stroke="none" /></Svg>
 );
 export const IconPause = (p: IconProps) => (
   <Svg {...p}><rect x="7" y="5.5" width="3.4" height="13" rx="1.2" fill="currentColor" stroke="none" /><rect x="13.6" y="5.5" width="3.4" height="13" rx="1.2" fill="currentColor" stroke="none" /></Svg>
