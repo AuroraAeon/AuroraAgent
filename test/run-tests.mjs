@@ -1637,8 +1637,9 @@ try {
     const pickers = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ComposerPickers.tsx'), 'utf8');
     assert(pickers.includes('PERM_LABEL') && pickers.includes('always_ask') && pickers.includes('never_ask'), '输入区应有权限三档选择器');
     const composer = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Composer.tsx'), 'utf8');
-    assert(composer.includes('onPlanMode'), '输入区应有计划模式开关');
+    assert(composer.includes('tchip-plan-on') && composer.includes('planMode'), '计划模式应在输入区作状态提示（开关已并入 /plan 斜杠命令）');
     const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
+    assert(app.includes("case 'plan':") && app.includes('changePlan(arg !== '), 'App 应经 /plan on|off 切换计划模式');
     const te = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'turn-events.ts'), 'utf8');
     assert(app.includes('respondPlan') && (app + te).includes('plan_proposed') && (app + te).includes('plan_approved'), 'App 应接线计划决策回传与计划事件');
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'tokens.css'), 'utf8');
@@ -2062,16 +2063,57 @@ await test('代码高亮源码契约：Markdown 代码块接入零依赖高亮�
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
     assert(css.includes('.md pre .c-key') && css.includes('.md pre .c-str') && css.includes('.md pre .c-com'), '高亮 token 应有语义样式');
   });
-  await test('技能界面源码契约：斜杠调色板与设置技能目录在场', () => {
-    const pal = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SkillPalette.tsx'), 'utf8');
-    assert(pal.includes('技能命令') && pal.includes('navigate'), '调色板应有标题与键位提示');
-    assert(pal.includes('❯'), '调色板应使用统一选中指针');
+  await test('技能界面源码契约：设置技能目录在场，技能并入斜杠命令菜单', () => {
     const sp = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SkillsPanel.tsx'), 'utf8');
     assert(sp.includes('listSkills') && sp.includes('/<技能名>'), '技能目录应列出并说明调用方式');
-    const com = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Composer.tsx'), 'utf8');
-    assert(com.includes('SkillPalette') && com.includes('slashOpen'), '输入区应接入斜杠调色板');
+    assert(!existsSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SkillPalette.tsx')), '独立技能调色板应退役（技能已并入斜杠命令菜单）');
+  });
+  await test('斜杠命令菜单源码契约：命令目录、实时过滤、dsh 数值与两档回车', () => {
+    const cat = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'slash-commands.ts'), 'utf8');
+    // 目录与终端 baseCommands 同源：16 条基础命令一个不落
+    for (const name of ['help', 'new', 'sessions', 'model', 'harness', 'theme', 'mcp', 'title', 'goal', 'btw', 'plan', 'think', 'temp', 'max', 'key', 'quit']) {
+      assert(cat.includes(`name: '${name}'`), `命令目录应登记 /${name}`);
+    }
+    assert(cat.includes('aliases:') && cat.includes('exit'), '同义名应登记（/exit 即 /quit）');
+    assert(cat.includes('export function filterEntries') && cat.includes('export function findEntry') && cat.includes('export function buildRows'), '应导出过滤 / 精确查找 / 行合成三个纯函数');
+    assert(/startsWith\(q\) \? 0 : 1/.test(cat), '排名应让前缀命中排前（对齐 dsh rankByName）');
+    const pal = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'CommandPalette.tsx'), 'utf8');
+    assert(pal.includes('role="listbox"') && pal.includes('aria-activedescendant') && pal.includes('role="option"'), '菜单应具备 listbox / option 无障碍语义');
+    assert(pal.includes('onMouseDown={(e) => { e.preventDefault(); onPick(r); }}'), '点选应阻止默认行为，别抢走输入框焦点');
+    assert(pal.includes('scrollIntoView'), '键盘导航时应把高亮行滚入可视区');
+    assert(!hasEmoji(pal), '斜杠菜单零 emoji 铁律');
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
-    assert(css.includes('.skillpal-item') && css.includes('.skillpal-hint'), 'app.css 应有调色板样式');
+    // 数值对齐 dsh web MenuView
+    const menuBlock = /\.cmdpal \{([^}]*)\}/.exec(css)?.[1] || '';
+    for (const decl of ['max-height:320px', 'border-radius:20px', 'padding:4px', 'bottom:calc(100% + 4px)', 'left:0; right:0', 'z-index:100']) {
+      assert(menuBlock.includes(decl), `菜单应按 dsh 数值声明 ${decl}`);
+    }
+    assert(css.includes('min-height:40px') && css.includes('border-radius:10px') && css.includes('font-size:14px'), '菜单行应按 dsh 数值：40px / radius10 / 14px');
+    assert(css.includes('.cmdpal-section') && css.includes('min-height:26px'), '组标题应按 dsh 数值：26px 高');
+    assert(!css.includes('.skillpal-item'), '旧调色板样式应退役');
+    const com = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Composer.tsx'), 'utf8');
+    assert(com.includes('CommandPalette') && com.includes('slashRows'), '输入区应接入斜杠命令菜单并持有过滤结果');
+    assert(com.includes('/(^|\\s)\\/([^\\s]*)$/'), '斜杠触发应是「行首或空白之后的 / 开头词」，URL 里的斜杠不触发');
+    assert(com.includes('buildRows(slashQuery, skills)'), '菜单行应随输入实时重组（命令 + 技能）');
+    assert(com.includes('completeSlash') && com.includes('rowImmediate'), '回车应分两档：无参数命令即执行，带参数命令只补全');
+    assert(com.includes('if (e.key === \'Tab\') {') && com.includes('Tab 只补全'), 'Tab 只补全不执行');
+    assert(com.includes('Enter 不拦截，落到下方统一提交'), '无匹配时 Enter 不拦截，/goal 与未知 /xxx 仍能直接发出');
+    assert(com.includes('slashDismissed'), 'Esc 只关菜单（用 dismissed 标记防同一内容立刻重开）');
+    assert(!com.includes('className="tchip tchip-plan"') && !com.includes('onPlanMode'), '独立计划按钮应退役，开关并入 /plan 命令');
+    assert(com.includes('tchip-plan-on') && com.includes('role="status"'), '计划模式改为状态提示芯片');
+    // 命令分发：App 侧落地
+    const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
+    assert(app.includes('handleCommand') && app.includes('onCommand={'), 'App 应接线斜杠命令分发');
+    for (const name of ['help', 'new', 'sessions', 'theme', 'mcp', 'title', 'btw', 'plan', 'think', 'temp', 'max', 'key', 'quit']) {
+      assert(app.includes(`case '${name}':`), `App 应落地 /${name}`);
+    }
+    assert(app.includes('setPickerRequest') && app.includes('pickerNonce={pickerRequest?.nonce}'), '/model 与 /harness 应经 nonce 唤起对应选择器');
+    // 色彩语义提示
+    assert(com.includes('composer-cmdhint') && com.includes('leadKnown'), '输入合法命令后应给色彩语义提示');
+    assert(css.includes('.composer-cmdhint.ok') && css.includes('.composer-cmdhint.warn'), '语义提示应有合法 / 未知两态配色');
+    const tokens = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'tokens.css'), 'utf8');
+    assert(tokens.includes('--warn-ink:') && tokens.includes(':root[data-theme="light"]'), '警告色应有双主题令牌');
+    assert(tokens.includes('--warn-bg:') && tokens.includes('--warn-line:'), '警告色应有背景与描边变体');
   });
   await test('转录投影层源码契约：工具词表两端同源', () => {
     const tr = readFileSync(join(__dirname, '..', 'util', 'agent', 'transcript.mjs'), 'utf8');

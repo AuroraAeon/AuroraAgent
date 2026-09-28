@@ -1,12 +1,16 @@
-/** 输入区：自适应文本框 + 工具栏（模式 / 权限 / 标题 / 计划 + 模型与思考强度二级选择器）+ 发送 / 停止。
+/** 输入区：自适应文本框 + 工具栏（模式 / 权限 / 标题 + 模型与思考强度二级选择器）+ 发送 / 停止。
  * 模型选择器对齐 dsh web 的两级结构：根菜单是「模型 / 思考强度」两行（标签 + 当前值 + 右箭），
- * 各自钻进列表；触发钮同时显示模型名与思考强度（caption 调）。 */
+ * 各自钻进列表；触发钮同时显示模型名与思考强度（caption 调）。
+ * 斜杠菜单对齐 dsh web 的 slash source：`/` 触发即列全部合法命令（含技能），随输入实时过滤，
+ * 无参数命令回车即执行、带参数命令只补全；计划模式开关从工具栏挪进 /plan 命令，原位置改为状态提示芯片。 */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Dots, IconCheck, IconChevronDown, IconChevronRight, IconList, IconSend, IconSpark, IconStop,
 } from '../icons';
 import type { Harness, ModelInfo, ProviderRow, SkillRow } from '../types';
-import { SkillPalette } from './SkillPalette';
+import { buildRows, findEntry, rowImmediate, rowName } from '../slash-commands';
+import type { SlashRow } from '../slash-commands';
+import { CommandPalette } from './CommandPalette';
 import { HarnessPicker, PermPicker, TitlePicker } from './ComposerPickers';
 import { MentionPalette } from './MentionPalette';
 import type { MentionItem } from './MentionPalette';
@@ -44,10 +48,12 @@ const EFFORT_LABEL: Record<string, string> = { standard: '标准', off: '关闭'
 const effortLabelOf = (id: string) => EFFORT_LABEL[id] || EFFORT_LABEL.standard;
 
 function ModelPicker({
-  models, modelStatus, model, providers, effort, onModel, onEffort,
+  models, modelStatus, model, providers, effort, onModel, onEffort, openNonce,
 }: {
   models: ModelInfo[]; modelStatus: string; model: string; providers: ProviderRow[];
   effort: string; onModel: (m: ModelInfo) => void; onEffort: (v: string) => void;
+  /** 外部打开请求：nonce 递增即展开根菜单（/model 斜杠命令用，与点击同效果） */
+  openNonce?: number;
 }) {
   const [open, setOpen] = useState(false);
   const [pane, setPane] = useState<'root' | 'model' | 'effort'>('root');
@@ -72,6 +78,12 @@ function ModelPicker({
   }, [open]);
 
   const close = () => { setOpen(false); setPane('root'); setQ(''); };
+
+  // /model 命令从外部唤起：nonce 递增即展开根菜单（与点击触发钮同效果）
+  const lastNonce = useRef(openNonce || 0);
+  useEffect(() => {
+    if (openNonce !== undefined && openNonce !== lastNonce.current) { lastNonce.current = openNonce; setOpen(true); }
+  }, [openNonce]);
 
   return (
     <div className="mpick" ref={boxRef}>
@@ -196,30 +208,48 @@ type Props = {
   onPermissionMode: (m: string) => void;
   titleMode: string;
   onTitleMode: (m: string) => void;
+  /** 计划模式状态：开关已并入 /plan 斜杠命令，这里只渲染不可点的状态提示芯片 */
   planMode: boolean;
-  onPlanMode: (v: boolean) => void;
+  /** 斜杠命令分发（/goal 家族走 onGoalCommand，其余命令走这里；技能调用由 App 直接发送） */
+  onCommand?: (name: string, args: string) => void;
   skills: SkillRow[];
   sessionId: string | null;
   disabled: boolean;
   /** 外部聚焦请求：nonce 递增即聚焦输入框（快捷键 / 唤起） */
   focusNonce?: number;
+  /** 外部打开选择器请求：nonce 递增即展开模型 / 模式菜单（/model、/harness 命令用） */
+  pickerNonce?: number;
 };
 
 export function Composer({
   busy, onSend, onStop, models, modelStatus, model, onModel, providers, effort, onEffort, harnesses, harness, onHarness, disabled,
-  permissionMode, onPermissionMode, titleMode, onTitleMode, planMode, onPlanMode, skills, sessionId, onGoalCommand, goalPrefill, focusNonce,
+  permissionMode, onPermissionMode, titleMode, onTitleMode, planMode, onCommand, skills, sessionId, onGoalCommand, goalPrefill, focusNonce, pickerNonce,
 }: Props) {
   const [text, setText] = useState('');
-  const [skillIdx, setSkillIdx] = useState(0);
+  const [slashIdx, setSlashIdx] = useState(0);
   const [mentionIdx, setMentionIdx] = useState(0);
   const [mentionFiles, setMentionFiles] = useState<string[]>([]);
   const taRef = useRef<HTMLTextAreaElement>(null);
-  // 斜杠技能命令：仅当整段输入是 /开头且无空格时展开调色板（参数段不打磨）
-  const slash = /^\/([^\s]*)$/.exec(text);
-  const slashOpen = Boolean(slash) && skills.length > 0 && !busy && !disabled;
+  // 斜杠命令菜单：行首或空白之后的 / 开始一个词时展开（对齐 dsh 的 slash 触发：词首才认，
+  // https:// 这类URL 里的斜杠不当触发）；随输入实时过滤（命令 + 技能两组）
+  const slash = /(^|\s)\/([^\s]*)$/.exec(text);
+  const slashQuery = slash?.[2] || '';
+  const slashRows: SlashRow[] = buildRows(slashQuery, skills);
+  // Esc 只关菜单不打断生成：关闭后记一笔，输入内容变化即解除（dsh 的 Escape 语义）
+  const slashDismissed = useRef(false);
+  const slashOpen = Boolean(slash) && !busy && !disabled && !slashDismissed.current && slashRows.length > 0;
   // @ 提及：行首或空白之后的 @ 开始一个词时展开（文件只读搜索 + 技能目录合并）
   const at = /(^|\s)@([^\s@]*)$/.exec(text);
   const atOpen = Boolean(at) && !busy && !disabled;
+  // 输入框第一个词是 /xxx 时的色彩语义提示：登记过的命令（含技能）走成功色，否则警告色
+  const leadCmd = /^\/([^\s]*)/.exec(text);
+  const leadName = leadCmd ? leadCmd[1] : '';
+  const leadKnown = Boolean(leadName) && (Boolean(findEntry(leadName)) || skills.some((sk) => sk.name === leadName));
+  // 浮层开着时 Esc 归浮层，不触发「停止生成」
+  const menuOpenRef = useRef(false);
+  useEffect(() => { menuOpenRef.current = atOpen || slashOpen; }, [atOpen, slashOpen]);
+  // 输入内容一变就重新展开菜单（Esc 只关这一次），高亮回到首行
+  useEffect(() => { slashDismissed.current = false; setSlashIdx(0); }, [slashQuery]);
 
   useLayoutEffect(() => {
     const ta = taRef.current;
@@ -241,7 +271,8 @@ export function Composer({
 
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
-      if (ev.key === 'Escape' && busy) onStop();
+      // 浮层开着时 Esc 归浮层（关闭菜单 / 取消高亮），不顺手把生成也停了
+      if (ev.key === 'Escape' && busy && !menuOpenRef.current) onStop();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -258,6 +289,19 @@ export function Composer({
       onGoalCommand(t.slice('/goal'.length).trim());
       setText('');
       return;
+    }
+    // 其余已登记的斜杠命令（/plan / /think / /btw …）与技能调用走命令通道，不进普通消息。
+    // busy 同样放行：/goal 之外的命令多在生成中才有意义（/btw 开侧边、/plan 改下一轮策略）
+    if (onCommand) {
+      const head = /^\/([^\s]+)(?:\s+([\s\S]*))?$/.exec(t);
+      if (head) {
+        const name = head[1].toLowerCase();
+        if (name !== 'goal' && (findEntry(name) || skills.some((sk) => sk.name === name))) {
+          onCommand(name, (head[2] || '').trim());
+          setText('');
+          return;
+        }
+      }
     }
     if (busy) return;
     onSend(t);
@@ -290,6 +334,13 @@ export function Composer({
     taRef.current?.focus();
   };
 
+  /** 补全：把行尾这个 /词 换成 /<name> （带参数的留一个空格续写，对齐 dsh 的 leadingClaim token） */
+  const completeSlash = (r: SlashRow) => {
+    setText((prev) => prev.replace(/\/([^\s]*)$/, `/${rowName(r)} `));
+    setSlashIdx(0);
+    taRef.current?.focus();
+  };
+
   return (
     <div className="composer">
       {atOpen ? (
@@ -302,16 +353,17 @@ export function Composer({
           onPick={insertMention}
         />
       ) : null}
-      {slashOpen ? (
-        <SkillPalette
-          skills={skills}
-          query={slash?.[1] || ''}
-          active={skillIdx}
-          onClose={() => setText('')}
-          onPick={(sk) => { setText(`/${sk.name} `); setSkillIdx(0); taRef.current?.focus(); }}
-        />
-      ) : null}
       <div className="composer-card">
+        {slashOpen ? (
+          <CommandPalette
+            rows={slashRows}
+            query={slashQuery}
+            active={Math.min(slashIdx, Math.max(0, slashRows.length - 1))}
+            onHover={setSlashIdx}
+            onClose={() => { slashDismissed.current = true; setSlashIdx(0); }}
+            onPick={completeSlash}
+          />
+        ) : null}
         <textarea
           ref={taRef}
           id="input"
@@ -340,30 +392,30 @@ export function Composer({
               if (e.key === 'Escape') { e.preventDefault(); setMentionIdx(0); return; }
             }
             if (slashOpen) {
-              const n = skills.filter((sk) => {
-                const kw = (slash?.[1] || '').toLowerCase();
-                return !kw || sk.name.toLowerCase().includes(kw) || sk.description.toLowerCase().includes(kw);
-              }).length;
-              if (e.key === 'ArrowDown') { e.preventDefault(); setSkillIdx((i) => (n ? (i + 1) % n : 0)); return; }
-              if (e.key === 'ArrowUp') { e.preventDefault(); setSkillIdx((i) => (n ? (i - 1 + n) % n : 0)); return; }
-              if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
-                const kw = (slash?.[1] || '').toLowerCase();
-                const shown = skills.filter((sk) => {
-                  return !kw || sk.name.toLowerCase().includes(kw) || sk.description.toLowerCase().includes(kw);
-                });
-                const pick = shown[Math.min(skillIdx, shown.length - 1)];
-                if (pick) {
+              const n = slashRows.length;
+              if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIdx((i) => (i + 1) % n); return; }
+              if (e.key === 'ArrowUp') { e.preventDefault(); setSlashIdx((i) => (i - 1 + n) % n); return; }
+              if (e.key === 'Tab') {
+                e.preventDefault();
+                const pick = slashRows[Math.min(slashIdx, n - 1)];
+                if (pick) completeSlash(pick); // Tab 只补全，绝不代为执行
+                return;
+              }
+              if (e.key === 'Enter' && !e.shiftKey) {
+                // 两档语义（对齐 dsh matchEnter）：输入恰是完整命令名且该命令无参数 → 直接执行；
+                // 否则只补全成 /name （参数由用户续写）
+                const exact = findEntry(slashQuery);
+                if (exact && rowImmediate({ kind: 'command', name: exact.name, entry: exact })) {
                   e.preventDefault();
-                  setText(`/${pick.name} `);
-                  setSkillIdx(0);
-                  taRef.current?.focus();
+                  submit(); // 输入框里已是 /name 原文，走统一提交即命中命令通道
                   return;
                 }
-                // 无匹配技能：Tab 无可插入直接忽略；Enter 不拦截，落到下方统一提交
+                const pick = slashRows[Math.min(slashIdx, n - 1)];
+                if (pick) { e.preventDefault(); completeSlash(pick); return; }
+                // 无匹配：Enter 不拦截，落到下方统一提交
                 // （/goal 等斜杠命令与未知 /xxx 输入都应当能直接发出）
-                if (e.key === 'Tab') e.preventDefault();
               }
-              if (e.key === 'Escape') { e.preventDefault(); setText(''); return; }
+              if (e.key === 'Escape') { e.preventDefault(); slashDismissed.current = true; setSlashIdx(0); return; }
             }
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
@@ -371,24 +423,27 @@ export function Composer({
             }
           }}
         />
+        {leadName ? (
+          <p className={`composer-cmdhint ${leadKnown ? 'ok' : 'warn'}`} role="status">
+            {leadKnown
+              ? <>合法命令 <b>/{leadName}</b> · {findEntry(leadName)?.summary || skills.find((sk) => sk.name === leadName)?.description || '技能调用'}</>
+              : <>未知命令 <b>/{leadName}</b> · 未登记，将作为普通消息发给模型</>}
+          </p>
+        ) : null}
         <div className="composer-bar">
           <div className="composer-tools">
-            <HarnessPicker harnesses={harnesses} harness={harness} onHarness={onHarness} />
+            <HarnessPicker harnesses={harnesses} harness={harness} onHarness={onHarness} openNonce={pickerNonce} />
             <PermPicker mode={permissionMode} onMode={onPermissionMode} />
             <TitlePicker mode={titleMode} onMode={onTitleMode} />
-            <button
-              type="button"
-              className="tchip tchip-plan"
-              aria-pressed={planMode}
-              title={planMode ? '计划模式已开启：下一轮先出计划，批准后执行' : '计划模式：下一轮先出计划，批准后执行'}
-              onClick={() => onPlanMode(!planMode)}
-            >
-              <IconList size={14} />
-              计划
-            </button>
+            {planMode ? (
+              <span className="tchip-plan-on" role="status" title="计划模式已开启：下一轮先出计划，批准才执行（/plan off 关闭）">
+                <IconList size={14} />
+                计划模式
+              </span>
+            ) : null}
           </div>
           <div className="composer-tail">
-            <ModelPicker models={models} modelStatus={modelStatus} model={model} providers={providers} effort={effort} onModel={onModel} onEffort={onEffort} />
+            <ModelPicker models={models} modelStatus={modelStatus} model={model} providers={providers} effort={effort} onModel={onModel} onEffort={onEffort} openNonce={pickerNonce} />
             {busy ? (
               <button type="button" className="sendbtn sendbtn-stop" title="停止（Esc）" aria-label="停止" onClick={onStop}>
                 <IconStop size={14} />

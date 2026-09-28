@@ -1,7 +1,7 @@
 /** 输入区工具钮：模式（Minimal/Standard/Ultimate）/ 权限三档 / 标题生成方式。
  * 与模型选择器（Composer.tsx 的二级菜单）同为停靠芯片；标签宽度按最长项固定，
  * 切换选项不改变工具栏布局（输入框内部宽度不重排）。 */
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { IconCheck, IconChevronDown, IconShield, IconTag } from '../icons';
 import type { Harness } from '../types';
@@ -19,15 +19,22 @@ function useDismiss(open: boolean, close: () => void, boxRef: RefObject<HTMLDivE
 }
 
 export function HarnessPicker({
-  harnesses, harness, onHarness,
+  harnesses, harness, onHarness, openNonce,
 }: {
   harnesses: Harness[]; harness: string; onHarness: (id: string) => void;
+  /** 外部打开请求：nonce 递增即展开菜单（/harness 斜杠命令用，与点击同效果） */
+  openNonce?: number;
 }) {
   const [open, setOpen] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
   const current = harnesses.find((h) => h.id === harness) || harnesses[0];
 
   useDismiss(open, () => setOpen(false), boxRef);
+
+  const lastNonce = useRef(openNonce || 0);
+  useEffect(() => {
+    if (openNonce !== undefined && openNonce !== lastNonce.current) { lastNonce.current = openNonce; setOpen(true); }
+  }, [openNonce]);
 
   return (
     <div className="hpick" ref={boxRef}>

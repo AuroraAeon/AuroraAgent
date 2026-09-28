@@ -63,7 +63,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 | `tools/perf/` | 性能基准（本地回归参考，非门禁）：`mock-upstream.mjs` 可播大上下文 SSE mock、`scenarios.mjs` startup / upstream-100 / history-300 三场景、`run.mjs` 临时数据目录拉起真实服务采样 wall / CPU / peak-RSS 输出 JSON + Markdown |
 | `util/agent/transcript.mjs` | 转录投影层：工具标签 / 图标键 / 资源摘要 / 费用格式化的单一真值源 + `projectTurns` 记录分组规则（同一用户轮内文本与工具按时间线交错存 `parts`，回答不被工具调用切断；Web 投影与流式 turn 同形态；配套 `transcript.d.mts` 供 TS 取类型） |
 | `util/mcp/` | MCP 客户端（实验，`AURORAAGENT_EXPERIMENTAL_MCP` 门控）：`client.mjs` JSON-RPC 2.0（stdio spawn 行读写 / HTTP POST + SSE 复用 `sse.mjs`，initialize / tools-list / tools-call）；`registry.mjs` 服务器配置（`mcp.json` 原子落盘）、显示开关（停用即从工具箱摘掉，配置保留）与工具发现注册（`mcp__<服务器>__<工具>`），单服务器失败不阻塞其他 |
-| `web-ui/` | React + Vite + TS 工作台：`src/App.tsx` + `components/{Sidebar,ChatView,Message,ToolCard,Composer(+ComposerPickers 选择器组+SkillPalette 斜杠调色板，模型选择器两级化：根菜单「模型 / 思考强度」各进列表),GoalBar,ProviderEditor,ProvidersPanel,GeneralPanel,SettingsDialog(分级壳：左导航轨 通用/提供方/故障转移/网络/技能/MCP 工具/终端/用量/错误日志 九 section 懒挂载+hidden 缓存),McpPanel,SkillsPanel,TuiPanel,ProxyPanel,FailoverPanel,UsagePanel,ErrorLogPanel,PlanCard,Todo}.tsx` + 手写 Markdown 子集渲染器 + `highlight.ts` 零依赖语法高亮 + `projection.ts`（委托 `transcript.mjs` 同源投影）（网页侧边对话：`/btw` 一问一答分支、输入框上方侧边横幅、`Ctrl+/` 主 / 侧切换、turn 带 `side` 标记）+ 内联 SVG 图标 + `toast.tsx` 零依赖通知（右下角视口、四级语义、悬停暂停计时、同屏 4 条、同文案合并计数）+ `error-report.ts` / `error-boundary.tsx` 全局错误捕获与崩溃兜底页 + `theme.ts` 双主题偏好（跟随系统 / 浅色 / 深色，首帧防闪由 `index.html` 内联脚本负责）+ `tokens.css` 设计令牌（`:root` 深色 / `:root[data-theme="light"]` 同名覆盖，`app.css` 引用） |
+| `web-ui/` | React + Vite + TS 工作台：`src/App.tsx` + `components/{Sidebar,ChatView,Message,ToolCard,Composer(+ComposerPickers 选择器组+CommandPalette 斜杠命令菜单，模型选择器两级化：根菜单「模型 / 思考强度」各进列表),GoalBar,ProviderEditor,ProvidersPanel,GeneralPanel,SettingsDialog(分级壳：左导航轨 通用/提供方/故障转移/网络/技能/MCP 工具/终端/用量/错误日志 九 section 懒挂载+hidden 缓存),McpPanel,SkillsPanel,TuiPanel,ProxyPanel,FailoverPanel,UsagePanel,ErrorLogPanel,PlanCard,Todo}.tsx` + `slash-commands.ts` 斜杠命令目录（与终端 baseCommands 同源同序，实时过滤 / 两档回车）+ 手写 Markdown 子集渲染器 + `highlight.ts` 零依赖语法高亮 + `projection.ts`（委托 `transcript.mjs` 同源投影）（网页侧边对话：`/btw` 一问一答分支、输入框上方侧边横幅、`Ctrl+/` 主 / 侧切换、turn 带 `side` 标记）+ 内联 SVG 图标 + `toast.tsx` 零依赖通知（右下角视口、四级语义、悬停暂停计时、同屏 4 条、同文案合并计数）+ `error-report.ts` / `error-boundary.tsx` 全局错误捕获与崩溃兜底页 + `theme.ts` 双主题偏好（跟随系统 / 浅色 / 深色，首帧防闪由 `index.html` 内联脚本负责）+ `tokens.css` 设计令牌（`:root` 深色 / `:root[data-theme="light"]` 同名覆盖，`app.css` 引用） |
 | `web-ui/src/turn-events.ts` | turn SSE 事件 → 界面状态的单一投影器（主 / 侧边对话两条通道共用，`scope` 区分）：`appendTextPart` / `applyToolEvent` / `createTurnEventHandlers` / `finishTurnProjection`；goal 横幅仅主对话投影且带 sessionId 校验，notice（`/goal` 回执、故障转移提示）收尾重投影时保留 |
 | `web-ui/src/latex.tsx` | LaTeX 渲染：KaTeX 自托管（`trust: false`，`\href` / `\includegraphics` / HTML 扩展一律拒绝），`htmlAndMathml` 输出；解析失败回退展示原始源码而非红色错误墙 |
 | `web-ui/src/math-split.mjs` | 公式分段纯函数（零依赖，Node 测试直接 import 同一份）：识别 `$...$` / `\(...\)` / `$$...$$` / `\[...\]` / 裸 `\begin{env}`，代码段与货币区间假阳性防护；`.d.mts` 供 TS 取类型 |
@@ -155,7 +155,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 - mock 触发词：消息含 `USE_TOOL` → 模型发起 `read_file mock.txt`；含 `USE_TOOL_WRITE` → 发起 `write_file written_by_agent.txt`；`FLAKY` 断网重试；`SLOW` 慢速；`USE_SKILL` / `USE_TODO` / `USE_EDIT` / `USE_PLAN` / `USE_SWARM` / `USE_MCP` 分别触发技能加载 / 待办维护 / diff 回传 / 计划两阶段 / 子代理派发 / MCP 工具调用；`USE_GOAL` → create_goal 全链路；`USE_GOAL_BUDGET` → 预算触顶转 budget_limited + 收尾轮；`USE_GOAL_IDLE` → 空转轮后续跑；`USE_GOAL_VERIFY_MET` / `USE_GOAL_VERIFY_NOTMET` → evaluator 裁决 met 转 complete(verifier_met) / not_met 连击转 paused(no_progress)（对齐 MiniMax repeatedGap）；`USE_GOAL_VERIFY_RETRY` → evaluator 首轮无结论恰好重试一次后采信 met；`USE_GOAL_EDIT:<会话id>` → turn 内经 REST 改写目标文本，在飞模型下一轮收到【目标已更新】并按新目标结算；`GOAL_TURN2` → REST 预建 active 目标后新用户轮首轮重述（【进行中的目标】），空转续跑后提案完成；系统提示带 `【会话标题生成】` 标记即标题生成轮（titleMode=model），回固定标题 `README 安装章节改写`
 - 前端契约测试（`/app` 服务、哈希资产、令牌 CSS 在场、零 emoji、旧路由 404、ProviderEditor 源码校验规则）守着构建产物与 `web-ui/` 的同步；改了 `web-ui/` 忘了 `build:web` 会红
 - 仓库守卫（`test/guards.mjs`，已入 `npm test`）：产品源码零 emoji、TUI 颜色单一真值源（仅 `theme.mjs` 出 SGR）、色板对比度达标、**网页设计令牌双主题对比度达标**（`tokens.css` 的 `:root` 与 `:root[data-theme="light"]` 关键前景 / 背景组合按 WCAG 阈值校验，防止浅色主题改糊）、新模块 ≤500 行、文档站结构契约（中英页面一一对应 / 发布笔记标记在场 / 依赖例外登记）
-- 基线 358/358 通过。提交前 `npm test` 必须全绿；不许 `skip`，不许放宽断言迁就失败
+- 基线 359/359 通过。提交前 `npm test` 必须全绿；不许 `skip`，不许放宽断言迁就失败
 - `npm run check` 走真实上游，只在改上游集成时跑（花少量钱）
 - 跑 `npm test` 前确认 18901 无常驻 mock 占用（`pkill -f mock-longcat`）；exec 沙箱会杀后台进程，常驻服务 / mock 用 exec_command 前台会话跑
 
@@ -195,7 +195,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 执行顺序：
 
 1. 改代码（一个可独立验证的小改动，例如「修复一个错误映射」「新增一个厂商标识」）
-2. `npm test` 全绿（基线 358 个测试；不绿不提交）
+2. `npm test` 全绿（基线 359 个测试；不绿不提交）
 3. `git add <具体文件>` → `git commit -m "中文描述"` → `git push`
 
 规约：

@@ -10,18 +10,26 @@ import { SettingsDialog } from './components/SettingsDialog';
 import { projectRecords } from './projection';
 import {
   abortTurn, clearGoal, createGoal, createSession, deleteSession, editGoal, forkSession, getGoal, getSession, getSettings, goalAction,
-  listHarnesses, listModels, listSkills, listProviders, listSessions, patchSession, respondPermission, respondPlan, runTurn,
+  listHarnesses, listMcpServers, listModels, listSkills, listProviders, listSessions, patchSession, respondPermission, respondPlan, runTurn,
+  saveApiKey, saveGeneration,
 } from './api';
 import { GOAL_COMMAND_HELP, formatGoalReceipt, formatGoalSummary, parseGoalCommand } from '../../util/agent/goal/command.mjs';
 import { connectGoalEvents } from './goal-events';
 import { GoalBar } from './components/GoalBar';
 import { GOAL_STATUS_LABELS } from './types';
+import { BASE_COMMANDS } from './slash-commands';
+import { setThemePreference } from './theme';
+import type { ThemePreference } from './theme';
 import type { GoalState, Harness, LiveTurn, ModelInfo, MsgView, ProviderRow, SessionMeta, SettingsInfo, TodoItem, SkillRow } from './types';
 import { createTurnEventHandlers, finishTurnProjection } from './turn-events';
 import { discardSide } from './api';
 
 import { IconAlert, IconClose } from './icons';
 import { toast, ToastViewport } from './toast';
+
+/** /theme 参数 → 主题偏好（auto 与 system 同义，对齐终端 /theme 的三档） */
+const THEME_ARGS: Record<string, ThemePreference> = { dark: 'dark', light: 'light', auto: 'system', system: 'system' };
+const THEME_LABEL: Record<ThemePreference, string> = { dark: '深色', light: '浅色', system: '跟随系统' };
 
 export default function App() {
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
@@ -34,6 +42,8 @@ export default function App() {
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [goal, setGoal] = useState<GoalState | null>(null);
   const [goalPrefill, setGoalPrefill] = useState<{ text: string; nonce: number; onlyIfEmpty?: boolean }>({ text: '', nonce: 0 });
+  // 斜杠命令唤起选择器：/model 与 /harness 无参数时打开对应二级菜单（nonce 递增即触发）
+  const [pickerRequest, setPickerRequest] = useState<{ kind: 'model' | 'harness'; nonce: number } | null>(null);
   const [permMode, setPermMode] = useState('ask_when_needed');
   const [titleMode, setTitleMode] = useState('local');
   const [planOn, setPlanOn] = useState(false);
@@ -241,6 +251,118 @@ export default function App() {
       setGoal(ev.goal);
     });
   }, [currentId]);
+
+  /**
+   * 斜杠命令分发（Composer 的 `/` 菜单执行入口；/goal 家族另有专用处理器）。
+   * 词条与终端 REPL 的 baseCommands 同源（web-ui/src/slash-commands.ts），这里只做网页侧落地：
+   * 能本地立即生效的直接办，需要服务端的走既有 REST，纯终端语义的给出说明。
+   */
+  const handleCommand = async (name: string, args: string) => {
+    const notice = (text: string) => setMessages((m) => [...m, { kind: 'notice', key: `c${Date.now()}${Math.random().toString(36).slice(2, 6)}`, text }]);
+    const arg = args.trim();
+    switch (name) {
+      case 'goal':
+        await handleGoalCommand(arg); // 正常路径由 Composer 先行拦截，这里是兜底
+        return;
+      case 'help': {
+        const lines = BASE_COMMANDS.map((c) => `/${c.name}${c.argHint ? ` ${c.argHint}` : ''} — ${c.summary}`);
+        notice(`可用命令（与终端一致）：\n${lines.join('\n')}`);
+        return;
+      }
+      case 'new':
+        await newSession();
+        return;
+      case 'sessions': {
+        if (!sessions.length) { notice('当前没有会话'); return; }
+        const lines = sessions.slice(0, 12).map((s, i) => `${i + 1}. ${s.name}（${s.model || '默认模型'} · ${s.harness || 'standard'}）`);
+        notice(`会话列表（左侧栏可切换）：\n${lines.join('\n')}${sessions.length > 12 ? `\n…共 ${sessions.length} 个` : ''}`);
+        return;
+      }
+      case 'model':
+        if (arg) { notice(`切换模型：${arg}（用输入框右侧的模型选择器切换）`); return; }
+        setPickerRequest({ kind: 'model', nonce: Date.now() });
+        return;
+      case 'harness':
+        if (arg) {
+          if (harnesses.some((h) => h.id === arg)) { await changeHarness(arg); return; }
+          notice(`未知模式：${arg}（可选 ${harnesses.map((h) => h.id).join(' / ')}）`);
+          return;
+        }
+        setPickerRequest({ kind: 'harness', nonce: Date.now() });
+        return;
+      case 'theme': {
+        const pref = THEME_ARGS[arg || 'system'];
+        if (!pref) { notice('用法：/theme dark|light|auto'); return; }
+        setThemePreference(pref);
+        notice(`外观已切换：${THEME_LABEL[pref]}`);
+        return;
+      }
+      case 'mcp': {
+        try {
+          const rows = await listMcpServers();
+          if (!rows.length) { notice('尚未配置 MCP 服务器（设置 → MCP 工具，实验特性需 AURORAAGENT_EXPERIMENTAL_MCP=1）'); return; }
+          const lines = rows.map((r) => `${r.name}（${r.transport}）${r.enabled === false ? ' · 已停用' : r.connected ? ` · 已连接 · ${r.tools} 个工具` : ' · 未连接'}`);
+          notice(`MCP 服务器：\n${lines.join('\n')}`);
+        } catch (e) { notice(`MCP 未开启：${e instanceof Error ? e.message : String(e)}`); }
+        return;
+      }
+      case 'title': {
+        const want = arg || (titleMode === 'model' ? 'local' : 'model');
+        if (!['local', 'model'].includes(want)) { notice('用法：/title local|model'); return; }
+        await changeTitleMode(want);
+        notice(`标题生成方式已切换为${want === 'model' ? '模型总结（每个新会话多一次小额请求）' : '本地推导（零成本）'}`);
+        return;
+      }
+      case 'btw': {
+        if (!arg) { notice('用法：/btw <问题>（侧边对话，继承当前会话历史，不落盘）'); return; }
+        if (!currentId) { notice('当前没有会话：先新建或切换会话再开侧边对话'); return; }
+        setSideActive(true);
+        await sendSide(arg);
+        return;
+      }
+      case 'plan':
+        await changePlan(arg !== 'off');
+        notice(`计划模式已${arg === 'off' ? '关闭' : '开启（下一轮先出计划，y 批准后执行）'}`);
+        return;
+      case 'think': {
+        const next = arg === 'off' ? 'off' : 'standard';
+        await changeEffort(next);
+        notice(`思考过程已${next === 'off' ? '关闭' : '开启'}`);
+        return;
+      }
+      case 'temp': {
+        const v = Number(arg);
+        if (!arg || Number.isNaN(v) || v < 0 || v > 1) { notice('用法：/temp 0~1（温度需在 0 ~ 1 之间）'); return; }
+        try { await saveGeneration({ temperature: v }); notice(`温度 = ${v}（全局，下一轮请求生效）`); }
+        catch (e) { toast.error('保存温度失败', { description: e instanceof Error ? e.message : String(e) }); }
+        return;
+      }
+      case 'max': {
+        const v = Number(arg);
+        if (!arg || !Number.isInteger(v) || v <= 0) { notice('用法：/max <正整数>（单次最大输出）'); return; }
+        try { await saveGeneration({ maxTokens: v }); notice(`单次最大输出 = ${v}（全局，下一轮请求生效）`); }
+        catch (e) { toast.error('保存最大输出失败', { description: e instanceof Error ? e.message : String(e) }); }
+        return;
+      }
+      case 'key': {
+        if (!arg) { notice('用法：/key <ak-xxx>（更新 API Key，全局生效）'); return; }
+        try { await saveApiKey(arg); notice('Key 已更新并保存（全局生效）'); }
+        catch (e) { toast.error('保存 Key 失败', { description: e instanceof Error ? e.message : String(e) }); }
+        return;
+      }
+      case 'quit':
+        notice('网页端无需退出：关掉标签页即可（服务由 LaunchAgent 常驻，设置页可管开机自启）');
+        return;
+      default:
+        // 技能调用：与终端 /<技能名> 同形态，直接把调用文本发给模型
+        if (skills.some((sk) => sk.name === name)) {
+          if (busy) { notice('正在生成中：请等当前任务结束后再调用技能'); return; }
+          send(arg ? `/${name} ${arg}` : `/${name}`);
+          return;
+        }
+        notice(`未知命令：/${name}`);
+    }
+  };
 
   /**
    * /goal 斜杠命令：解析与终端 REPL 共用 command.mjs 单一事实源；执行走 /api/agent/goal* REST 面。
@@ -558,11 +680,12 @@ export default function App() {
           titleMode={titleMode}
           onTitleMode={changeTitleMode}
           planMode={planOn}
-          onPlanMode={changePlan}
+          onCommand={(name, args) => { handleCommand(name, args).catch(() => {}); }}
           skills={skills}
           sessionId={currentId}
           disabled={!current}
           focusNonce={focusNonce}
+          pickerNonce={pickerRequest?.nonce}
         />
       </main>
       <SettingsDialog

@@ -371,6 +371,7 @@
 /* ---------- 输入区 ---------- */
 .composer { padding:10px 20px 14px; }
 .composer-card {
+  position:relative;
   max-width:840px; margin:0 auto; background:var(--surface); border:1px solid var(--line-strong);
   border-radius:18px; padding:12px 12px 9px; display:flex; flex-direction:column; gap:8px;
   transition:border-color .15s var(--ease), box-shadow .15s var(--ease);
@@ -416,30 +417,47 @@
 .sendbtn:disabled { background:var(--surface-hover); color:var(--faint); cursor:not-allowed; }
 .sendbtn-stop { background:var(--danger-bg-hi); color:var(--danger-ink); border:1px solid var(--danger-line); }
 .sendbtn-stop:hover { filter:brightness(1.2); }
-/* ---------- 技能斜杠调色板（输入 / 时浮现，词汇对齐 docs/tui-design.md） ---------- */
-.skillpal {
-  position:absolute; bottom:calc(100% + 8px); left:0; right:0; max-width:640px; margin:0 auto;
-  background:var(--panel); border:1px solid var(--line-strong); border-radius:12px;
-  box-shadow:var(--shadow-pop); padding:6px; z-index:40; max-height:300px; overflow-y:auto;
+/* ---------- 斜杠命令菜单（数值对齐 dsh web MenuView：320px / radius20 / 行40px radius10） ---------- */
+.cmdpal {
+  position:absolute; bottom:calc(100% + 4px); left:0; right:0; z-index:100;
+  max-height:320px; background:var(--panel); border:1px solid var(--line-strong);
+  border-radius:20px; padding:4px; box-shadow:var(--shadow-pop);
+  display:flex; flex-direction:column; overflow:hidden;
 }
-.skillpal-head { display:flex; align-items:baseline; gap:8px; padding:8px 10px 2px; }
-.skillpal-title { color:var(--text); font-size:12.5px; font-weight:600; }
-.skillpal-sub { color:var(--faint); font-size:11px; }
-.skillpal-hint { color:var(--faint); font-size:11px; padding:0 10px 6px; }
-.skillpal-list { display:flex; flex-direction:column; gap:1px; }
-.skillpal-item {
-  width:100%; display:flex; align-items:center; gap:8px; border:0; border-radius:8px;
-  background:none; color:var(--text); font-size:13px; padding:6px 10px; cursor:pointer; text-align:left;
+.cmdpal-viewport { flex:1; min-height:0; display:flex; flex-direction:column; overflow-y:auto; }
+.cmdpal-item {
+  width:100%; min-height:40px; display:flex; align-items:center; gap:8px;
+  border:0; border-radius:10px; background:none; color:var(--text); cursor:pointer;
+  font:inherit; font-size:14px; line-height:22px; padding:8px 10px; text-align:left;
 }
-.skillpal-item:hover { background:var(--surface-hover); }
-.skillpal-item.cur { background:var(--accent-glow); }
-.skillpal-ptr { color:var(--accent); font-size:12px; width:10px; flex:none; }
-.skillpal-name { color:var(--accent-hi); font-weight:600; flex:none; }
-.skillpal-desc { color:var(--dim); font-size:12px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.skillpal-src { color:var(--faint); font-size:10.5px; border:1px solid var(--line); border-radius:5px; padding:0 5px; flex:none; }
-.skillpal-src.user { color:var(--ok-ink); border-color:var(--ok-line); }
-.skillpal-empty, .skillpal-foot { display:flex; align-items:center; gap:6px; color:var(--dim); font-size:11.5px; padding:8px 10px; }
-.skillpal-foot { justify-content:flex-end; color:var(--faint); }
+.cmdpal-item.on, .cmdpal-item:hover { background:var(--surface-hover); }
+.cmdpal-section {
+  min-height:26px; display:flex; align-items:center; color:var(--dim);
+  font-size:12px; font-weight:500; padding:6px 10px 2px;
+}
+.cmdpal-name {
+  flex:none; max-width:40%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  color:var(--accent-hi); font-weight:600;
+}
+.cmdpal-desc { flex:1; min-width:0; color:var(--dim); font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cmdpal-arg { flex:none; color:var(--faint); font-size:11.5px; }
+.cmdpal-src { flex:none; color:var(--faint); font-size:10.5px; border:1px solid var(--line); border-radius:5px; padding:0 5px; }
+.cmdpal-src.user { color:var(--ok-ink); border-color:var(--ok-line); }
+.cmdpal-empty { color:var(--dim); font-size:12px; padding:10px; }
+.cmdpal-foot {
+  flex:none; display:flex; justify-content:flex-end; color:var(--faint); font-size:11px;
+  padding:5px 10px 3px; border-top:1px solid var(--line);
+}
+/* 斜杠命令的色彩语义提示：合法命令走成功色，未登记的命令走警告色（将作为普通消息发出） */
+.composer-cmdhint { display:flex; align-items:center; gap:6px; font-size:12px; padding:0 4px; }
+.composer-cmdhint.ok { color:var(--ok-ink); }
+.composer-cmdhint.warn { color:var(--warn-ink); }
+.composer-cmdhint b { font-weight:600; }
+/* 计划模式提示芯片：原独立开关钮已并入 /plan 斜杠命令，这里只作状态提示（不可点） */
+.tchip-plan-on {
+  display:inline-flex; align-items:center; gap:6px; border:1px solid var(--warn-line); border-radius:99px;
+  background:var(--warn-bg); color:var(--warn-ink); font-size:12.5px; padding:5px 11px; flex:none; white-space:nowrap;
+}
 .composer-hint { max-width:840px; margin:8px auto 0; color:var(--faint); font-size:11.5px; text-align:center; }
 
 /* ---------- 代码高亮 token（零依赖高亮器，语义色一律走令牌） ---------- */

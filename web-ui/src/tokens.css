@@ -10,9 +10,10 @@
   /* 品牌主色：取自 public/icon.svg 渐变（靛蓝→蓝→青）的蓝段，全站强调色唯一来源 */
   --accent:#4d8df6; --accent-hi:#6ba4f8; --accent-soft:rgb(77 141 246 / 14%); --accent-line:rgb(77 141 246 / 45%); --accent-ink:#0b0e14;
   --accent-glow:rgb(77 141 246 / 7%); --accent-shadow:rgb(77 141 246 / 30%);
-  /* 语义色：成功 / 危险 / 思考各有专属令牌，组件内禁止硬编码颜色 */
+  /* 语义色：成功 / 警告 / 危险 / 思考各有专属令牌，组件内禁止硬编码颜色 */
   --ok:#4ec97f; --ok-ink:#8fe3b4; --ok-bg:rgb(78 201 127 / 12%); --ok-line:rgb(78 201 127 / 32%);
   --danger:#ff6b6b; --danger-ink:#ff9a9a; --danger-bg:rgb(255 107 107 / 12%); --danger-bg-hi:rgb(255 107 107 / 20%); --danger-line:rgb(255 107 107 / 35%); --danger-line-hi:rgb(255 107 107 / 55%);
+  --warn:#e8a33d; --warn-ink:#f2c063; --warn-bg:rgb(232 163 61 / 12%); --warn-line:rgb(232 163 61 / 35%);
   --think:#5ec8d8; --think-soft:rgb(94 200 216 / 6%);
   /* diff 视图：增 / 删 / 元信息语义令牌，组件内禁止硬编码 diff 颜色 */
   --diff-add:#4ec97f; --diff-add-bg:rgb(78 201 127 / 10%); --diff-add-ink:#8fe3b4;
@@ -35,6 +36,7 @@
   --accent-glow:rgb(47 111 224 / 5%); --accent-shadow:rgb(47 111 224 / 22%);
   --ok:#1f9d55; --ok-ink:#166b3c; --ok-bg:rgb(31 157 85 / 10%); --ok-line:rgb(31 157 85 / 30%);
   --danger:#d64545; --danger-ink:#a92c2c; --danger-bg:rgb(214 69 69 / 8%); --danger-bg-hi:rgb(214 69 69 / 16%); --danger-line:rgb(214 69 69 / 30%); --danger-line-hi:rgb(214 69 69 / 50%);
+  --warn:#b26a00; --warn-ink:#8a5a00; --warn-bg:rgb(178 106 0 / 10%); --warn-line:rgb(178 106 0 / 32%);
   --think:#0d8798; --think-soft:rgb(13 135 152 / 7%);
   --diff-add:#1f9d55; --diff-add-bg:rgb(31 157 85 / 10%); --diff-add-ink:#166b3c;
   --diff-del:#d64545; --diff-del-bg:rgb(214 69 69 / 8%); --diff-del-ink:#a92c2c;
