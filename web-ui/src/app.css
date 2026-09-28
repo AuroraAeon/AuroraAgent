@@ -172,6 +172,8 @@
 
 /* ---------- 消息行 ---------- */
 .row { display:flex; gap:12px; }
+/* 历史消息行延迟渲染（移植 ZCode 时间线做法）：视口外跳过绘制，auto 记住上次高度防滚动条跳 */
+.row.hist { content-visibility:auto; contain-intrinsic-size:auto 160px; }
 .avatar {
   width:30px; height:30px; border-radius:9px; flex:none; display:grid; place-items:center; margin-top:2px;
 }

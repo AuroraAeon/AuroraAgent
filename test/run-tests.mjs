@@ -1716,6 +1716,14 @@ try {
     assert(css.includes('.sb-skel-line') && css.includes('@keyframes shimmer'), '骨架应有微光动画');
     assert(css.includes('prefers-reduced-motion'), '动画应尊重系统减少动效设置');
   });
+  await test('长会话性能源码契约：历史行延迟渲染、流式行不延迟', () => {
+    const msg = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Message.tsx'), 'utf8');
+    const view = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ChatView.tsx'), 'utf8');
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    assert(msg.includes('row row-user hist') && msg.includes('row row-ai hist'), '历史消息行应带 hist 标记');
+    assert(!view.includes('row row-ai hist'), '流式 LiveRow 不能延迟渲染（内容在动，跳过绘制会闪）');
+    assert(css.includes('content-visibility:auto') && css.includes('contain-intrinsic-size:auto 160px'), 'hist 行应 content-visibility 延迟渲染并记住上次高度');
+  });
   await test('侧栏源码契约：像素级对齐 dsh web 的 SidebarRoot + WorkspaceBrowser 数值', () => {
     const sidebar = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Sidebar.tsx'), 'utf8');
     const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');

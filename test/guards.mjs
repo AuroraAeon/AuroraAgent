@@ -125,6 +125,18 @@ export function guardWebTokenContrast() {
   if (issues.length) throw new Error(`网页令牌对比度不足: ${issues.join(', ')}`);
 }
 
+/** 过渡动画纪律（ZCode 教训：transition-all 会在大会话 / 连续缩放里批量启动
+ *  scrollbar-color、尺寸等非合成动画，放大主线程 style/layout 压力）：
+ *  产品样式只允许过渡颜色 / 透明度 / 变换类属性 */
+const TRANSITION_ALL_RE = /transition\s*:\s*all\b/;
+export function guardNoTransitionAll() {
+  const bad = [];
+  for (const f of walk(join(ROOT, 'web-ui', 'src'), ['.css'])) {
+    if (TRANSITION_ALL_RE.test(readFileSync(f, 'utf8'))) bad.push(f.replace(ROOT + '/', ''));
+  }
+  if (bad.length) throw new Error(`过渡动画禁止 transition:all（只动颜色 / 透明度 / 变换）: ${bad.join(', ')}`);
+}
+
 const LINE_BUDGET = 500;
 export function guardLineBudget() {
   const bad = [];
@@ -166,6 +178,7 @@ export const GUARDS = [
   ['TUI 颜色单一真值源（仅 theme.mjs 出 SGR）', guardNoRawColorOutsideTheme],
   ['主题色板对比度达标', guardContrast],
   ['新模块行数预算 ≤500', guardLineBudget],
+  ['过渡动画禁 transition:all（只动颜色/透明度/变换）', guardNoTransitionAll],
   ['文档站结构契约（中英对应 / 标记 / 依赖例外）', guardDocsSite],
 ];
 

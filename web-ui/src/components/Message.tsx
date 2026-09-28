@@ -31,10 +31,12 @@ type Props = {
 
 // 历史消息 memo：流式期间 App 每个 token 都会重渲染，未 memo 时整段历史的 Markdown
 // 会被反复重新解析（长会话掉帧的主因）。msg / onDecide 引用稳定时才跳过。
+// 行根元素带 hist 类：CSS 对其 content-visibility:auto，视口外的历史行跳过渲染
+// （对齐 ZCode 时间线做法；contain-intrinsic-size:auto 记住上次高度，滚动条不跳）。
 export const Message = memo(function Message({ msg, onDecide }: Props) {
   if (msg.kind === 'user') {
     return (
-      <div className="row row-user">
+      <div className="row row-user hist">
         <div className="avatar avatar-user" title="你"><IconPerson size={15} /></div>
         <div className="bubble-user">{msg.text}</div>
       </div>
@@ -57,7 +59,7 @@ export const Message = memo(function Message({ msg, onDecide }: Props) {
     );
   }
   return (
-    <div className="row row-ai">
+    <div className="row row-ai hist">
       <div className="avatar avatar-ai" title="AuroraAgent"><IconSpark size={15} /></div>
       <div className="col-ai">
         {msg.thinking ? <ThinkingBlock text={msg.thinking} /> : null}
