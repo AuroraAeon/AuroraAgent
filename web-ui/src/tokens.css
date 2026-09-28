@@ -21,6 +21,9 @@
   --diff-add:#4ec97f; --diff-add-bg:rgb(78 201 127 / 10%); --diff-add-ink:#8fe3b4;
   --diff-del:#ff6b6b; --diff-del-bg:rgb(255 107 107 / 10%); --diff-del-ink:#ff9a9a;
   --diff-meta:#8b93a7;
+  /* 提示气泡（复刻 ZCode tooltip 规格）：深色下用面板亮一档的底 + 强边框 */
+  --tooltip-bg:#232936; --tooltip-line:#39415a; --tooltip-ink:#e8ebf2;
+  --kbd-bg:#39415a; --kbd-ink:#b9bdc8;
   /* 投影：浮层与卡片阴影（浅色下更淡，避免糊成一片） */
   --shadow-pop:0 14px 44px rgb(0 0 0 / 46%);
   --shadow-card:0 10px 30px rgb(0 0 0 / 32%);
@@ -44,6 +47,9 @@
   --diff-add:#1f9d55; --diff-add-bg:rgb(31 157 85 / 10%); --diff-add-ink:#166b3c;
   --diff-del:#d64545; --diff-del-bg:rgb(214 69 69 / 8%); --diff-del-ink:#a92c2c;
   --diff-meta:#586175;
+  /* 提示气泡：浅色用白底 + 中性边框，键帽用表面灰（与 ZCode light 同思路） */
+  --tooltip-bg:#ffffff; --tooltip-line:#c2cadb; --tooltip-ink:#171c27;
+  --kbd-bg:#eef1f7; --kbd-ink:#586175;
   --shadow-pop:0 14px 40px rgb(23 32 56 / 14%);
   --shadow-card:0 10px 30px rgb(23 32 56 / 12%);
   color-scheme:light;

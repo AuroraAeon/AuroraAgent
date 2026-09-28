@@ -83,6 +83,7 @@ const TOKEN_PAIRS = [
   ['--warn-ink', '--panel', 4.5], ['--warn-ink', '--surface', 4.5], ['--warn', '--panel', 3],
   ['--text', '--sidebar-fill', 4.5], ['--dim', '--sidebar-fill', 4.5], ['--faint', '--sidebar-fill', 3],
   ['--diff-add-ink', '--panel', 4.5], ['--diff-del-ink', '--panel', 4.5],
+  ['--tooltip-ink', '--tooltip-bg', 4.5], ['--kbd-ink', '--kbd-bg', 4.5],
 ];
 
 function parseHexTokens(block) {

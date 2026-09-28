@@ -4,9 +4,15 @@
  *  品牌行 60px（24px 标 + 18px/600 名 + 右侧 28px 圆钮，点品牌即新建会话——同 dsh）；
  *  新建会话钮 38px / 圆角 12px / 细描边 / 悬浮底 / 14px/500；
  *  会话区：36px 区头（「会话」标签 + 可展开搜索）+ 32px 行（圆角 8px、悬停底色、14px 标题、
- *  12px 相对时间悬停隐去、16px 操作钮悬停现形）；栏脚是 panelRow 形态的设置入口。 */
-import { useEffect, useRef, useState } from 'react';
+ *  12px 相对时间悬停隐去、16px 操作钮悬停现形）；栏脚是 panelRow 形态的设置入口。
+ *
+ *  折叠成 56px 导轨后，左上角合并为单按钮——像素级复刻 ZCode WorkspaceSidebarCollapsedRail：
+ *  36px 行高 + 通栏底边框，28px ghost 方钮静止显 20px 品牌砖、hover 淡出并淡入 16px 面板图标，
+ *  提示气泡「切换侧边栏 + ⌘B/Ctrl+B」（Cmd/Cmd+B 快捷键在 App 绑定），点击展开侧栏。 */
+import { useRef, useState } from 'react';
 import { IconClose, IconCopy, IconGear, IconPanelLeft, IconPlus, IconSearch, IconSpark, IconTrash } from '../icons';
+import { ControlTooltip } from '../ControlTooltip';
+import { sidebarToggleLabel } from '../shortcut';
 import { fmtRel } from '../projection';
 import type { SessionMeta } from '../types';
 
@@ -21,26 +27,17 @@ type Props = {
   /** 首屏会话列表未回：显示骨架行，别把「加载中」显示成「还没有会话」 */
   loading?: boolean;
   version: string;
+  /** 导轨态（受控：偏好持久化与 Ctrl/Cmd+B 快捷键都在 App 侧） */
+  rail: boolean;
+  onToggleRail: () => void;
 };
 
-const RAIL_KEY = 'auroraagent.sidebar';
-
-/** 读取折叠偏好：导轨态只影响本机浏览器（与主题偏好同思路） */
-function readRail(): boolean {
-  try { return localStorage.getItem(RAIL_KEY) === 'rail'; } catch { return false; }
-}
-
 export function Sidebar({
-  sessions, currentId, onSelect, onNew, onDelete, onFork, onOpenSettings, loading, version,
+  sessions, currentId, onSelect, onNew, onDelete, onFork, onOpenSettings, loading, version, rail, onToggleRail,
 }: Props) {
-  const [rail, setRail] = useState(readRail);
   const [q, setQ] = useState('');
   const [searchOn, setSearchOn] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    try { localStorage.setItem(RAIL_KEY, rail ? 'rail' : 'wide'); } catch { /* 无痕模式等场景下静默 */ }
-  }, [rail]);
 
   const kw = q.trim().toLowerCase();
   const shown = kw ? sessions.filter((s) => (s.name || '').toLowerCase().includes(kw)) : sessions;
@@ -50,21 +47,33 @@ export function Sidebar({
 
   return (
     <aside className={`sidebar${rail ? ' rail' : ''}`}>
-      <div className="sb-logo">
-        <button type="button" className="sb-brand" aria-label="新建会话" title="新建会话" onClick={onNew}>
-          <span className="sb-brand-mark" aria-hidden="true"><IconSpark size={15} /></span>
-          <span className="sb-brand-name">AuroraAgent</span>
-        </button>
-        <button
-          type="button"
-          className="sb-iconbtn sb-toggle"
-          aria-label={rail ? '展开侧栏' : '收起侧栏'}
-          title={rail ? '展开侧栏' : '收起侧栏'}
-          onClick={() => setRail((v) => !v)}
-        >
-          <IconPanelLeft size={rail ? 18 : 16} />
-        </button>
-      </div>
+      {rail ? (
+        <div className="sb-rail-head">
+          <ControlTooltip title="切换侧边栏" shortcut={sidebarToggleLabel()} side="bottom">
+            <button type="button" className="sb-rail-toggle" aria-label="切换侧边栏" onClick={onToggleRail}>
+              <span className="sb-rail-logo" aria-hidden="true"><IconSpark size={13} /></span>
+              <IconPanelLeft size={16} className="sb-rail-icon" />
+            </button>
+          </ControlTooltip>
+        </div>
+      ) : (
+        <div className="sb-logo">
+          <button type="button" className="sb-brand" aria-label="新建会话" onClick={onNew}>
+            <span className="sb-brand-mark" aria-hidden="true"><IconSpark size={15} /></span>
+            <span className="sb-brand-name">AuroraAgent</span>
+          </button>
+          <ControlTooltip title="切换侧边栏" shortcut={sidebarToggleLabel()} side="bottom">
+            <button
+              type="button"
+              className="sb-iconbtn sb-toggle"
+              aria-label="切换侧边栏"
+              onClick={onToggleRail}
+            >
+              <IconPanelLeft size={16} />
+            </button>
+          </ControlTooltip>
+        </div>
+      )}
       <button type="button" className="sb-new" onClick={onNew} title="新会话">
         <IconPlus size={rail ? 18 : 14} />
         <span className="sb-new-label">新会话</span>

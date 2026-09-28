@@ -13,21 +13,61 @@
 
 /* 品牌行：60px 高，品牌在左、折叠钮在右（dsh logoRow） */
 .sb-logo { display:flex; align-items:center; justify-content:flex-end; gap:8px; height:60px; margin-bottom:8px; padding:8px 0 8px 4px; flex:none; overflow:hidden; }
-.sidebar.rail .sb-logo { justify-content:flex-start; height:36px; margin-bottom:12px; padding:0; }
 .sb-brand { display:inline-flex; align-items:center; gap:8px; min-width:0; flex:1; background:none; border:0; padding:0; cursor:pointer; color:inherit; }
 .sb-brand-mark {
   width:24px; height:24px; border-radius:7px; display:grid; place-items:center; flex:none;
   background:linear-gradient(135deg, var(--accent), #7cc4f6); color:var(--accent-ink);
 }
 .sb-brand-name { font-size:18px; font-weight:600; line-height:24px; letter-spacing:.04em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.sidebar.rail .sb-brand-name { display:none; }
 .sb-iconbtn {
   width:28px; height:28px; border-radius:50%; border:0; background:none; color:var(--dim);
   display:inline-grid; place-items:center; cursor:pointer; flex:none;
   transition:background .15s var(--ease), color .15s var(--ease);
 }
 .sb-iconbtn:hover { background:var(--sidebar-hover); color:var(--text); }
-.sidebar.rail .sb-iconbtn { width:36px; height:36px; color:var(--text); }
+
+/* 折叠导轨左上角单按钮（像素级复刻 ZCode WorkspaceSidebarCollapsedRail）：
+   36px 行高 + 通栏底边框；28px ghost 方钮（8px 圆角），静止显 20px 品牌砖，
+   hover 时品牌砖淡出、16px 面板图标淡入（均只动透明度，150ms），点击展开侧栏 */
+.sb-rail-head {
+  height:36px; flex:none; display:flex; align-items:center; justify-content:center;
+  margin:0 -10px 12px; padding:0 10px; border-bottom:1px solid var(--line);
+}
+.sb-rail-toggle {
+  position:relative; width:28px; height:28px; border:0; border-radius:8px; overflow:hidden;
+  display:inline-grid; place-items:center; background:none; color:var(--text); cursor:pointer;
+  transition:background-color 150ms var(--ease);
+}
+.sb-rail-toggle:hover { background:var(--sidebar-hover); }
+.sb-rail-logo {
+  width:20px; height:20px; border-radius:6px; display:grid; place-items:center; flex:none;
+  background:linear-gradient(135deg, var(--accent), #7cc4f6); color:var(--accent-ink);
+  transition:opacity 150ms var(--ease);
+}
+.sb-rail-toggle:hover .sb-rail-logo { opacity:0; }
+.sb-rail-icon { position:absolute; inset:0; margin:auto; width:16px; height:16px; opacity:0; transition:opacity 150ms var(--ease); }
+.sb-rail-toggle:hover .sb-rail-icon { opacity:1; }
+
+/* 提示气泡（复刻 ZCode ControlHintTooltip 规格，挂载于 body 下的 #tooltip-root） */
+#tooltip-root { position:fixed; left:0; top:0; z-index:120; pointer-events:none; }
+.ct-tip {
+  position:fixed; display:inline-flex; align-items:center; gap:6px; max-width:min(28rem, calc(100vw - 1rem));
+  padding:6px 12px; border:1px solid var(--tooltip-line); border-radius:8px;
+  background:var(--tooltip-bg); color:var(--tooltip-ink); box-shadow:var(--shadow-pop);
+  font-size:12px; font-weight:500; line-height:16px; white-space:pre-line; word-break:break-word;
+  transition:opacity 120ms var(--ease), transform 120ms var(--ease), visibility 120ms;
+}
+@starting-style { .ct-tip[data-phase="in"] { opacity:0; transform:scale(.96); } }
+.ct-tip[data-phase="out"] { opacity:0; transform:scale(.96); }
+.ct-tip[data-desc="1"] { flex-direction:column; align-items:flex-start; gap:6px; max-width:18rem; }
+.ct-tip:has(.ct-kbd) { padding-right:4px; }
+.ct-kbd {
+  height:16px; display:inline-flex; align-items:center; flex:none; padding:0 6px; border-radius:6px;
+  background:var(--kbd-bg); color:var(--kbd-ink); font-size:10px; font-weight:500;
+  font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.ct-kbd.apple { font-family:-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; }
+@media (prefers-reduced-motion: reduce) { .ct-tip { transition:none; } }
 
 /* 新建会话钮：38px / 圆角 12px / 细描边 / 悬浮底（dsh newSession） */
 .sb-new {
