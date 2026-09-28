@@ -41,19 +41,20 @@ function stackOf(value: unknown): string {
 export function reportError(
   kind: 'frontend_crash' | 'frontend_unhandled' | 'backend',
   message: string,
-  options: { detail?: string; source?: string; notify?: boolean } = {},
+  options: { detail?: string; source?: string; notify?: boolean; scope?: string } = {},
 ): void {
   const text = message.trim() || '未知错误';
   const source = options.source?.trim() || 'unknown';
+  const scope = options.scope?.trim() || '';
   const detail = options.detail ?? '';
   if (!shouldReport(`${kind}|${source}|${text}`, Date.now())) return;
 
-  console.error(`[AuroraAgent] ${kind} (${source}): ${text}`, detail);
+  console.error(`[AuroraAgent] ${kind} (${source}${scope ? `/${scope}` : ''}): ${text}`, detail);
   // 落服务端错误日志（<数据目录>/logs/errors.log）：失败静默，不重试、不阻塞
   void fetch('/api/logs/errors', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ kind, message: text, detail: [detail, `来源: ${source}`].filter(Boolean).join('\n') }),
+    body: JSON.stringify({ kind, message: text, detail: [detail, `来源: ${source}`, scope ? `作用域: ${scope}` : ''].filter(Boolean).join('\n') }),
   }).catch(() => {});
   if (options.notify === false) return;
   toast.error('出现一个错误，已记录', {

@@ -1696,6 +1696,12 @@ try {
     assert(bd.includes('frontend_crash'), '渲染崩溃应记 frontend_crash');
     const main = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'main.tsx'), 'utf8');
     assert(main.includes('<AppErrorBoundary>') && main.includes('installGlobalErrorHandlers()'), '入口应包错误边界并装全局捕获');
+    const sb = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'ScopedErrorBoundary.tsx'), 'utf8');
+    assert(sb.includes('getDerivedStateFromError') && sb.includes('componentDidCatch'), '分区边界应有错误边界两个生命周期钩子');
+    assert(sb.includes('resetKeys') && sb.includes('scope'), '分区边界应支持 resetKeys 自动恢复与 scope 归因');
+    assert(sb.includes('重试') && sb.includes('重新加载') && sb.includes('role="alert"'), '分区兜底卡应可重试 / 重载并挂 alert 语义');
+    assert(app.includes('<ScopedErrorBoundary scope="sidebar"') && app.includes('<ScopedErrorBoundary scope="main"'), '侧栏与主列应各包一层分区边界（单区崩溃不拖垮整棵工作台）');
+    assert(rep.includes('scope') && rep.includes('作用域'), '错误上报应带作用域归因，落日志能定位崩在哪');
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
     assert(css.includes('.toast-viewport') && css.includes('.crash-card'), '应有通知视口与崩溃页样式');
   });

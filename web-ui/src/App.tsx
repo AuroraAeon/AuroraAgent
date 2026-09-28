@@ -4,6 +4,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
+import { ScopedErrorBoundary } from './ScopedErrorBoundary';
 import { ChatView } from './components/ChatView';
 import { Composer } from './components/Composer';
 import { SettingsDialog } from './components/SettingsDialog';
@@ -630,77 +631,81 @@ export default function App() {
 
   return (
     <div className="app">
-      <Sidebar
-        sessions={sessions}
-        currentId={currentId}
-        onSelect={openSession}
-        onNew={newSession}
-        onDelete={removeSession}
-        onFork={forkSessionById}
-        onOpenSettings={() => setSettingsOpen(true)}
-        loading={booting}
-        version={settings?.version || '4.0.0'}
-        rail={rail}
-        onToggleRail={toggleRail}
-      />
-      <main className="main">
-        {error ? (
-          <div className="err-banner" role="alert">
-            <IconAlert size={14} />
-            <span>{error}</span>
-            <button type="button" className="iconbtn" aria-label="关闭错误提示" onClick={() => setError('')}>
-              <IconClose size={13} />
-            </button>
-          </div>
-        ) : null}
-        {side && sideActive ? (
-          <div className="side-banner" role="status">
-            <span className="side-banner-text">侧边对话中 · 继承自主对话历史，不落盘、不进会话列表</span>
-            <span className="side-banner-acts">
-              <button type="button" className="btn btn-link" onClick={() => setSideActive(false)}>返回主对话</button>
-              <button type="button" className="btn btn-link danger" onClick={() => { discardBtw().catch(() => {}); }}>丢弃</button>
-            </span>
-          </div>
-        ) : null}
-        <ChatView
-          messages={sideActive ? side?.msgs || [] : messages}
-          live={sideActive ? side?.live ?? null : live}
-          hasSession={Boolean(current)}
-          onDecide={decide}
-          onDecidePlan={decidePlan}
-          onPick={sideActive ? sendSide : send}
-          todos={sideActive ? [] : todos}
+      <ScopedErrorBoundary scope="sidebar" resetKeys={[currentId]}>
+        <Sidebar
+          sessions={sessions}
+          currentId={currentId}
+          onSelect={openSession}
+          onNew={newSession}
+          onDelete={removeSession}
+          onFork={forkSessionById}
+          onOpenSettings={() => setSettingsOpen(true)}
+          loading={booting}
+          version={settings?.version || '4.0.0'}
+          rail={rail}
+          onToggleRail={toggleRail}
         />
-        {!sideActive && goal ? <GoalBar goal={goal} onAction={decideGoal} /> : null}
-        <Composer
-          busy={sideActive ? Boolean(side?.busy) : busy}
-          onSend={sideActive ? sendSide : send}
-          onGoalCommand={handleGoalCommand}
-          goalPrefill={goalPrefill}
-          onStop={stop}
-          models={models}
-          modelStatus={modelStatus}
-          model={current?.model || ''}
-          onModel={changeModel}
-          providers={providers}
-          effort={effort}
-          onEffort={changeEffort}
-          harnesses={harnesses}
-          harness={current?.harness || 'standard'}
-          onHarness={changeHarness}
-          permissionMode={permMode}
-          onPermissionMode={changePermMode}
-          titleMode={titleMode}
-          onTitleMode={changeTitleMode}
-          planMode={planOn}
-          onCommand={(name, args) => { handleCommand(name, args).catch(() => {}); }}
-          skills={skills}
-          sessionId={currentId}
-          disabled={!current}
-          focusNonce={focusNonce}
-          pickerNonce={pickerRequest?.nonce}
-        />
-      </main>
+      </ScopedErrorBoundary>
+      <ScopedErrorBoundary scope="main" resetKeys={[currentId]}>
+        <main className="main">
+          {error ? (
+            <div className="err-banner" role="alert">
+              <IconAlert size={14} />
+              <span>{error}</span>
+              <button type="button" className="iconbtn" aria-label="关闭错误提示" onClick={() => setError('')}>
+                <IconClose size={13} />
+              </button>
+            </div>
+          ) : null}
+          {side && sideActive ? (
+            <div className="side-banner" role="status">
+              <span className="side-banner-text">侧边对话中 · 继承自主对话历史，不落盘、不进会话列表</span>
+              <span className="side-banner-acts">
+                <button type="button" className="btn btn-link" onClick={() => setSideActive(false)}>返回主对话</button>
+                <button type="button" className="btn btn-link danger" onClick={() => { discardBtw().catch(() => {}); }}>丢弃</button>
+              </span>
+            </div>
+          ) : null}
+          <ChatView
+            messages={sideActive ? side?.msgs || [] : messages}
+            live={sideActive ? side?.live ?? null : live}
+            hasSession={Boolean(current)}
+            onDecide={decide}
+            onDecidePlan={decidePlan}
+            onPick={sideActive ? sendSide : send}
+            todos={sideActive ? [] : todos}
+          />
+          {!sideActive && goal ? <GoalBar goal={goal} onAction={decideGoal} /> : null}
+          <Composer
+            busy={sideActive ? Boolean(side?.busy) : busy}
+            onSend={sideActive ? sendSide : send}
+            onGoalCommand={handleGoalCommand}
+            goalPrefill={goalPrefill}
+            onStop={stop}
+            models={models}
+            modelStatus={modelStatus}
+            model={current?.model || ''}
+            onModel={changeModel}
+            providers={providers}
+            effort={effort}
+            onEffort={changeEffort}
+            harnesses={harnesses}
+            harness={current?.harness || 'standard'}
+            onHarness={changeHarness}
+            permissionMode={permMode}
+            onPermissionMode={changePermMode}
+            titleMode={titleMode}
+            onTitleMode={changeTitleMode}
+            planMode={planOn}
+            onCommand={(name, args) => { handleCommand(name, args).catch(() => {}); }}
+            skills={skills}
+            sessionId={currentId}
+            disabled={!current}
+            focusNonce={focusNonce}
+            pickerNonce={pickerRequest?.nonce}
+          />
+        </main>
+      </ScopedErrorBoundary>
       <SettingsDialog
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}

@@ -848,6 +848,15 @@
 @media (prefers-reduced-motion: reduce) { .toast-spin { animation-duration:1.6s; } }
 
 /* ---------- 崩溃兜底页（error-boundary.tsx） ---------- */
+/* 分区错误边界（移植 ZCode ScopedErrorBoundary）：局部崩溃降级为卡片，不拖垮整棵工作台 */
+.scoped-err {
+  display:flex; flex-direction:column; gap:8px; margin:12px; padding:16px;
+  border:1px solid var(--danger-line); border-radius:var(--radius); background:var(--panel); color:var(--text);
+}
+.scoped-err.inline { flex-direction:row; align-items:center; flex-wrap:wrap; margin:8px 0; padding:8px 12px; border-radius:10px; }
+.scoped-err-title { display:inline-flex; align-items:center; gap:6px; font-size:14px; font-weight:600; color:var(--danger-ink); }
+.scoped-err-msg { flex:1; min-width:0; font-size:13px; color:var(--dim); word-break:break-all; }
+.scoped-err-acts { display:inline-flex; gap:8px; flex:none; }
 .crash { display:flex; height:100%; align-items:center; justify-content:center; padding:24px; }
 .crash-card {
   width:min(560px, 100%); background:var(--panel); border:1px solid var(--danger-line);
