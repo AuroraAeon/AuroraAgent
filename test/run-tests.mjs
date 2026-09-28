@@ -1532,6 +1532,16 @@ try {
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'tokens.css'), 'utf8');
     assert(css.includes('--diff-add:') && css.includes('--diff-del:'), 'tokens.css 应有 diff 语义令牌');
   });
+  await test('输入区窄屏布局源码契约：工具栏可换行、芯片不收缩不折行、尾部右对齐', () => {
+    const com = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Composer.tsx'), 'utf8');
+    assert(com.includes('className="composer-tail"'), '模型选择器与发送键应收进尾部组，窄屏整组换行不拆散');
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    assert(/\.composer-bar\s*\{[^}]*flex-wrap:wrap/.test(css) && /\.composer-bar\s*\{[^}]*row-gap:8px/.test(css), '工具栏应允许换行并留行距');
+    assert(/\.tchip\s*\{[^}]*flex:none/.test(css), '芯片应禁止收缩，窄屏不被压扁');
+    assert(/\.tchip\s*\{[^}]*white-space:nowrap/.test(css), '芯片文字应禁止折行（窄屏标签两行错字的根因）');
+    assert(css.includes('.composer-tail {') && css.includes('margin-left:auto'), '尾部组应右对齐，换行后仍贴右');
+    assert(/\.tchip-model\s*\{[^}]*min-width:0/.test(css) && /\.tchip-model\s*\{[^}]*flex:0 1 auto/.test(css), '模型芯片应可收缩并以省略号收尾');
+  });
   await test('会话标题自动总结源码契约：事件登记、前端实时刷新与产物同步', async () => {
     const events = readFileSync(join(__dirname, '..', 'util', 'agent', 'events.mjs'), 'utf8');
     assert(events.includes("'session_renamed'"), '事件协议应登记 session_renamed');

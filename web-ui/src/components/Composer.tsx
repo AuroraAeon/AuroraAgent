@@ -497,17 +497,18 @@ export function Composer({
             <IconList size={14} />
             计划
           </button>
-          <span className="composer-flex" />
-          <ModelPicker models={models} modelStatus={modelStatus} model={model} providers={providers} onModel={onModel} />
-          {busy ? (
-            <button type="button" className="sendbtn sendbtn-stop" title="停止（Esc）" aria-label="停止" onClick={onStop}>
-              <IconStop size={14} />
-            </button>
-          ) : (
-            <button type="button" className="sendbtn" title="发送" aria-label="发送" disabled={disabled || !text.trim()} onClick={submit}>
-              <IconSend size={16} />
-            </button>
-          )}
+          <div className="composer-tail">
+            <ModelPicker models={models} modelStatus={modelStatus} model={model} providers={providers} onModel={onModel} />
+            {busy ? (
+              <button type="button" className="sendbtn sendbtn-stop" title="停止（Esc）" aria-label="停止" onClick={onStop}>
+                <IconStop size={14} />
+              </button>
+            ) : (
+              <button type="button" className="sendbtn" title="发送" aria-label="发送" disabled={disabled || !text.trim()} onClick={submit}>
+                <IconSend size={16} />
+              </button>
+            )}
+          </div>
         </div>
       </div>
       <p className="composer-hint">
