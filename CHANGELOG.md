@@ -2,6 +2,46 @@
 
 本文件记里程碑版本（Keep a Changelog 格式，中文）。逐提交的发布笔记由 `npm run docs:notes` 从 git 历史生成，进文档站 `release-notes` 页。
 
+## [7.2.0](https://github.com/AuroraAeon/AuroraAgent/compare/v7.1.0...v7.2.0) (2026-09-28)
+
+
+### Features
+
+* **agent:** 接入多提供方故障转移编排——openChatStream 在流尚未打开时对 429/408/5xx/网络错误换到提供同模型的其它提供方重试（次数钳 1..5、切换前线性退避、已发出字节后不透明换路）；Loop 内粘性（activeProvider 后续轮次沿用，单价与记账归属真实产出方，自定义提供方按目标方口径拼 gen 参数），子代理经派发继承候选源，/api/chat 同步接入并随切换改记账归属；新增 provider_switched 事件 ([1b56f6f](https://github.com/AuroraAeon/AuroraAgent/commit/1b56f6f0c8968c2ff9bc51c97ae8a8f5c00fa7c7))
+* **agent:** 网页接入侧边对话——turn 支持 side、SideSession 进程内托管、侧边转录查询与丢弃 ([ace6361](https://github.com/AuroraAeon/AuroraAgent/commit/ace6361eb2e16fb5f1ce690c60f97f66adb2aab5))
+* **llm:** 新增多提供方故障转移模块——可转移判定（429/408/5xx/网络，中止与鉴权类不转移）、候选挑选（同模型 / 有 Key / 排除已试）、线性退避与配置解析（providerFailover 缺省开 + maxAttempts 钳 1..5，env 可覆盖），并接入 config 读写与 /api/settings/failover；对应上游「自动轮换账号」的本地化底座，编排层随后接入 ([58dd123](https://github.com/AuroraAeon/AuroraAgent/commit/58dd12327ec65c5d6eb7aff61541fd5dbcf1aa6b))
+* **mcp:** MCP 服务器显示开关——停用即从工具箱摘掉工具，配置保留 ([ab5858d](https://github.com/AuroraAeon/AuroraAgent/commit/ab5858d7284fc637e12af8a75948dbffc8f9f89e))
+* **observability:** 错误日志脱敏——密钥 / Token / URL 凭据写入前清洗，先清洗后截断且幂等 ([f6317c9](https://github.com/AuroraAeon/AuroraAgent/commit/f6317c93afa2698be526de7d2f9dd85f23f2f342))
+* **settings:** 新增生成参数与 API Key 端点，设置页通用面板可改温度 / 最大输出 / Key ([9ab1688](https://github.com/AuroraAeon/AuroraAgent/commit/9ab16883e070221e5e014bdaa5974c1b0fa268f3))
+* **web-ui:** 侧栏像素级迁移 dsh web——280px 栏体、56px 折叠导轨、36px 区头搜索、32px 会话行 ([0714cdd](https://github.com/AuroraAeon/AuroraAgent/commit/0714cdd340f099d2e85751cc30011472cada6d32))
+* **web-ui:** 侧栏折叠导轨像素级复刻 ZCode——单按钮静止显品牌砖、悬停淡入面板图标与快捷键提示，Cmd/Ctrl+B 同效 ([87a9124](https://github.com/AuroraAeon/AuroraAgent/commit/87a9124a5c88b2e316013fc2352e6559cbe7ae58))
+* **web-ui:** 侧栏收回改为 ZCode 真实语义——左边整体消失只留 Header，复刻 200ms 擦除动画 ([09d0ace](https://github.com/AuroraAeon/AuroraAgent/commit/09d0aceae69742f3cf844095dbef25b2073a81b6))
+* **web-ui:** 侧边对话界面——消息分流、侧边横幅、Ctrl+/ 切换，turn 事件处理器抽为共享模块 ([3f81361](https://github.com/AuroraAeon/AuroraAgent/commit/3f81361848cc03edc710937c02f1bbe14d29beca))
+* **web-ui:** 分区错误边界——侧栏与主列局部崩溃降级为兜底卡，scope 归因落日志、切换会话自动恢复 ([0764f68](https://github.com/AuroraAeon/AuroraAgent/commit/0764f6854eade89a6f297b661a53f66e81c5c54c))
+* **web-ui:** 双主题与用量 / 错误日志面板——tokens.css 增加浅色主题整套同名变量覆盖（data-theme 由 index.html 首帧脚本预置防闪，theme.ts 管运行期切换与跟随系统），浮层阴影改走令牌；util/usage.mjs 增 stats() 统计视图（近 30 天逐日补零 + 按模型 / 提供方 / 用途 / 会话构成），/api/usage 默认带 stats、?lite=1 只取汇总；设置弹层新增用量面板（零依赖 SVG 堆叠柱 + 占比条 + 最近请求表）与错误日志面板（查看 / 清空 logs/errors.log）；补单测、e2e 与源码契约 ([b1e3a35](https://github.com/AuroraAeon/AuroraAgent/commit/b1e3a355380953d8920d066b59655d9a8e5301b1))
+* **web-ui:** 复刻 ZCode ConversationTurnNavigator——对话区左缘离散「梯状」历史悬浮导航 ([4ea1f12](https://github.com/AuroraAeon/AuroraAgent/commit/4ea1f1290ef628d86ee105747d85c1df38e6a503))
+* **web-ui:** 故障转移全链路可感知——新增 provider_switched 事件在网页落提示条、终端打单行（切换原因中文映射），设置页新增故障转移面板（开关 + 最多尝试次数，走 /api/settings/failover）；mock 支持按 Key 返回 429/503，e2e 覆盖 Agent turn 换路记账、候选耗尽报真实错误、速测通道换路、401 不转移与设置读写，补源码契约 ([4976116](https://github.com/AuroraAeon/AuroraAgent/commit/4976116389bcb2d0f0137cc54fcfebe44dd1fdf7))
+* **web-ui:** 斜杠命令菜单替换技能调色板——16 条命令实时过滤、两档回车、合法命令色彩语义，计划开关并入 /plan ([5c7729b](https://github.com/AuroraAeon/AuroraAgent/commit/5c7729b8615d5b1cccb10cd4dfbd3fd040928c7a))
+* **web-ui:** 新增零依赖通知与前端错误上报——toast.tsx 右下角视口（四级语义、悬停暂停计时、同屏 4 条、同文案 3 秒合并计数、aria-live 播报），操作类失败从错误横幅改走通知；error-report.ts 收口 window error 与 unhandledrejection 上报 /api/logs/errors（30 秒去重）；error-boundary.tsx 渲染期崩溃改白屏为可重载 / 可复制详情的兜底页；补源码契约断言与构建产物 ([c9576ac](https://github.com/AuroraAeon/AuroraAgent/commit/c9576ac4126c5084cccfaf6eca2bf646288d2361))
+* **web-ui:** 迁移 dsh web 四项设计——目标条替代半透明遮罩、模型选择器二级思考强度、设置弹层分级导航、切换格式不重排输入区 ([bbed19d](https://github.com/AuroraAeon/AuroraAgent/commit/bbed19d35fdbcfb0e9305bae1a6449ba8dddb8b9))
+* **web-ui:** 首屏会话骨架屏——列表未回时显示三条微光骨架并标 aria-busy，不再把「加载中」显示成「还没有会话」；动画尊重系统减少动效设置 ([058f591](https://github.com/AuroraAeon/AuroraAgent/commit/058f591c339b79c484313291324a104ec7399774))
+* **web:** 新增错误日志——前端崩溃与未捕获错误落盘 &lt;数据目录&gt;/logs/errors.log（JSON Lines 环形保留 200 行、kind 白名单、detail 截断 4KB、写失败静默），POST/GET/DELETE /api/logs/errors 三面供上报与查看，同 kind+message 30 秒去重防崩溃循环刷屏；顺带把 goals/ 与 logs/ 补进 .gitignore，并修正 AGENTS.md 测试基线漂移（318→323） ([b0370c0](https://github.com/AuroraAeon/AuroraAgent/commit/b0370c0898244231ac9f517105d50a1f10ca501e))
+* **web:** 版本检查与对话区跟手 / 渲染性能——新增 util/update.mjs 查 GitHub Releases latest 比对本地版本（三段语义、6 小时缓存、失败不缓存不抛错），GET /api/update/check 与设置页「检查更新」入口（只提示不自动安装）；ChatView 改为贴底才跟随滚动并给出「回到最新」按钮，上翻读历史不再被抢滚动；历史消息 memo（流式掉帧主因是整段历史被反复重渲染）；补 Ctrl/Cmd+K 新建会话与 / 聚焦输入框快捷键；刻意不用 content-visibility 以免占位尺寸让自动贴底落点偏移（原因写进注释） ([b024555](https://github.com/AuroraAeon/AuroraAgent/commit/b024555ff3a4a0f77fa7bd14eb9bcdb03a7f8179))
+
+
+### Bug Fixes
+
+* **web-ui:** 修 toast 重复提示不刷新的问题——同屏已有同一条时原地改 repeat 与 expiresAt，快照引用没变，useSyncExternalStore 不会重渲染，计数与续期都看不到；改为整体换新数组新对象，顺带把悬停暂停的赋值写法改直白 ([a17ff64](https://github.com/AuroraAeon/AuroraAgent/commit/a17ff64035ca72d18a6a5a636c57d571c6ae58aa))
+* **web-ui:** 停止按钮方块按 dsh 比例放大 ([91cf69f](https://github.com/AuroraAeon/AuroraAgent/commit/91cf69f913cd45d58d2d581ae99dc1984e056854))
+* **web-ui:** 用量措辞去 token 化——只讲输入多少 / 输出多少 / 费用多少 ([336382d](https://github.com/AuroraAeon/AuroraAgent/commit/336382dfea3f29bf44b1267320b1dbd3097b2bed))
+* **web-ui:** 设置弹层居中、遮罩模糊与固定高度 ([061b489](https://github.com/AuroraAeon/AuroraAgent/commit/061b4895f1ef8b379c680d3819d52ad4cae74ef2))
+* **web:** SPA 入口缓存头修正——/ 与 /app 曾误得 immutable，开过根路径的浏览器死缓存旧页面，发版后看到的永远是老版本 ([adca0e1](https://github.com/AuroraAeon/AuroraAgent/commit/adca0e1e934edf10b371ec0bf65ea8acec8a8447))
+
+
+### Performance Improvements
+
+* **web-ui:** 历史消息行 content-visibility 延迟渲染、过渡动画纪律入守卫（禁 transition:all） ([bbbdf2c](https://github.com/AuroraAeon/AuroraAgent/commit/bbbdf2c1392b721f92f9ff69dd084ed720252763))
+
 ## [7.1.0](https://github.com/AuroraAeon/AuroraAgent/compare/v7.0.0...v7.1.0) (2026-09-28)
 
 

@@ -207,7 +207,7 @@ Bundle 结构：
 │   └── tools/               # color-test / install-service / build-app
 ├── Resources/docs/          # figures/（学术图与原始数据）+ figure-work/（图表脚本）
 ├── AppIcon.icns
-└── Info.plist               # com.auroraagent.app · LSUIElement · 版本随 package.json（7.1.0）
+└── Info.plist               # com.auroraagent.app · LSUIElement · 版本随 package.json（7.2.0）
 ```
 
 ## 自动发布（GitHub Actions）
