@@ -25,7 +25,7 @@ import { runAgentTurn } from '../util/agent/loop.mjs';
 import { connectMcp, callResultText, McpError } from '../util/mcp/client.mjs';
 import { McpRegistry, validateServerDraft, loadMcpServers, mcpToolName } from '../util/mcp/registry.mjs';
 import { UsageLedger } from '../util/usage.mjs';
-import { ErrorLog, createDeduper, normalizeErrorKind, ERROR_LOG_MAX_LINES } from '../util/errorlog.mjs';
+import { ErrorLog, createDeduper, normalizeErrorKind, sanitizeSecrets, ERROR_LOG_MAX_LINES } from '../util/errorlog.mjs';
 import { checkUpdate, hasUpdate, parseVersion } from '../util/update.mjs';
 import { runTuiToolkitTests } from './tui-toolkit.mjs';
 import { runGuardTests } from './guards.mjs';
@@ -1491,6 +1491,35 @@ await test('错误日志：kind 白名单归一化', () => {
   eq(normalizeErrorKind('frontend_crash'), 'frontend_crash');
   eq(normalizeErrorKind('任意字符串'), 'backend');
   eq(normalizeErrorKind(undefined), 'backend');
+});
+await test('错误日志脱敏：Authorization / api_key / sk- 密钥写入前清洗', () => {
+  eq(sanitizeSecrets('Authorization: Bearer sk-abcdef1234567890abcdef'), 'Authorization: Bearer {redacted}', 'Bearer 头应只留方案词与键名');
+  eq(sanitizeSecrets('x-api-key: abcdef123456 权限不足'), 'x-api-key: {redacted} 权限不足', 'api key 头应保留键名只换值');
+  eq(sanitizeSecrets('raw sk-ant-api03-AAAAbbbbCCCCddddEEEEffff leaked'), 'raw {redacted} leaked', 'sk- 形态密钥应整串清洗');
+  eq(sanitizeSecrets('{"headers":{"Authorization":"Bearer sk-xyz1234567890abcd"}}'), '{"headers":{"Authorization":"Bearer {redacted}"}}', 'JSON 内嵌请求头也应清洗');
+  eq(sanitizeSecrets('standalone Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig here'), 'standalone Bearer {redacted} here', '任意位置的 Bearer 凭据应清洗');
+});
+await test('错误日志脱敏：URL 查询串与 userinfo 清洗，普通文本不误伤', () => {
+  eq(sanitizeSecrets('POST https://api.example.com/v1/chat?api_key=SEKRET123&token=abc&model=x failed'),
+    'POST https://api.example.com/v1/chat?api_key={redacted}&token={redacted}&model=x failed', '敏感查询参数应换值、普通参数保留');
+  eq(sanitizeSecrets('connect https://user:pass@127.0.0.1:7890 refused'), 'connect https://{redacted}@127.0.0.1:7890 refused', 'URL userinfo 应清洗但保留主机排障');
+  eq(sanitizeSecrets('普通中文错误：会话创建失败，请检查网络连接'), '普通中文错误：会话创建失败，请检查网络连接', '普通错误文本不应被误伤');
+  eq(sanitizeSecrets('token 数超出上限'), 'token 数超出上限', '口语化 token 文案无键值结构，不误伤');
+  eq(sanitizeSecrets('session 恢复失败'), 'session 恢复失败', 'session 关键词无赋值时不误伤');
+});
+await test('错误日志脱敏：幂等且先清洗后截断（截断不把密钥漏进日志）', () => {
+  const dirty = 'Authorization: Bearer sk-abcdef1234567890abcdef';
+  eq(sanitizeSecrets(sanitizeSecrets(dirty)), sanitizeSecrets(dirty), '重复清洗结果应稳定');
+  const dir = mkdtempSync(join(tmpdir(), 'lc-errlog-redact-'));
+  const lg = new ErrorLog(dir, { version: '9.9.9' });
+  const row = lg.record('backend', `上游 401：${dirty}`, `stack: ${dirty}`);
+  assert(!row.message.includes('sk-abcdef') && !row.detail.includes('sk-abcdef'), '落盘记录不得含密钥原值');
+  assert(row.message.includes('{redacted}') && row.detail.includes('{redacted}'), '落盘记录应保留脱敏占位符');
+  // 超长 detail：密钥藏在截断边界之后也应被先清洗掉
+  const far = lg.record('backend', 'x', `${'x'.repeat(4090)}${dirty}`);
+  assert(!far.detail.includes('sk-abcdef'), '先清洗后截断：边界之外的密钥也不得落盘');
+  assert(far.detail.length <= 4096, '截断上限仍为 4KB');
+  rmSync(dir, { recursive: true, force: true });
 });
 await test('错误日志去重器：同 key 窗口内只放行一次，过期后放行', () => {
   const dd = createDeduper(1000, 3);
