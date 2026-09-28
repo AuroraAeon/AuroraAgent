@@ -8,15 +8,18 @@ type Props = {
   checked: boolean;
   onChange: (checked: boolean) => void;
   ariaLabel: string;
+  /** 未就绪 / 正在保存时禁用（与 SegmentedControl 同一套禁用语义） */
+  disabled?: boolean;
 };
 
-export function Switch({ checked, onChange, ariaLabel }: Props) {
+export function Switch({ checked, onChange, ariaLabel, disabled }: Props) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
       aria-label={ariaLabel}
+      disabled={disabled}
       className="sw"
       onClick={() => onChange(!checked)}
     >

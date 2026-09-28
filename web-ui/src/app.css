@@ -887,6 +887,41 @@ html[data-code-wrap="on"] .md pre { white-space:pre-wrap; overflow-x:visible; wo
 }
 .sw[aria-checked="true"] .sw-thumb { transform:translateX(calc(100% - 2px)); }
 .sw:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.sw:disabled { opacity:.5; cursor:default; }
+/* ---------- 分段选择器（复刻 ZCode SegmentedControl：等宽轨 + 滑块指示器，radiogroup 语义） ---------- */
+/* 等宽轨：grid 自动列各占 1fr，段数与滑块位移（--seg-count / --seg-index）天然对齐 */
+.seg {
+  position:relative; display:grid; grid-auto-flow:column; grid-auto-columns:1fr; align-items:center;
+  padding:2px; border:1px solid var(--line); border-radius:9px; background:var(--surface); flex:none;
+}
+/* 滑块：宽 = 一轨段，位移 = 段下标 × 自身宽度（百分比相对自身），只过渡 transform */
+.seg-ind {
+  position:absolute; top:2px; bottom:2px; left:2px; width:calc((100% - 4px) / var(--seg-count, 1));
+  border:1px solid var(--accent-line); border-radius:7px; background:var(--accent-soft);
+  transform:translateX(calc(var(--seg-index, 0) * 100%)); pointer-events:none;
+  transition:transform .18s var(--ease);
+}
+.seg-btn {
+  position:relative; z-index:1; display:flex; align-items:center; justify-content:center;
+  height:26px; min-width:36px; padding:0 10px; border:0; border-radius:7px; background:none;
+  color:var(--dim); font:inherit; font-size:0.9286rem; font-variant-numeric:tabular-nums; cursor:pointer;
+  transition:color .15s var(--ease);
+}
+.seg-btn:hover:not(:disabled) { color:var(--text); }
+.seg-btn[aria-checked="true"] { color:var(--accent-hi); font-weight:600; }
+/* 焦点环收在轨内：控件尺寸小，offset 2px 会压到容器边框上 */
+.seg-btn:focus-visible { outline:2px solid var(--accent); outline-offset:-1px; }
+.seg[data-disabled] { opacity:.6; }
+.seg[data-disabled] .seg-btn { cursor:default; }
+@media (prefers-reduced-motion: reduce) { .seg-ind { transition:none; } }
+/* 故障转移面板：控件列（分段选择器 + 行内回执；回执位常驻，避免行高跳动） */
+.fo-seg-cell { display:flex; flex-direction:column; align-items:flex-end; gap:3px; }
+.fo-status {
+  display:flex; align-items:center; gap:4px; min-height:17px;
+  font-size:0.8214rem; line-height:1.3; color:var(--ok-ink);
+}
+/* 依赖项关闭时行标题降一档，与右侧淡出的控件呼应 */
+.ap-row[data-off] .ap-row-t { color:var(--dim); }
 /* ---------- 代码预览卡（复刻 ZCode ThemePreviewCard：浅 / 深并排，当前生效角标） ---------- */
 .ap-prevs { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 .ap-prev { border:1px solid var(--line); border-radius:10px; overflow:hidden; background:var(--code-bg); }
