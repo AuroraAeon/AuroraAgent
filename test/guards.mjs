@@ -81,6 +81,7 @@ const TOKEN_PAIRS = [
   ['--accent', '--panel', 4.5], ['--accent-hi', '--panel', 4.5],
   ['--ok-ink', '--panel', 4.5], ['--danger-ink', '--panel', 4.5], ['--think', '--panel', 3],
   ['--warn-ink', '--panel', 4.5], ['--warn-ink', '--surface', 4.5], ['--warn', '--panel', 3],
+  ['--text', '--sidebar-fill', 4.5], ['--dim', '--sidebar-fill', 4.5], ['--faint', '--sidebar-fill', 3],
   ['--diff-add-ink', '--panel', 4.5], ['--diff-del-ink', '--panel', 4.5],
 ];
 

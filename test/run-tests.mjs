@@ -1671,14 +1671,65 @@ try {
   });
   await test('首屏骨架源码契约：会话列表加载中不与空态混淆', () => {
     const sidebar = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Sidebar.tsx'), 'utf8');
-    assert(sidebar.includes('loading') && sidebar.includes('sess-skel'), '侧栏应有加载骨架');
+    assert(sidebar.includes('loading') && sidebar.includes('sb-skel'), '侧栏应有加载骨架');
     assert(sidebar.includes('aria-busy'), '加载态应标记 aria-busy 供读屏软件感知');
     assert(sidebar.includes('!loading && sessions.length === 0'), '空态文案应在加载结束后才出现');
     const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
     assert(app.includes('setBooting(false)') && app.includes('loading={booting}'), 'App 应在会话列表回来后收起骨架');
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
-    assert(css.includes('.sess-skel-line') && css.includes('@keyframes shimmer'), '骨架应有微光动画');
+    assert(css.includes('.sb-skel-line') && css.includes('@keyframes shimmer'), '骨架应有微光动画');
     assert(css.includes('prefers-reduced-motion'), '动画应尊重系统减少动效设置');
+  });
+  await test('侧栏源码契约：像素级对齐 dsh web 的 SidebarRoot + WorkspaceBrowser 数值', () => {
+    const sidebar = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Sidebar.tsx'), 'utf8');
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    // 栏体：280px 宽 / 6px 12px 内边距 / 14px 基准字号 / 专用填充 / 56px 导轨
+    assert(css.includes('width:280px'), '侧栏宽应为 dsh 的 280px');
+    assert(css.includes('padding:6px 12px; font-size:14px;'), '侧栏内边距与基准字号应对齐 dsh');
+    assert(css.includes('background:var(--sidebar-fill)'), '侧栏应用专用填充色而非面板色');
+    assert(css.includes('.sidebar.rail { width:56px;'), '收起态应为 dsh 的 56px 导轨');
+    assert(sidebar.includes("RAIL_KEY = 'auroraagent.sidebar'") && sidebar.includes('localStorage.setItem(RAIL_KEY'), '导轨偏好应落 localStorage');
+    // 品牌行：60px / 24px 标 / 18px/600 名 / 28px 圆钮（收起 36px）
+    const logo = /\.sb-logo \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['height:60px', 'justify-content:flex-end', 'gap:8px', 'padding:8px 0 8px 4px']) {
+      assert(logo.includes(decl), `品牌行应按 dsh 数值声明 ${decl}`);
+    }
+    assert(css.includes('.sb-brand-name { font-size:18px; font-weight:600; line-height:24px; letter-spacing:.04em;'), '品牌名应按 dsh 18px/600/24px');
+    const iconbtn = /\.sb-iconbtn \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['width:28px', 'height:28px', 'border-radius:50%']) {
+      assert(iconbtn.includes(decl), `折叠钮应按 dsh 数值声明 ${decl}`);
+    }
+    assert(sidebar.includes('IconPanelLeft'), '折叠钮应使用 dsh 同款 panel-left 图标');
+    assert(sidebar.includes('className="sb-brand"') && sidebar.includes('onClick={onNew}'), '点品牌即新建会话（同 dsh 行为）');
+    // 新建会话钮：38px / 圆角 12px / 14px/500
+    const newBtn = /\.sb-new \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['height:38px', 'border-radius:12px', 'font-size:14px', 'font-weight:500', 'line-height:22px', 'gap:6px']) {
+      assert(newBtn.includes(decl), `新建会话钮应按 dsh 数值声明 ${decl}`);
+    }
+    // 会话区：36px 区头 + 可展开搜索 + 32px 行 / 圆角 8px / 行距 2px
+    const head = /\.sb-sechead \{[^}]*\}/.exec(css)?.[0] || '';
+    assert(head.includes('height:36px'), '区头高应为 dsh 的 36px');
+    assert(css.includes('.sb-search.on') && css.includes('height:30px') && css.includes('border-radius:10px'), '搜索应可展开（dsh 30px / 圆角 10px）');
+    assert(sidebar.includes('placeholder="搜索会话"') && sidebar.includes('setQ'), '会话列表应支持实时搜索过滤');
+    const row = /\.sb-row \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['height:32px', 'border-radius:8px']) {
+      assert(row.includes(decl), `会话行应按 dsh 数值声明 ${decl}`);
+    }
+    assert(css.includes('.sb-row + .sb-row { margin-top:2px; }'), '行距应为 dsh 的 2px');
+    assert(css.includes('.sb-row-title { flex:1; min-width:0; font-size:14px; line-height:20px;'), '行标题应按 dsh 14px/20px 省略');
+    assert(css.includes('.sb-row-time { flex:none; font-size:12px;'), '行时间应按 dsh 12px 三次色');
+    assert(css.includes('.sb-row:hover .sb-row-time') && css.includes('display:none'), '悬停时时间让位给操作钮（同 dsh）');
+    assert(css.includes('.sb-row-acts { display:none;') && css.includes('.sb-row:hover .sb-row-acts'), '操作钮应悬停现形');
+    // 栏脚：panelRow 形态设置入口（36px / 圆角 8px / padding 7px 8px）
+    const foot = /\.sb-foot-row \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['min-height:36px', 'border-radius:8px', 'padding:7px 8px', 'gap:8px']) {
+      assert(foot.includes(decl), `设置入口应按 dsh panelRow 数值声明 ${decl}`);
+    }
+    // 旧版侧栏类名应全部退役
+    for (const dead of ['.brand {', '.newbtn {', '.sess-list {', '.sess-main {', '.mode-seg {', '.side-btn {', '.side-foot {']) {
+      assert(!css.includes(dead), `旧侧栏样式 ${dead} 应退役`);
+    }
+    assert(!sidebar.includes('mode-seg') && !sidebar.includes('onHarness'), '模式切换应只在输入区（侧栏不再放模式分段控件）');
   });
   await test('更新检查源码契约：设置页入口、路由与缓存语义', () => {
     const general = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'GeneralPanel.tsx'), 'utf8');
@@ -1979,11 +2030,11 @@ try {
     assert(js.includes('mentionpal'), '构建产物应含提及调色板（改了 web-ui 忘了 build:web 会红）');
     // 会话派生：侧栏入口、api 客户端、App 接线与产物同步
     const sidebar = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Sidebar.tsx'), 'utf8');
-    assert(sidebar.includes('sess-fork') && sidebar.includes('onFork(s.id)') && !hasEmoji(sidebar), '侧栏应有派生入口且零 emoji');
+    assert(sidebar.includes('sb-act') && sidebar.includes('onFork(s.id)') && !hasEmoji(sidebar), '侧栏应有派生入口且零 emoji');
     const api2 = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'api.ts'), 'utf8');
     assert(api2.includes('/api/agent/sessions/${id}/fork') && api2.includes('forkSession'), 'api 客户端应覆盖会话派生');
     assert(app.includes('forkSession(id)') && app.includes('onFork={forkSessionById}'), 'App 应接线派生会话');
-    assert(js.includes('sess-fork'), '构建产物应含派生入口（改了 web-ui 忘了 build:web 会红）');
+    assert(js.includes('sb-act'), '构建产物应含侧栏行操作钮（改了 web-ui 忘了 build:web 会红）');
     // 终端偏好面板：标题项序 / 通知三档 / 浏览器通知开关
     const tuiPanel = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'TuiPanel.tsx'), 'utf8');
     assert(tuiPanel.includes('tui-chip') && tuiPanel.includes('saveTuiSettings') && tuiPanel.includes('browserNotifyEnabled') && !hasEmoji(tuiPanel), 'TuiPanel 应有芯片开关与保存接线且零 emoji');

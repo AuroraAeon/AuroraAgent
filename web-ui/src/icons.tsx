@@ -132,6 +132,9 @@ export const IconRefresh = (p: IconProps) => (
 export const IconSearch = (p: IconProps) => (
   <Svg {...p}><circle cx="11" cy="11" r="6.5" /><line x1="16" y1="16" x2="20.5" y2="20.5" /></Svg>
 );
+export const IconPanelLeft = (p: IconProps) => (
+  <Svg {...p}><rect x="3.5" y="4.5" width="17" height="15" rx="2.5" /><line x1="9.5" y1="4.5" x2="9.5" y2="19.5" /></Svg>
+);
 export const IconList = (p: IconProps) => (
   <Svg {...p}>
     <polyline points="8.5 7.5 10.5 9.5 14.5 5" />

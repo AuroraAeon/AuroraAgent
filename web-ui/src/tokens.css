@@ -6,6 +6,8 @@
   /* 中性色：背景 / 面板 / 表面 / 线条 / 文字 */
   --bg:#0e1014; --panel:#151820; --surface:#1b1f2a; --surface-hover:#232936;
   --line:#2a3040; --line-strong:#39415a; --panel-line:#333b52;
+  /* 侧栏专用填充与交互底（dsh：sidebar-fill 与 interactive-bg-hover / active 两级，行悬停用） */
+  --sidebar-fill:#141721; --sidebar-hover:rgb(255 255 255 / 8%); --sidebar-active:rgb(255 255 255 / 14%);
   --text:#e8ebf2; --dim:#8b93a7; --faint:#5d6478; --code-bg:#0a0c10;
   /* 品牌主色：取自 public/icon.svg 渐变（靛蓝→蓝→青）的蓝段，全站强调色唯一来源 */
   --accent:#4d8df6; --accent-hi:#6ba4f8; --accent-soft:rgb(77 141 246 / 14%); --accent-line:rgb(77 141 246 / 45%); --accent-ink:#0b0e14;
@@ -31,6 +33,7 @@
 :root[data-theme="light"] {
   --bg:#f5f7fb; --panel:#ffffff; --surface:#eef1f7; --surface-hover:#e3e8f2;
   --line:#dde2ec; --line-strong:#c2cadb; --panel-line:#d5dbe8;
+  --sidebar-fill:#ffffff; --sidebar-hover:rgb(38 49 72 / 6%); --sidebar-active:rgb(38 49 72 / 10%);
   --text:#171c27; --dim:#586175; --faint:#8a92a6; --code-bg:#f1f4f9;
   --accent:#2f6fe0; --accent-hi:#1f5ccc; --accent-soft:rgb(47 111 224 / 10%); --accent-line:rgb(47 111 224 / 32%); --accent-ink:#ffffff;
   --accent-glow:rgb(47 111 224 / 5%); --accent-shadow:rgb(47 111 224 / 22%);

@@ -623,9 +623,6 @@ export default function App() {
         onNew={newSession}
         onDelete={removeSession}
         onFork={forkSessionById}
-        harnesses={harnesses}
-        harness={current?.harness || 'standard'}
-        onHarness={changeHarness}
         onOpenSettings={() => setSettingsOpen(true)}
         loading={booting}
         version={settings?.version || '4.0.0'}
