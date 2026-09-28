@@ -8,7 +8,7 @@
 
 ## 配置文件字段
 
-`apiKey` / `model` / `thinking` / `temperature` / `maxTokens` / `permissionMode` / `planMode` / `titleMode` / `agentProxy` / `goal` / `tui`。
+`apiKey` / `model` / `thinking` / `temperature` / `maxTokens` / `permissionMode` / `planMode` / `titleMode` / `agentProxy` / `providerFailover` / `providerFailoverMaxAttempts` / `goal` / `tui`。
 
 ### goal 段（目标模式）
 
@@ -40,6 +40,17 @@ Agent 沙箱内的出站请求（`web_fetch` 等工具）默认直连；本机�
 
 socks5 等其它协议暂不支持（错误消息会说明）；http 目标走正向代理、https 目标走 CONNECT 隧道，实现见 `util/proxy.mjs`。
 
+### providerFailover / providerFailoverMaxAttempts（多提供方故障转移）
+
+经 `GET/POST /api/settings/failover` 读写（设置页「故障转移」面板），下一轮请求即时生效；行为详解见 [自定义提供方指南](/zh/guide/providers)。
+
+| 字段 | 默认 | 说明 |
+| --- | --- | --- |
+| `providerFailover` | `true` | 429 / 5xx / 网络失败时切换到提供同一模型的其它提供方重试 |
+| `providerFailoverMaxAttempts` | `3` | 含首次的总尝试次数（钳制 1–5；1 = 实质关闭） |
+
+环境变量 `AURORAAGENT_FAILOVER`（`0` 关 / `1` 开）与 `AURORAAGENT_FAILOVER_MAX_ATTEMPTS`（1–5）优先于盘上配置。
+
 ### tui 段（终端偏好）
 
 经 `GET/POST /api/settings/tui` 读写（设置页「终端」面板）；终端启动时读取一次，下一次启动生效。
@@ -58,6 +69,8 @@ socks5 等其它协议暂不支持（错误消息会说明）；http 目标走�
 | `AURORAAGENT_API_KEY` | API Key（优先于配置文件） |
 | `AURORAAGENT_BASE_URL` | 上游 Base URL（优先于配置文件） |
 | `AURORAAGENT_THEME` | 终端主题 `dark` / `light` / `auto` |
+| `AURORAAGENT_FAILOVER` | `0` 关闭多提供方故障转移 / `1` 开启（优先于配置） |
+| `AURORAAGENT_FAILOVER_MAX_ATTEMPTS` | 故障转移总尝试次数 1–5（优先于配置） |
 | `AURORAAGENT_EXPERIMENTAL_MCP` | 开启 MCP 实验特性 |
 | `AURORAAGENT_EXPERIMENTAL_FLAG` | 开启全部实验特性 |
 | `PORT` / `NO_OPEN` | 网页端口 / 不自动开浏览器 |

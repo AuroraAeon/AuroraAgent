@@ -8,7 +8,7 @@
 
 ## Config fields
 
-`apiKey` / `model` / `thinking` / `temperature` / `maxTokens` / `permissionMode` / `planMode` / `titleMode` / `agentProxy` / `goal` / `tui`.
+`apiKey` / `model` / `thinking` / `temperature` / `maxTokens` / `permissionMode` / `planMode` / `titleMode` / `agentProxy` / `providerFailover` / `providerFailoverMaxAttempts` / `goal` / `tui`.
 
 ### goal section (goal mode)
 
@@ -27,6 +27,17 @@ Per-leaf fallback + clamping + startup warning. Full semantics: [Goal Mode guide
 | `evaluatorMaxTokens` | 4096 | evaluator per-request token cap |
 | `evaluatorTimeoutSeconds` | 60 | evaluator timeout (seconds) |
 | `evaluatorMaxRetries` | 1 | evaluator retry cap |
+
+### providerFailover / providerFailoverMaxAttempts (multi-provider failover)
+
+Read and written via `GET/POST /api/settings/failover` (Settings → Failover panel); changes apply to the next request. Behavior details live in the [custom providers guide](/en/guide/providers).
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `providerFailover` | `true` | retry against another provider serving the same model on 429 / 5xx / network failure |
+| `providerFailoverMaxAttempts` | `3` | total attempts including the first (clamped 1–5; 1 effectively disables) |
+
+Env `AURORAAGENT_FAILOVER` (`0` off / `1` on) and `AURORAAGENT_FAILOVER_MAX_ATTEMPTS` (1–5) take precedence over the file.
 
 ### tui section (terminal preferences)
 
@@ -58,6 +69,8 @@ Read and written via `GET/POST /api/settings/tui` (Settings dialog, "Terminal" p
 | `AURORAAGENT_API_KEY` | API key (overrides config) |
 | `AURORAAGENT_BASE_URL` | upstream base URL (overrides config) |
 | `AURORAAGENT_THEME` | terminal theme `dark` / `light` / `auto` |
+| `AURORAAGENT_FAILOVER` | `0` disables multi-provider failover / `1` enables (overrides the file) |
+| `AURORAAGENT_FAILOVER_MAX_ATTEMPTS` | total failover attempts 1–5 (overrides the file) |
 | `AURORAAGENT_EXPERIMENTAL_MCP` | enable the MCP experiment |
 | `AURORAAGENT_EXPERIMENTAL_FLAG` | enable all experiments |
 | `PORT` / `NO_OPEN` | web port / do not open a browser |

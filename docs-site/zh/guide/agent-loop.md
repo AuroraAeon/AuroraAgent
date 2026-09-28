@@ -53,7 +53,7 @@ token 估算超过窗口阈值时，把早期对话经一轮模型调用总结�
 
 ## 事件协议
 
-`turn_started` / `model_round_started` / `text_chunk` / `thinking_chunk` / `tool_event` / `plan_proposed|approved|rejected` / `token_usage_updated` / `context_compression_*` / `turn_completed|cancelled|failed`，统一 SSE 帧封装（`util/agent/events.mjs`），终端与网页共用。
+`turn_started` / `model_round_started` / `text_chunk` / `thinking_chunk` / `tool_event` / `plan_proposed|approved|rejected` / `provider_switched` / `token_usage_updated` / `context_compression_*` / `turn_completed|cancelled|failed`，统一 SSE 帧封装（`util/agent/events.mjs`），终端与网页共用。`provider_switched` 在主提供方 429 / 5xx / 网络失败并切换到提供同模型的其它提供方时推送（详见[自定义提供方](/zh/guide/providers)的故障转移一节）。
 
 ## 子代理（swarm）
 
