@@ -1703,6 +1703,16 @@ try {
     assert(css.includes('.set-page[hidden] { display:none; }'), '缓存的非当前 section 应真正隐藏');
     assert(!css.includes('.pv-sec {'), 'section 标题已由壳 header 承担，旧包裹样式应退役');
   });
+  await test('设置通用面板源码契约：生成参数（温度 / 最大输出 / API Key）可改且走新端点', () => {
+    const gp = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'GeneralPanel.tsx'), 'utf8');
+    assert(gp.includes('saveGeneration') && gp.includes('saveApiKey') && gp.includes('getKeyState'), '通用面板应经 api.ts 走生成参数与 Key 端点');
+    assert(gp.includes('aria-label="温度"') && gp.includes('aria-label="单次最大输出"') && gp.includes('aria-label="API Key"'), '生成参数组应有温度 / 最大输出 / Key 三行');
+    assert(!hasEmoji(gp), '通用面板零 emoji 铁律');
+    const api = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'api.ts'), 'utf8');
+    assert(api.includes('/api/settings/generation') && api.includes('/api/settings/key'), 'api.ts 应登记两个新端点');
+    assert(readFileSync(join(__dirname, '..', 'util', 'settings-generation.mjs'), 'utf8').includes('handleGenerationApi'), '应有生成参数 HTTP 面模块');
+    assert(readFileSync(join(__dirname, '..', 'web.mjs'), 'utf8').includes("url.startsWith('/api/settings/generation')"), 'web.mjs 应委派新端点');
+  });
   await test('对话区跟手与渲染性能源码契约：贴底才跟随、历史 memo、快捷键聚焦', () => {
     const chat = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ChatView.tsx'), 'utf8');
     assert(chat.includes('stickRef') && chat.includes('scrollHeight - el.scrollTop - el.clientHeight < 96'), '应只在贴底时跟随滚动');
@@ -3141,6 +3151,63 @@ await test('GET/POST /api/settings/tui：读生效配置、局部合并更新、
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
   })).status, 400, '空体应 400');
   eq((await fetch(`${BASE}/api/settings/tui`, { method: 'DELETE' })).status, 405, '其他方法应 405');
+  rmSync(cfgPath, { force: true });
+});
+
+// ---------- 生成参数与 API Key：/api/settings/generation、/api/settings/key ----------
+await test('GET/POST /api/settings/generation：读缺省、局部更新、坏值 400 / 405', async () => {
+  const cfgPath = join(tmpDataDir, 'auroraagent.config.json');
+  writeFileSync(cfgPath, JSON.stringify({ temperature: 0.3, maxTokens: 2048 }));
+  const got = await (await fetch(`${BASE}/api/settings/generation`)).json();
+  eq(got.ok, true, '应回 ok');
+  eq(got.temperature, 0.3, '应读到盘上温度');
+  eq(got.maxTokens, 2048, '应读到盘上最大输出');
+  const post = (body) => fetch(`${BASE}/api/settings/generation`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const p1 = await (await post({ temperature: 0.9 })).json();
+  eq(p1.temperature, 0.9, '温度应更新');
+  eq(p1.maxTokens, 2048, '未给字段应保持');
+  const p2 = await (await post({ maxTokens: 4096 })).json();
+  eq(p2.maxTokens, 4096, '最大输出应更新');
+  eq(p2.temperature, 0.9, '上一次的更新应落盘并读回');
+  eq((await post({ temperature: 1.5 })).status, 400, '温度越界应 400');
+  eq((await post({ temperature: 'abc' })).status, 400, '非数字温度应 400');
+  eq((await post({ maxTokens: 0 })).status, 400, '零上限应 400');
+  eq((await post({ maxTokens: 1.5 })).status, 400, '非整数上限应 400');
+  eq((await post({})).status, 400, '空体应 400');
+  eq((await fetch(`${BASE}/api/settings/generation`, { method: 'PUT' })).status, 405, '其他方法应 405');
+  rmSync(cfgPath, { force: true });
+});
+
+await test('GET/POST /api/settings/key：写入落盘、只回 hasKey 不回钥、坏值 400、环境变量优先时 409', async () => {
+  const cfgPath = join(tmpDataDir, 'auroraagent.config.json');
+  writeFileSync(cfgPath, JSON.stringify({ model: 'LongCat-2.5-Preview' }));
+  const post = (body) => fetch(`${BASE}/api/settings/key`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  // 生效 Key 由环境变量 AURORAAGENT_API_KEY 提供，hasKey 恒为 true；响应里绝不出现 Key 本身
+  const g0 = await (await fetch(`${BASE}/api/settings/key`)).json();
+  eq(g0.ok, true, '应回 ok');
+  eq(g0.hasKey, true, '当前由环境变量提供 Key，hasKey 应为 true');
+  assert(!JSON.stringify(g0).includes('ak-'), 'GET 绝不回传 Key 本身');
+  const p = await (await post({ apiKey: 'ak-new-key' })).json();
+  eq(p.ok, true, '应回 ok');
+  eq(p.hasKey, true, '写入后应报有 Key');
+  const onDisk = JSON.parse(readFileSync(cfgPath, 'utf8'));
+  eq(onDisk.apiKey, 'ak-new-key', 'Key 应落盘（saveConfig 仅在 keyIsOverride 为假时写钥）');
+  eq(onDisk.model, 'LongCat-2.5-Preview', '其它配置字段不被冲掉');
+  const again = await (await fetch(`${BASE}/api/settings/key`)).json();
+  eq(again.hasKey, true, 'GET 应报有 Key');
+  assert(!JSON.stringify(again).includes('ak-new-key'), 'GET 绝不回传 Key 本身');
+  eq((await post({ apiKey: '' })).status, 400, '空 Key 应 400');
+  eq((await post({ apiKey: 'ak\nx' })).status, 400, '含空白的 Key 应 400');
+  eq((await post({ apiKey: 'x'.repeat(201) })).status, 400, '超长 Key 应 400');
+  eq((await fetch(`${BASE}/api/settings/key`, { method: 'DELETE' })).status, 405, '其他方法应 405');
+  // 环境变量 Key 是临时覆盖：此时写盘会被 loadConfig 忽略，必须 409 说清而非假成功
+  const conflict = await post({ apiKey: 'ak-third' });
+  eq(conflict.status, 409, '环境变量 Key 生效时应 409');
+  assert((await conflict.json()).error.includes('AURORAAGENT_API_KEY'), '409 消息应指出环境变量');
   rmSync(cfgPath, { force: true });
 });
 

@@ -46,6 +46,8 @@ Same-origin `/api/*`, all JSON; SSE frames are `event:` + `data:` lines.
 | `GET/POST /api/settings/tui` | read / write terminal preferences (`terminalTitle` order + `notifications` triple); 400 on bad values, 405 for other methods |
 | `GET/POST /api/settings/proxy` | read / write the Agent sandbox outbound proxy (`agentProxy`: `http://host:port`, empty = direct); 400 on bad values such as socks5, 405 for other methods |
 | `GET/POST /api/settings/failover` | read / write multi-provider failover preferences (`providerFailover` boolean + `providerFailoverMaxAttempts` 1–5); 400 on non-boolean or out-of-range values, 405 for other methods |
+| `GET/POST /api/settings/generation` | read / write generation parameters (`temperature` 0–1, `maxTokens` positive integer ≤1000000, partial merge); 400 on out-of-range or non-integer values and on an empty body, 405 for other methods |
+| `GET/POST /api/settings/key` | write the API key (`apiKey` non-empty, no whitespace, ≤200 chars) and query whether one exists; GET returns only `hasKey` and never the key itself; 409 when an env-var key takes precedence so the write would be ignored |
 
 ## MCP (experimental; 404 when disabled)
 

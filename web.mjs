@@ -19,6 +19,7 @@ import { ProviderStore, ProviderError, handleProviderApi } from './util/provider
 import { pumpSse, pumpTranslated } from './util/stream.mjs';
 import { openChatStream } from './util/llm/provider.mjs';
 import { handleFailoverApi } from './util/llm/failover.mjs';
+import { handleGenerationApi } from './util/settings-generation.mjs';
 import { createAgentApi } from './util/agent/http.mjs';
 import { handleTuiSettingsApi } from './util/tui/settings-api.mjs';
 import { handleAgentProxyApi } from './util/proxy.mjs';
@@ -382,6 +383,11 @@ const server = createServer(async (req, res) => {
   // 终端 TUI 偏好（/api/settings/tui，实现见 util/tui/settings-api.mjs；终端启动时读取一次）
   if (url.startsWith('/api/settings/tui')) {
     if (await handleTuiSettingsApi(req, res, url, { loadConfig, saveConfig, log })) return;
+  }
+
+  // 生成参数与 API Key（/api/settings/generation、/api/settings/key，实现见 util/settings-generation.mjs；下一轮请求即时生效）
+  if (url.startsWith('/api/settings/generation') || url.startsWith('/api/settings/key')) {
+    if (await handleGenerationApi(req, res, url, { loadConfig, saveConfig, log })) return;
   }
 
   // Agent 沙箱代理（/api/settings/proxy，实现见 util/proxy.mjs；web_fetch 等出站请求即时生效）

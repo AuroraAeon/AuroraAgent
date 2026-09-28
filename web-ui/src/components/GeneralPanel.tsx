@@ -1,8 +1,8 @@
-/** 设置「通用」section：外观主题 + 服务状态与版本更新。
+/** 设置「通用」section：外观主题 + 生成参数（温度 / 最大输出 / API Key）+ 服务状态与版本更新。
  * 分级对齐 dsh web 设置页：组标题（12px 重色）→ 行（标题 + 描述 + 右侧控件，行间 0.5px 分隔）。 */
 import { useCallback, useEffect, useState } from 'react';
 import { IconAlert, IconRefresh } from '../icons';
-import { checkUpdate, getSettings, setAutostart } from '../api';
+import { checkUpdate, getGeneration, getKeyState, getSettings, saveApiKey, saveGeneration, setAutostart } from '../api';
 import type { SettingsInfo, UpdateInfo } from '../types';
 import { toast } from '../toast';
 import { THEME_OPTIONS, useThemePreference } from '../theme';
@@ -34,9 +34,28 @@ export function GeneralPanel() {
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
   const [themePref, chooseTheme] = useThemePreference();
+  // 生成参数（全局）：温度 / 单次最大输出 / API Key，与网页斜杠命令 /temp /max /key 同源
+  const [gen, setGen] = useState<{ temperature: number; maxTokens: number } | null>(null);
+  const [hasKey, setHasKey] = useState<boolean | null>(null);
+  const [tempDraft, setTempDraft] = useState('');
+  const [maxDraft, setMaxDraft] = useState('');
+  const [keyDraft, setKeyDraft] = useState('');
+  const [genBusy, setGenBusy] = useState('');
+  const [genErr, setGenErr] = useState('');
 
   const reload = useCallback(() => { getSettings().then(setSettings).catch(() => {}); }, []);
   useEffect(() => { reload(); }, [reload]);
+
+  useEffect(() => {
+    let dead = false;
+    Promise.all([getGeneration().catch(() => null), getKeyState().catch(() => null)])
+      .then(([g, k]) => {
+        if (dead) return;
+        if (g) { setGen({ temperature: g.temperature, maxTokens: g.maxTokens }); setTempDraft(String(g.temperature)); setMaxDraft(String(g.maxTokens)); }
+        if (k) setHasKey(k.hasKey);
+      });
+    return () => { dead = true; };
+  }, []);
 
   const toggleAutostart = async (v: boolean) => {
     setAutostartBusy(true);
@@ -48,6 +67,46 @@ export function GeneralPanel() {
       toast.error('切换开机自启失败', { description: e instanceof Error ? e.message : String(e) });
     } finally {
       setAutostartBusy(false);
+    }
+  };
+
+  /** 生成参数保存：校验只在服务端单点（与斜杠命令同一端点），错误就地展示并Toast */
+  const saveGen = async (field: 'temperature' | 'maxTokens', raw: string) => {
+    const label = field === 'temperature' ? '温度' : '单次最大输出';
+    const value = field === 'temperature' ? Number(raw) : Number(raw);
+    if (raw.trim() === '' || !Number.isFinite(value)) { setGenErr(`${label}需要填数字`); return; }
+    setGenBusy(field);
+    setGenErr('');
+    try {
+      const r = await saveGeneration({ [field]: value });
+      setGen({ temperature: r.temperature, maxTokens: r.maxTokens });
+      setTempDraft(String(r.temperature));
+      setMaxDraft(String(r.maxTokens));
+      toast.success(`${label}已保存`, { description: '下一轮模型请求即时生效' });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setGenErr(msg);
+      toast.error(`${label}保存失败`, { description: msg });
+    } finally {
+      setGenBusy('');
+    }
+  };
+
+  const saveKey = async () => {
+    if (!keyDraft.trim()) { setGenErr('API Key 不能为空'); return; }
+    setGenBusy('key');
+    setGenErr('');
+    try {
+      await saveApiKey(keyDraft.trim());
+      setHasKey(true);
+      setKeyDraft('');
+      toast.success('API Key 已保存', { description: '已写入本机配置文件，环境变量优先时以环境变量为准' });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setGenErr(msg);
+      toast.error('API Key 保存失败', { description: msg });
+    } finally {
+      setGenBusy('');
     }
   };
 
@@ -81,6 +140,62 @@ export function GeneralPanel() {
             </button>
           ))}
         </div>
+      </Group>
+
+      <Group title="生成参数">
+        <p className="pv-intro">全局生效，改后下一轮模型请求即用新值；网页斜杠命令 /temp /max /key 与这里同源。</p>
+        <Row title="温度" desc="0 ~ 1，越低越保守；影响下一次请求的采样随机性">
+          <div className="np-row">
+            <input
+              type="number"
+              className="np-input np-input-num"
+              aria-label="温度"
+              min={0}
+              max={1}
+              step={0.1}
+              value={tempDraft}
+              onChange={(e) => { setTempDraft(e.target.value); setGenErr(''); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') saveGen('temperature', tempDraft).catch(() => {}); }}
+            />
+            <button type="button" className="btn btn-accent" disabled={genBusy !== '' || tempDraft === String(gen?.temperature ?? '')} onClick={() => saveGen('temperature', tempDraft).catch(() => {})}>
+              保存
+            </button>
+          </div>
+        </Row>
+        <Row title="单次最大输出" desc="单次请求的输出上限（正整数）；过大可能被上游按模型上限截断">
+          <div className="np-row">
+            <input
+              type="number"
+              className="np-input np-input-num"
+              aria-label="单次最大输出"
+              min={1}
+              step={1}
+              value={maxDraft}
+              onChange={(e) => { setMaxDraft(e.target.value); setGenErr(''); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') saveGen('maxTokens', maxDraft).catch(() => {}); }}
+            />
+            <button type="button" className="btn btn-accent" disabled={genBusy !== '' || maxDraft === String(gen?.maxTokens ?? '')} onClick={() => saveGen('maxTokens', maxDraft).catch(() => {})}>
+              保存
+            </button>
+          </div>
+        </Row>
+        <Row title="API Key" desc="保存在本机配置文件中；环境变量 AURORAAGENT_API_KEY 优先，设置后盘上值不生效">
+          <div className="np-row">
+            <input
+              type="password"
+              className="np-input"
+              aria-label="API Key"
+              placeholder={hasKey ? '已保存，输入新值可替换' : 'ak-你的Key'}
+              value={keyDraft}
+              onChange={(e) => { setKeyDraft(e.target.value); setGenErr(''); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') saveKey().catch(() => {}); }}
+            />
+            <button type="button" className="btn btn-accent" disabled={genBusy !== ''} onClick={() => saveKey().catch(() => {})}>
+              保存
+            </button>
+          </div>
+        </Row>
+        {genErr ? <p className="pv-err" role="alert">{genErr}</p> : null}
       </Group>
 
       <Group title="服务">

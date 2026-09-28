@@ -37,6 +37,14 @@ export const setAutostart = (autostart: boolean) => api<{ ok: boolean }>('/api/s
 export const getAgentProxy = () => api<{ ok: boolean; agentProxy: string }>('/api/settings/proxy');
 export const setAgentProxy = (agentProxy: string) =>
   api<{ ok: boolean; agentProxy: string }>('/api/settings/proxy', { method: 'POST', body: JSON.stringify({ agentProxy }) });
+/** 生成参数（全局）：温度与单次最大输出；改后下一轮模型请求即时生效 */
+export const getGeneration = () => api<{ ok: boolean; temperature: number; maxTokens: number }>('/api/settings/generation');
+export const saveGeneration = (body: { temperature?: number; maxTokens?: number }) =>
+  api<{ ok: boolean; temperature: number; maxTokens: number }>('/api/settings/generation', { method: 'POST', body: JSON.stringify(body) });
+/** API Key：GET 只回 hasKey（永不回传 Key 本身）；POST 写入并持久化到本机配置 */
+export const getKeyState = () => api<{ ok: boolean; hasKey: boolean }>('/api/settings/key');
+export const saveApiKey = (apiKey: string) =>
+  api<{ ok: boolean; hasKey: boolean }>('/api/settings/key', { method: 'POST', body: JSON.stringify({ apiKey }) });
 export const getFailoverSettings = () => api<{ ok: boolean; providerFailover: boolean; providerFailoverMaxAttempts: number }>('/api/settings/failover');
 export const saveFailoverSettings = (body: { providerFailover?: boolean; providerFailoverMaxAttempts?: number }) =>
   api<{ ok: boolean; providerFailover: boolean; providerFailoverMaxAttempts: number }>('/api/settings/failover', { method: 'POST', body: JSON.stringify(body) });

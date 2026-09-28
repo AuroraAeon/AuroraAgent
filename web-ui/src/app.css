@@ -684,6 +684,9 @@
 }
 .np-input:focus { outline:none; border-color:var(--accent-line); }
 .np-input::placeholder { color:var(--faint); }
+/* 设置行内的输入 + 保存（生成参数 / API Key）：行宽固定，长文案行不被撑爆 */
+.set-row .np-row { width:280px; flex:none; }
+.np-input-num { max-width:120px; flex:none; }
 .np-hint { font-size:12px; color:var(--faint); margin-top:2px; }
 .kv { display:flex; flex-direction:column; gap:6px; }
 .kv > div { display:flex; align-items:center; gap:10px; font-size:12.5px; }

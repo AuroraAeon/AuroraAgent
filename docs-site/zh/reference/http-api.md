@@ -46,6 +46,8 @@
 | `GET/POST /api/settings/tui` | 终端偏好读写（`terminalTitle` 项序 + `notifications` 三档）；坏值 400，其他方法 405 |
 | `GET/POST /api/settings/proxy` | Agent 沙箱出站代理读写（`agentProxy`：`http://主机:端口`，空 = 直连）；socks5 等坏值 400，其他方法 405 |
 | `GET/POST /api/settings/failover` | 多提供方故障转移偏好读写（`providerFailover` 布尔 + `providerFailoverMaxAttempts` 1–5）；非布尔 / 越界 400，其他方法 405 |
+| `GET/POST /api/settings/generation` | 生成参数读写（`temperature` 0–1、`maxTokens` 正整数 ≤1000000，局部合并）；越界 / 非整数 400，空体 400，其他方法 405 |
+| `GET/POST /api/settings/key` | API Key 写入（`apiKey` 非空、无空白、≤200 字符）与「有没有 Key」查询；GET 只回 `hasKey`，绝不回传 Key 本身；环境变量 Key 生效时写盘无效，返回 409 |
 
 ## MCP（实验特性，未开启时 404）
 
