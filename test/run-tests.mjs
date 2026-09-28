@@ -1918,6 +1918,36 @@ try {
     assert((tokens.match(/--tooltip-bg:/g) || []).length === 2 && (tokens.match(/--kbd-bg:/g) || []).length === 2, 'tooltip / kbd 令牌应深浅双主题各一份');
   });
 
+  await test('菜单组件源码契约：零依赖 Menu 复刻 ZCode DropdownMenu 交互与视觉', () => {
+    const menu = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'Menu.tsx'), 'utf8');
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    assert(menu.includes('createPortal') && menu.includes("root.id = 'menu-root'"), '菜单应经 portal 挂模块级单例 root（与气泡同一思路，别按实例建上下文）');
+    assert(menu.includes('role="menu"') && menu.includes("'aria-haspopup': 'menu'"), '触发器应挂 aria-haspopup 与 role=menu');
+    assert(menu.includes("'aria-expanded': open"), '触发器应同步 aria-expanded');
+    assert(menu.includes("e.key === 'Escape'") && menu.includes('triggerRef.current?.focus()'), 'Esc 应关闭并把焦点还给触发器');
+    assert(menu.includes("e.key === 'ArrowDown'") && menu.includes("e.key === 'ArrowUp'") && menu.includes("e.key === 'Home'") && menu.includes("e.key === 'End'"), '键盘应支持上下移动与 Home / End');
+    assert(menu.includes("e.key === 'Enter'") && menu.includes("e.key === ' '"), '回车与空格应触发激活项');
+    assert(menu.includes("e.key === 'Tab'"), 'Tab 应关闭菜单（焦点继续走表单序）');
+    assert(menu.includes('pointerdown') && menu.includes('contains(t)'), '点外面应关闭（trigger 与菜单内不算外面）');
+    assert(menu.includes('[role="menuitem"]:not([disabled])'), '键盘导航应跳过禁用项');
+    // 退出动画保留挂载：与 tooltip 闪现修复同源的教训——退出态保留定位，淡出在原地发生
+    assert(menu.includes('setRender(false), FADE_MS') && menu.includes("data-phase={open ? 'in' : 'out'}"), '退出动画期间应保留挂载与定位');
+    assert(!/transition:all/.test(menu), '组件不许退回 transition:all');
+    assert(!hasEmoji(menu), '菜单组件零 emoji');
+    const pop = /\.menu-pop \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['border-radius:12px', 'border:1px solid var(--line-strong)', 'background:var(--panel)', 'box-shadow:var(--shadow-pop)', 'padding:6px']) {
+      assert(pop.includes(decl), `菜单壳应按 mpick 词汇声明 ${decl}`);
+    }
+    assert(css.includes('@starting-style { .menu-pop[data-phase="in"]') && css.includes('.menu-pop[data-phase="out"]'), '进入 / 退出动画应由 @starting-style 与 data-phase 承担');
+    assert(/transition:opacity 120ms var\(--ease\), transform 120ms var\(--ease\), visibility 120ms/.test(pop), '菜单过渡应显式枚举 opacity / transform / visibility，不退回 all');
+    const item = /\.menu-item \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['border-radius:8px', 'padding:8px 10px', 'font-size:13px']) {
+      assert(item.includes(decl), `菜单项应按 ZCode 紧凑密度声明 ${decl}`);
+    }
+    assert(css.includes('.menu-item.danger { color:var(--danger-ink); }'), '危险项（删除会话）应走 danger 令牌');
+    assert(css.includes('#menu-root { position:fixed; left:0; top:0; z-index:130; pointer-events:none; }'), '菜单 root 应常驻视口且不抢指针（z-index 高于气泡的 120）');
+  });
+
   await test('回合导航条目构建：按 turn 聚合并助手摘录、相邻提问共享、运行态仅最后一项', () => {
     const items = buildTurnNavItems([
       { kind: 'user', key: 'u0', text: '第一问' },

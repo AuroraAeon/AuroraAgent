@@ -50,6 +50,39 @@
 .ct-tip[data-phase="out"] { opacity:0; transform:scale(.96); }
 .ct-tip[data-desc="1"] { flex-direction:column; align-items:flex-start; gap:6px; max-width:18rem; padding:8px 12px; }
 .ct-tip:has(.ct-kbd) { padding-right:4px; }
+
+/* ---------- 下拉菜单（零依赖 Menu.tsx，复刻 ZCode DropdownMenu 语义） ---------- */
+/* 壳词汇对齐既有 mpick-menu：12px 圆角、1px --line-strong 边、--panel 底、--shadow-pop、
+   6px 壳距；进入 120ms 淡入缩放（@starting-style），只动透明度与变换——ZCode 教训：
+   过渡属性显式枚举，不退回 all。挂载于 body 下的 #menu-root（z-index 高于气泡），
+   定位由组件按触发器实测位置写入 left/top 并做视口钳制。 */
+#menu-root { position:fixed; left:0; top:0; z-index:130; pointer-events:none; }
+.menu-pop {
+  position:fixed; min-width:180px; max-width:320px; padding:6px; overflow-y:auto;
+  background:var(--panel); border:1px solid var(--line-strong); border-radius:12px;
+  box-shadow:var(--shadow-pop); pointer-events:auto; outline:none;
+  transition:opacity 120ms var(--ease), transform 120ms var(--ease), visibility 120ms;
+}
+@starting-style { .menu-pop[data-phase="in"] { opacity:0; transform:scale(.96); } }
+.menu-pop[data-phase="out"] { opacity:0; transform:scale(.96); }
+.menu-item {
+  width:100%; display:flex; align-items:center; gap:8px; border:0; border-radius:8px;
+  background:none; color:var(--text); font-size:13px; padding:8px 10px; cursor:pointer;
+  text-align:left; transition:background-color 120ms var(--ease), color 120ms var(--ease);
+}
+.menu-item:hover:not(:disabled), .menu-item:focus-visible { background:var(--surface-hover); outline:none; }
+.menu-item:disabled { color:var(--faint); cursor:default; }
+.menu-item.danger { color:var(--danger-ink); }
+.menu-item.danger:hover:not(:disabled), .menu-item.danger:focus-visible { background:var(--danger-bg); }
+.menu-item-icon { flex:none; display:inline-grid; place-items:center; color:var(--dim); }
+.menu-item.danger .menu-item-icon { color:var(--danger-ink); }
+.menu-item-label { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.menu-item-kbd {
+  flex:none; height:16px; display:inline-flex; align-items:center; padding:0 6px; border-radius:6px;
+  background:var(--kbd-bg); color:var(--kbd-ink); font-size:10px; font-weight:500;
+  font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.menu-sep { height:1px; margin:4px 6px; background:var(--line); }
 .ct-kbd {
   height:16px; display:inline-flex; align-items:center; flex:none; padding:0 6px; border-radius:6px;
   background:var(--kbd-bg); color:var(--kbd-ink); font-size:10px; font-weight:500;
