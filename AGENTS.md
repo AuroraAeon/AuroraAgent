@@ -5,28 +5,7 @@
 
 ---
 
-## 0. 第一铁律：小改动，快提交，勤推送
-
-**每做出一个通过测试的小改动，必须立即 `git commit` 并 `git push`。不要攒批、不要等用户提醒、不要留在本地。**
-
-执行顺序永远是：
-
-1. 改代码（一个可独立验证的小改动，例如「修复一个错误映射」「新增一个厂商标识」）
-2. `npm test` 全绿（基线 316 个测试；不绿不准提交）
-3. `git add <具体文件>` → `git commit -m "中文描述"` → `git push`
-
-规约：
-
-- 粒度：一次提交只做一件事；大任务拆成多次提交，每次提交后仓库都必须处于可运行、测试全绿的状态
-- 提交信息：中文，一句话说清「改了什么、为什么」，如 `fix(chat): 401 错误映射补充额度不足分支`
-- 身份与远端：`user.name=AuroraAeon` / `user.email=auroraaeon@users.noreply.github.com`；`origin` = https://github.com/AuroraAeon/AuroraAgent（private，master 分支）
-- 凡触及真实上游行为的改动（请求格式、错误映射、模型目录解析、tools 拼装），提交前额外跑一次 `npm run check`
-- 推送失败先诊断（网络 / 权限），不得 `--force` 绕过，不得改写已推送的历史
-- 改了 `web-ui/` 源码必须同步 `npm run build:web` 并提交 `public/app/` 产物（运行时零构建的保证）
-
----
-
-## 1. 项目是什么
+## 0. 项目是什么
 
 AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用同一套 Agent Loop（会话 / 轮次 / 工具 / 权限 / 上下文压缩），对标 OpenBitFun 的本地化实现；「全球厂商最新大模型速测」能力完整保留为底座（`/api/chat`、自定义提供方、用量账本）。
 
@@ -42,7 +21,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 - 自定义 Provider：设置页可加任意 OpenAI 兼容 / Anthropic Messages 上游（存储、校验、发现、路由在 `util/providers.mjs` + `util/wire.mjs`，前端在 `web-ui/src/components/ProviderEditor.tsx`）；内置提供方只读，请求载荷保持历史形态
 - Agent 能力面（6.0.0 起对齐 kimi-code 能力模型，7.0.0 起对齐 MiniMax-code goal 能力，全部零依赖自实现）：Goal 目标模式（一会话一目标、六态状态机、三维预算 + 双熔断、evaluator / subagent 独立验证、轮内自动续跑、`/goal` 与 GoalBanner 双端操作（网页 Composer 在生成中亦接受 `/goal` 家族命令，直走 goal REST，异步回调带会话归属校验防串会话））、技能（`skills/` 内置 + `<数据目录>/skills/` 用户，frontmatter 目录常驻系统提示，`/<技能名>` 斜杠命令与 `skill` 工具按需加载正文）、子代理（`task` 工具派发受限子 turn）、计划模式（先出计划、批准才执行）、权限三档（`always_ask` / `ask_when_needed` / `never_ask`）、MCP 客户端（stdio / HTTP 双传输，`AURORAAGENT_EXPERIMENTAL_MCP=1` 门控，默认关）
 
-## 2. 架构地图
+## 1. 架构地图
 
 | 文件 | 职责 |
 | --- | --- |
@@ -87,9 +66,9 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 | `web-ui/src/md-table.mjs` | Markdown 表格块解析纯函数（零依赖，Node 测试直接 import 同一份）：GFM 子集（表头 + 分隔行 + 对齐 + 数据行），列数不匹配 / 裸 `---` 不成表；渲染（thead/tbody/滚动包裹层）在 `markdown.tsx`，`.d.mts` 供 TS 取类型 |
 | `public/app/` | web-ui 构建产物（随仓库提交）：`/` 与 `/app/` 同一份 index.html，哈希资产长缓存 |
 | `public/icon.svg` `public/vendors/` | 品牌标识 / 各接入厂商标识（`/vendor/` 白名单路由） |
-| `test/` | e2e 测试：mock 上游 + 真实 socket（见第 8 节）；子套件（llm / tui / highlight / config / pick / skills / guards）经 import 聚合；`guards.mjs` 仓库守卫入套 |
+| `test/` | e2e 测试：mock 上游 + 真实 socket（见第 7 节）；子套件（llm / tui / highlight / config / pick / skills / guards）经 import 聚合；`guards.mjs` 仓库守卫入套 |
 | `tools/install-service.mjs` | LaunchAgent 安装 / 卸载 / 状态（plist 生成规则与 `web.mjs` 内置逻辑保持一致） |
-| `tools/build-app.mjs` | 打包 `.app`（含自保护，见第 6 节） |
+| `tools/build-app.mjs` | 打包 `.app`（含自保护，见第 5 节） |
 | `tools/color-test.mjs` | 纯色识别回归测试工具（结论沉淀在 `docs/`） |
 | `tools/gen-release-notes.mjs` | 发布笔记生成：git 历史按 feat/fix/... 分组，幂等注入文档站发布笔记页标记区（`npm run docs:notes`） |
 | `docs/` | 测试结论与学术图表（PNG / SVG / PDF + CSV；**TIFF 永不再进仓库**）；终端设计规范已迁入文档站 `docs-site/zh/reference/tui-design.md`（单一真值源） |
@@ -99,7 +78,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 
 数据流（速测底座）：浏览器 `POST /api/chat` → `web.mjs` 按模型所属提供方选协议请求上游 → SSE 逐帧透传或翻译 → 结束按提供方单价结算用量账本。
 
-## 3. 常用命令
+## 2. 常用命令
 
 | 命令 | 用途 | 注意 |
 | --- | --- | --- |
@@ -118,7 +97,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 
 调试：`LOG_LEVEL=debug npm run web`；常驻服务日志在 `~/Library/Logs/com.auroraagent.app.log`。
 
-## 4. 数据目录与配置
+## 3. 数据目录与配置
 
 三级回退（`util/config.mjs` 单一实现，`web.mjs` / `chat.mjs` / `check.mjs` / `tools/install-service.mjs` 共用；5.0.0 起旧命名一次性迁移：旧数据目录整体搬迁含 Key 保留、旧 config 就地改名）：
 
@@ -130,7 +109,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 
 **`auroraagent.config.json`、`usage.jsonl`、`providers.json`、`mcp.json`、`sessions/`、`goals/` 已在 `.gitignore`，永远不许提交**——Key 泄露即安全事故。自定义提供方（含 API 密钥、单价）存 `providers.json`，内置 LongCat 提供方在内存里合成（`builtin: true`，只读）。用户技能放 `<数据目录>/skills/<名称>/SKILL.md`（与内置 `skills/` 合并展示）；MCP 服务器配置存 `mcp.json`（含连接信息，同级不提交）。
 
-## 5. 代码风格铁律
+## 4. 代码风格铁律
 
 - 后端只用 Node 内置模块
 - 2 空格缩进、单引号、行尾分号，与现有文件保持一致
@@ -140,7 +119,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 - 服务路由集中在 `web.mjs` 单个 `createServer` 处理器内按「方法 + 路径」平铺，不引路由库；Agent HTTP 面已拆 `util/agent/http.mjs`
 - 单文件控制在约 500 行内；`web.mjs` 已接近上限，新功能优先拆到 `util/` 等模块
 
-## 6. 服务生命周期（macOS LaunchAgent）
+## 5. 服务生命周期（macOS LaunchAgent）
 
 - Label `com.auroraagent.app`（5.0.0 起；旧 label `com.modeltester.app` 在安装/卸载时自动清理）；plist 位于 `~/Library/LaunchAgents/`；`RunAtLoad` + `KeepAlive`
 - 日志**必须**落 `~/Library/Logs/com.auroraagent.app.log`：launchd 无权重定向到 `~/Documents` 等 TCC 保护目录，否则 job 以 exit 78 反复失败
@@ -150,15 +129,15 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 - **禁止在 Bundle 内执行 `npm run app:build`**：构建会先删掉整个 `.app`，`tools/build-app.mjs` 的自保护会直接报错；正确做法是把 `Resources/app` 拷到 Bundle 之外的目录再构建
 - `publish` / `app:build` 已前置 `build:web`：Bundle 内置 `public/app/` 产物，运行时不依赖 node_modules
 
-## 7. 接入新厂商 checklist
+## 6. 接入新厂商 checklist
 
 1. `public/vendors/<name>.svg` 放厂商标识；`web.mjs` 的 `/vendor/` 白名单路由自动放行（正则防目录穿越，勿放宽）
 2. `web-ui/src/components/Composer.tsx` 的厂商标识前缀匹配加一行（模型 id → 图标）；终端不需要（无图标渲染）
 3. 配置 `AURORAAGENT_BASE_URL`；模型目录来自上游 `GET /openai/v1/models`，代码不硬编码厂商模型清单
 4. `README.md`「当前接入厂商」段同步更新；协议差异（如思考开关字段、Messages 线路、tools 字段形态）在 `util/wire.mjs` 处理并补测试；更常见的路径是让用户直接在设置页加自定义提供方，无需改代码
-5. 全程遵守第 0 节：每完成一步且 `npm test` 通过，就提交推送一次
+5. 遵守第 11 节：每完成一步且 `npm test` 通过，就提交推送一次
 
-## 8. 测试规约
+## 7. 测试规约
 
 - e2e 模式：mock 上游（`127.0.0.1:18901`，复刻真实 SSE 帧与 401 / 402 错误、`tool_calls` 帧与 tool 结果回执）+ 真实 socket 拉起 `web.mjs`（`127.0.0.1:18787`）
 - **数据隔离**：测试以临时目录作 `AURORAAGENT_DATA_DIR`，绝不许写真实数据目录
@@ -166,32 +145,53 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 - mock 触发词：消息含 `USE_TOOL` → 模型发起 `read_file mock.txt`；含 `USE_TOOL_WRITE` → 发起 `write_file written_by_agent.txt`；`FLAKY` 断网重试；`SLOW` 慢速；`USE_SKILL` / `USE_TODO` / `USE_EDIT` / `USE_PLAN` / `USE_SWARM` / `USE_MCP` 分别触发技能加载 / 待办维护 / diff 回传 / 计划两阶段 / 子代理派发 / MCP 工具调用；`USE_GOAL` → create_goal 全链路；`USE_GOAL_BUDGET` → 预算触顶转 budget_limited + 收尾轮；`USE_GOAL_IDLE` → 空转轮后续跑；`USE_GOAL_VERIFY_MET` / `USE_GOAL_VERIFY_NOTMET` → evaluator 裁决 met 转 complete(verifier_met) / not_met 连击转 paused(no_progress)（对齐 MiniMax repeatedGap）；`USE_GOAL_VERIFY_RETRY` → evaluator 首轮无结论恰好重试一次后采信 met；`USE_GOAL_EDIT:<会话id>` → turn 内经 REST 改写目标文本，在飞模型下一轮收到【目标已更新】并按新目标结算；`GOAL_TURN2` → REST 预建 active 目标后新用户轮首轮重述（【进行中的目标】），空转续跑后提案完成；系统提示带 `【会话标题生成】` 标记即标题生成轮（titleMode=model），回固定标题 `README 安装章节改写`
 - 前端契约测试（`/app` 服务、哈希资产、令牌 CSS 在场、零 emoji、旧路由 404、ProviderEditor 源码校验规则）守着构建产物与 `web-ui/` 的同步；改了 `web-ui/` 忘了 `build:web` 会红
 - 仓库守卫（`test/guards.mjs`，已入 `npm test`）：产品源码零 emoji、TUI 颜色单一真值源（仅 `theme.mjs` 出 SGR）、色板对比度达标、新模块 ≤500 行、文档站结构契约（中英页面一一对应 / 发布笔记标记在场 / 依赖例外登记）
-- 基线 316/316 通过。提交前 `npm test` 必须全绿；不许 `skip`，不许放宽断言迁就失败
+- 基线 318/318 通过。提交前 `npm test` 必须全绿；不许 `skip`，不许放宽断言迁就失败
 - `npm run check` 走真实上游，只在改上游集成时跑（花少量钱）
 - 跑 `npm test` 前确认 18901 无常驻 mock 占用（`pkill -f mock-longcat`）；exec 沙箱会杀后台进程，常驻服务 / mock 用 exec_command 前台会话跑
 
-## 9. 反模式（NEVER）
+## 8. 反模式（NEVER）
 
 - **NEVER** 攒一批改动才提交；**NEVER** 在测试红着时提交
 - **NEVER** 提交 `auroraagent.config.json` / `usage.jsonl` / `providers.json` / `sessions/` / 任何日志
 - **NEVER** 在产品 UI 里加 emoji
 - **NEVER** 在 Bundle 内执行 `npm run app:build`
 - **NEVER** 改动厂商事实层：模型 ID、显示名映射规则、价格常量 `PRICE`、纯色测试结论——除非上游本身变了
-- **NEVER** 修改 `web.mjs` 的 EADDRINUSE 重试逻辑与 plist 日志路径约定（见第 6 节）
+- **NEVER** 修改 `web.mjs` 的 EADDRINUSE 重试逻辑与 plist 日志路径约定（见第 5 节）
 - **NEVER** 触碰 `~/Documents/cc-switch`（其他项目的仓库）
 - **NEVER** 用 `rm -rf` 删目录；用 Node `fs.rmSync` 并二次确认路径
 
-## 10. 验证基线（改动后自查）
+## 9. 验证基线（改动后自查）
 
-- `npm test` → 316/316
+- `npm test` → 318/318
 - `curl -s localhost:8787/api/health` → `{"ok":true,...}`；`/api/settings` → `version` / `managed` / `dataDir` 符合预期
 - 浏览器打开 http://localhost:8787 ：无 emoji、模型选择器按提供方分组、完整 turn（工具卡 / 权限卡 / 用量脚注）正常、设置弹层可开关开机自启
 - 终端 `npm run chat`：`/help`、权限 y/n/a、`/sessions` 切换、`/goal` 状态与预算、`/btw` 侧边对话与 `Ctrl+/` 切换均正常
 - 改了启动 / 打包逻辑：`npm run publish` 后 `launchctl print gui/$(id -u)/com.auroraagent.app` 确认 `state = running`
 
-## 11. 文档同步
+## 10. 文档同步
 
 - 行为发生变化时，同一次提交里更新 `README.md`（人类文档）与本文件（agent 规约）
 - 版本号只改 `package.json` 一处（Info.plist 与 `/api/settings` 都读它）；品牌名 AuroraAgent 仅作品牌与文档名，包名 / Bundle ID / LaunchAgent label / 数据目录约定不变
 - `docs/figures/` 只放 PNG / SVG / PDF + CSV；**TIFF 永不再进仓库**（历史上有过 112MB 教训）
 - 图表脚本 `docs/figure-work/make_figures.py` 本机只能 `py_compile` 验证（环境无 numpy / matplotlib）；图标管线用 `npx sharp-cli`
+
+---
+
+## 11. 提交与推送规约
+
+每完成一个通过测试的小改动，就 `git commit` 并 `git push`：不攒批、不等提醒、不留本地。这是与其他各节平行的普通工作规则；硬红线（不攒批、测试红着不提交、禁提交敏感文件）见第 8 节。
+
+执行顺序：
+
+1. 改代码（一个可独立验证的小改动，例如「修复一个错误映射」「新增一个厂商标识」）
+2. `npm test` 全绿（基线 318 个测试；不绿不提交）
+3. `git add <具体文件>` → `git commit -m "中文描述"` → `git push`
+
+规约：
+
+- 粒度：一次提交只做一件事；大任务拆成多次提交，每次提交后仓库都必须处于可运行、测试全绿的状态
+- 提交信息：中文，一句话说清「改了什么、为什么」，如 `fix(chat): 401 错误映射补充额度不足分支`
+- 身份与远端：`user.name=AuroraAeon` / `user.email=auroraaeon@users.noreply.github.com`；`origin` = https://github.com/AuroraAeon/AuroraAgent（public，master 分支）
+- 凡触及真实上游行为的改动（请求格式、错误映射、模型目录解析、tools 拼装），提交前额外跑一次 `npm run check`
+- 推送失败先诊断（网络 / 权限），不得 `--force` 绕过，不得改写已推送的历史
+- 改了 `web-ui/` 源码必须同步 `npm run build:web` 并提交 `public/app/` 产物（运行时零构建的保证）
