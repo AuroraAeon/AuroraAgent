@@ -7,8 +7,10 @@ import { textOf, systemTextOf, toAnthropicContent, toAnthropicTurns } from '../u
 import { toolSchemas, anthropicToolSchemas, TOOLS } from '../util/agent/tools.mjs';
 import {
   isFailoverable, failoverReason, pickFailoverCandidate, failoverBackoffMs,
-  parseFailoverConfig, FAILOVER_DEFAULTS, FAILOVER_ATTEMPT_LIMITS,
+  parseFailoverConfig, classifyOutcome, semanticFailure, effectiveTimeouts,
+  FAILOVER_DEFAULTS, FAILOVER_ATTEMPT_LIMITS, FAILOVER_TIMEOUT_DEFAULTS, PREF_TTL_DEFAULTS,
 } from '../util/llm/failover.mjs';
+import { CircuitBreaker, CircuitRegistry, normalizeCircuitConfig, CIRCUIT_DEFAULTS } from '../util/llm/circuit.mjs';
 
 export async function runLlmTests(test, assert, eq) {
   console.log('\nLLM 抽象层单元测试');
@@ -201,4 +203,173 @@ export async function runLlmTests(test, assert, eq) {
     parseFailoverConfig({ providerFailover: 'maybe', providerFailoverMaxAttempts: 'x' }, {}, { warn: (m) => { warned += m; } });
     assert(warned.includes('providerFailover') && warned.includes('providerFailoverMaxAttempts'), '坏值应告警');
   });
+  await test('failover: 健康度隔离——请求自身有问题的状态码不转移也不记健康度', () => {
+    for (const status of [400, 405, 406, 413, 414, 415, 422, 501]) {
+      const out = classifyOutcome({ kind: 'bad_request', status });
+      eq(out.failoverable, false, `HTTP ${status} 不应换路`);
+      eq(out.countsHealth, false, `HTTP ${status} 不应污染提供方健康度`);
+    }
+    // 401/402/403/404 维持既有决策不换路：那是这家提供方的配置 / 鉴权 / 计费问题，
+    // 换一家只会掩盖真实错误（AGENTS.md 与 util/llm/failover.mjs 头部的不变式）
+    for (const status of [401, 402, 403, 404]) {
+      eq(classifyOutcome({ kind: 'auth', status }).failoverable, false, `HTTP ${status} 不应换路`);
+      eq(classifyOutcome({ kind: 'auth', status }).countsHealth, false, `HTTP ${status} 不应记健康度`);
+    }
+    // 408 超时 / 429 限流 / 5xx 服务端：换一家可能就好了，且要记健康度
+    for (const status of [408, 429, 500, 503]) {
+      eq(classifyOutcome({ kind: 'x', status }).failoverable, true, `HTTP ${status} 应可换路`);
+      eq(classifyOutcome({ kind: 'x', status }).countsHealth, true, `HTTP ${status} 应记健康度`);
+    }
+    // 409 / 451 等未归类 4xx：不换路也不记健康度（不是可行动的提供方健康信号）
+    for (const status of [409, 451]) {
+      eq(classifyOutcome({ kind: 'x', status }).failoverable, false, `HTTP ${status} 不换路`);
+      eq(classifyOutcome({ kind: 'x', status }).countsHealth, false, `HTTP ${status} 不记健康度`);
+    }
+    eq(classifyOutcome({ kind: 'x', status: 500 }).countsHealth, true, '5xx 应记健康度');
+    eq(classifyOutcome({ kind: 'rate_limit', status: 429 }).countsHealth, true, '限流应记健康度');
+    eq(classifyOutcome({ kind: 'semantic' }).failoverable, true, '2xx 语义失败应可换路');
+    eq(classifyOutcome({ kind: 'timeout' }).failoverable, true, '超时应可换路');
+    eq(classifyOutcome({ kind: 'circuit_open', status: 503 }).failoverable, false, '熔断开闸不转移');
+    eq(classifyOutcome({ kind: 'circuit_open', status: 503 }).countsHealth, false, '熔断开闸不记健康度');
+    const abort = Object.assign(new Error('a'), { name: 'AbortError' });
+    eq(classifyOutcome(abort).countsHealth, false, '客户端中止不算上游故障');
+  });
+
+  await test('failover: 2xx 语义失败判定（200 的错误 envelope 也算失败）', () => {
+    eq(semanticFailure({ error: { message: 'quota exceeded' } }), 'quota exceeded', 'OpenAI 兼容顶层 error');
+    eq(semanticFailure({ type: 'error', error: { message: 'overloaded' } }), 'overloaded', 'Anthropic error 事件');
+    eq(semanticFailure({ type: 'response.failed', response: { error: { message: 'upstream died' } } }), 'upstream died', 'Responses response.failed');
+    eq(semanticFailure({ type: 'response.error', error: { message: 'bad frame' } }), 'bad frame', 'Responses response.error');
+    eq(semanticFailure({ type: 'error' }), '上游返回错误', '缺 message 时给通用话术');
+    eq(semanticFailure({ choices: [{ delta: { content: 'hi' } }] }), null, '正常内容帧不是失败');
+    eq(semanticFailure({ type: 'response.completed', response: { id: 'x' } }), null, '完成事件不是失败');
+    eq(semanticFailure(null), null, '空帧不是失败');
+  });
+
+  await test('failover: 队列优先——非空时只取队列成员且按队列序', () => {
+    const all = [
+      { id: 'builtin', apiKey: 'k', models: [{ id: 'm1' }] },
+      { id: 'p1', apiKey: 'k', models: [{ id: 'm1' }] },
+      { id: 'p2', apiKey: 'k', models: [{ id: 'm1' }] },
+      { id: 'p3', apiKey: 'k', models: [{ id: 'm1' }] },
+    ];
+    eq(pickFailoverCandidate(all, { model: 'm1', currentId: 'builtin', queue: ['p3', 'p1'] }).id, 'p3', '队列序即优先级');
+    eq(pickFailoverCandidate(all, { model: 'm1', currentId: 'builtin', queue: ['p3', 'p1'], tried: ['p3'] }).id, 'p1', '已试过的队列成员跳过');
+    eq(pickFailoverCandidate(all, { model: 'm1', currentId: 'builtin', queue: ['ghost'] }).id, 'p1', '队列成员不可用时回退隐式顺序');
+    eq(pickFailoverCandidate(all, { model: 'm1', currentId: 'builtin', queue: [] }).id, 'p1', '空队列回退隐式顺序');
+    const gated = (id) => id !== 'p1';
+    eq(pickFailoverCandidate(all, { model: 'm1', currentId: 'builtin', queue: ['p1', 'p2'], available: gated }).id, 'p2', '熔断开闸的队列成员被跳过');
+    eq(pickFailoverCandidate(all, { model: 'm1', currentId: 'builtin', available: () => false }), null, '全部熔断时无候选');
+  });
+
+  await test('failover: 生效超时——关闭时归零，开启时按配置（0 = 禁用）', () => {
+    const off = effectiveTimeouts(parseFailoverConfig({ providerFailover: false }, {}));
+    eq(off.firstByteMs, 0, '关闭转移时首包超时归零');
+    eq(off.idleMs, 0, '关闭转移时空闲超时归零');
+    eq(off.nonStreamMs, 0, '关闭转移时连接期超时归零');
+    const on = effectiveTimeouts(parseFailoverConfig({}, {}));
+    eq(on.firstByteMs, FAILOVER_TIMEOUT_DEFAULTS.firstByteMs, '缺省对齐 CC Switch 现值');
+    eq(on.idleMs, FAILOVER_TIMEOUT_DEFAULTS.idleMs);
+    eq(on.nonStreamMs, FAILOVER_TIMEOUT_DEFAULTS.nonStreamMs);
+    const zeroed = effectiveTimeouts(parseFailoverConfig({ failover: { firstByteMs: 0, idleMs: 0, nonStreamMs: 0 } }, {}));
+    eq(zeroed.firstByteMs, 0, '0 = 禁用');
+  });
+
+  await test('failover: 配置解析补齐超时三件套 / 熔断五项 / 偏好有效期', () => {
+    const d = parseFailoverConfig({}, {});
+    eq(d.firstByteMs, 60_000, '首包缺省 60s');
+    eq(d.idleMs, 120_000, '空闲缺省 120s');
+    eq(d.nonStreamMs, 600_000, '连接期缺省 600s');
+    eq(d.circuit.failureThreshold, CIRCUIT_DEFAULTS.failureThreshold, '熔断缺省对齐 CC Switch');
+    eq(d.prefTtlHours, PREF_TTL_DEFAULTS.hours, '偏好有效期缺省 24h');
+    const custom = parseFailoverConfig({ failover: { firstByteMs: 0, idleMs: 99999999, circuit: { failureThreshold: 999, errorRateThreshold: 0 } } }, {});
+    eq(custom.firstByteMs, 0, '0 超时被保留');
+    eq(custom.idleMs, 3_600_000, '超上限的超时被钳制');
+    eq(custom.circuit.failureThreshold, 100, '熔断阈值钳制');
+    eq(custom.circuit.errorRateThreshold, 0.1, '错误率下限 0.1');
+    eq(parseFailoverConfig({ failover: 'nope' }, {}).idleMs, 120_000, 'failover 段坏值回退缺省');
+    eq(parseFailoverConfig({ failover: { prefTtlHours: 0 } }, {}).prefTtlHours, 1, '偏好有效期下限 1 小时');
+  });
+
+  await test('circuit: 连续失败达阈值开闸，超时后半开探测，成功闭合', () => {
+    let now = 1_000_000;
+    const b = new CircuitBreaker({ failureThreshold: 3, successThreshold: 2, timeoutSeconds: 60 }, () => now);
+    eq(b.isAvailable(), true, '初始闭合放行');
+    b.recordFailure();
+    b.recordFailure();
+    eq(b.state, 'closed', '未达阈值仍闭合');
+    b.recordFailure();
+    eq(b.state, 'open', '连续失败达阈值开闸');
+    eq(b.isAvailable(), false, '开闸期间不可用');
+    eq(b.allowRequest().allowed, false, '开闸期间拒绝请求');
+    now += 59_000;
+    eq(b.isAvailable(), false, '未到超时仍拒绝');
+    now += 2_000;
+    eq(b.isAvailable(), true, '超时到达翻半开');
+    const p1 = b.allowRequest();
+    eq(p1.allowed && p1.usedHalfOpenPermit, true, '半开放行一次探测并占名额');
+    eq(b.allowRequest().allowed, false, '半开只放行一次探测');
+    b.recordFailure(p1.usedHalfOpenPermit);
+    eq(b.state, 'open', '半开探测失败立即重开');
+    now += 61_000;
+    const p2 = b.allowRequest();
+    b.recordSuccess(p2.usedHalfOpenPermit);
+    eq(b.state, 'half_open', '一次成功未达阈值不闭合');
+    const p3 = b.allowRequest();
+    b.recordSuccess(p3.usedHalfOpenPermit);
+    eq(b.state, 'closed', '成功累计达阈值闭合');
+    eq(b.stats().totalRequests, 0, '闭合时计数归零');
+  });
+
+  await test('circuit: 半开探测失败立即重开，名额释放后可再次探测', () => {
+    let now = 0;
+    const b = new CircuitBreaker({ failureThreshold: 1, successThreshold: 1, timeoutSeconds: 1 }, () => now);
+    b.recordFailure();
+    eq(b.state, 'open', '一次失败即开闸');
+    now += 1_001;
+    const p = b.allowRequest();
+    eq(p.allowed, true, '半开放行探测');
+    b.releasePermit(p.usedHalfOpenPermit); // 中性释放：结果不计健康度
+    const again = b.allowRequest();
+    eq(again.allowed, true, '名额已释放，可再次探测');
+    eq(b.stats().failedRequests, 1, '中性释放不计失败');
+  });
+
+  await test('circuit: 错误率判据——请求数未达标不跳闸，达标且超阈值跳闸', () => {
+    let now = 0;
+    const b = new CircuitBreaker({ failureThreshold: 100, errorRateThreshold: 0.6, minRequests: 5 }, () => now);
+    for (let i = 0; i < 4; i++) b.recordFailure();
+    eq(b.state, 'closed', '请求数未达 minRequests 不跳闸');
+    b.recordSuccess();
+    eq(b.state, 'closed', '错误率 4/5 = 0.8 达阈值但连续失败数未达，仍看错误率');
+    const b2 = new CircuitBreaker({ failureThreshold: 100, errorRateThreshold: 0.6, minRequests: 5 }, () => now);
+    for (let i = 0; i < 3; i++) b2.recordFailure();
+    for (let i = 0; i < 3; i++) b2.recordSuccess();
+    eq(b2.state, 'closed', '错误率 3/6 = 0.5 未达阈值');
+    b2.recordFailure();
+    b2.recordFailure();
+    eq(b2.state, 'open', '错误率 5/8 = 0.625 超阈值跳闸');
+  });
+
+  await test('circuit: 注册表按 id 托管、快照往返、坏快照容错', () => {
+    let now = 500;
+    const reg = new CircuitRegistry({ config: { failureThreshold: 1 }, now: () => now });
+    reg.recordFailure('p1', false, 'boom');
+    eq(reg.isAvailable('p1'), false, 'p1 已熔断');
+    eq(reg.isAvailable('p2'), true, 'p2 不受影响');
+    const snap = reg.snapshot();
+    eq(snap.p1.state, 'open');
+    eq(snap.p1.lastError, 'boom');
+    const restored = new CircuitRegistry({ config: { failureThreshold: 1 }, now: () => now }).restore({ p1: { state: 'open', openedAt: now, totalRequests: 9, failedRequests: 4, lastError: 'x' }, p2: 'garbage' });
+    eq(restored.isAvailable('p1'), false, 'open 状态被恢复');
+    eq(restored.health(['p1', 'p2'])[0].totalRequests, 9, '计数器被恢复');
+    eq(restored.health(['p2'])[0].state, 'closed', '坏快照静默忽略');
+    reg.reset('p1');
+    eq(reg.isAvailable('p1'), true, '手动重置后恢复');
+    eq(reg.health(['p1'])[0].lastError, '', '重置清空最后错误');
+    reg.updateConfig({ failureThreshold: 9 });
+    eq(reg.get('p1').config.failureThreshold, 9, '配置热更新生效');
+    eq(normalizeCircuitConfig({ failureThreshold: 'x' }).failureThreshold, CIRCUIT_DEFAULTS.failureThreshold, '坏配置回退缺省');
+  });
 }
+

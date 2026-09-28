@@ -13,6 +13,8 @@ import { applyUserGoalAction, setUserGoalObjective, clearUserGoal } from './goal
 import { parseGoalCommand, formatGoalSummary, GOAL_COMMAND_HELP } from './goal/command.mjs';
 import { UsageLedger } from '../usage.mjs';
 import { ProviderStore } from '../providers.mjs';
+import { FailoverState } from '../llm/failover-state.mjs';
+import { parseFailoverConfig, effectiveTimeouts } from '../llm/failover.mjs';
 import { HARNESSES, getHarness } from './harness.mjs';
 import { loadConfig, saveConfig, PRICE, resolveDataDir, experimentalEnabled, TITLE_MODES } from '../config.mjs';
 import { McpRegistry } from '../mcp/registry.mjs';
@@ -66,9 +68,20 @@ export async function runTerminal({ argv = [] } = {}) {
   const store = new SessionStore(dataDir);
   const goals = new GoalStore(dataDir);
   const usage = new UsageLedger(dataDir);
+  // 故障转移运行时状态（熔断快照 + 热切换偏好）：与网页共用同一份 <数据目录>/failover-state.json，
+  // 两个客户端因此共享「哪家不健康」的跨请求记忆
+  const failoverState = new FailoverState(dataDir, {
+    warn: (m, e) => console.error(painter().warning(`${m}${e && e.error ? `（${e.error}）` : ''}`)),
+    config: { circuit: parseFailoverConfig(cfg, {}).circuit },
+    prefTtlMs: parseFailoverConfig(cfg, {}).prefTtlHours * 3600_000,
+  }).load();
+  const failoverTimeouts = () => effectiveTimeouts(parseFailoverConfig(loadConfig(), {}));
   const providers = new ProviderStore(dataDir, {
     baseUrl: BASE, pathPrefix: '/openai/v1', apiKey: () => cfg.apiKey, model: () => cfg.model,
-  }, () => []);
+  }, () => [], {
+    prefFor: (m) => failoverState.prefFor(m),
+    failoverEnabled: () => loadConfig().providerFailover !== false,
+  });
 
   // MCP 注册表（实验特性门控）：启用时后台连接并发现工具，/mcp 查看状态
   const mcp = experimentalEnabled('MCP') ? new McpRegistry({ dataDir }) : null;
@@ -422,6 +435,7 @@ export async function runTerminal({ argv = [] } = {}) {
       // 故障转移与网页同源：候选=全部提供方（同模型 / 有 Key 过滤在 llm/failover.mjs）
       failoverCandidates: () => providers.all(),
       providerFailover: cfg.providerFailover, providerFailoverMaxAttempts: cfg.providerFailoverMaxAttempts,
+      failoverState, failoverTimeouts: failoverTimeouts(), failoverQueue: () => providers.failoverQueueIds(),
       onUsage: (u) => { foot.tokens = (u.inputTokens || 0) + (u.outputTokens || 0); foot.cost = u.cost; },
       onSession: (m) => { if (side) btw.meta = m; else meta = m; },
     });

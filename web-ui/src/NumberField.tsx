@@ -15,9 +15,11 @@ type Props = {
   ariaLabel: string;
   /** 触发器宽度（ZCode 字号行 w-28 = 112px） */
   width?: number;
+  /** 右对齐单位后缀（缺省 px；毫秒级超时项传 'ms'） */
+  suffix?: string;
 };
 
-export function NumberField({ value, min, max, onChange, ariaLabel, width = 112 }: Props) {
+export function NumberField({ value, min, max, onChange, ariaLabel, width = 112, suffix = 'px' }: Props) {
   const [draft, setDraft] = useState(String(value));
   useEffect(() => { setDraft(String(value)); }, [value]);
 
@@ -46,7 +48,7 @@ export function NumberField({ value, min, max, onChange, ariaLabel, width = 112 
           else if (e.key === 'Escape') { e.preventDefault(); setDraft(String(value)); }
         }}
       />
-      <span className="nf-suffix" aria-hidden="true">px</span>
+      <span className="nf-suffix" aria-hidden="true">{suffix}</span>
     </div>
   );
 }

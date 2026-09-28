@@ -9,7 +9,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { openChatStream } from '../llm/provider.mjs';
-import { consumeAgentStream } from '../stream.mjs';
+import { consumeAgentStream, primeUpstreamStream } from '../stream.mjs';
 import { resolveTool, toolResource } from './tools.mjs';
 import { PermissionPolicy, defaultRules } from './policy.mjs';
 import { createSpawner } from './swarm.mjs';
@@ -19,7 +19,7 @@ import { DEFAULT_SESSION_NAME } from './session.mjs';
 import { DEFAULT_TITLE_MODE } from '../config.mjs';
 import { PLAN_MAX_ROUNDS, PLAN_MODE_PROMPT, planExecutionNote, planToolNames } from './plan.mjs';
 import { assembleMessages, needsCompaction, planCompaction, compactionMessages, contextWindowOf } from './context.mjs';
-import { FAILOVER_DEFAULTS } from '../llm/failover.mjs';
+import { FAILOVER_DEFAULTS, semanticFailure } from '../llm/failover.mjs';
 import { createGoalRuntime } from './goal/runtime.mjs';
 import { GOAL_WRAPUP_NOTE } from './goal/continuation.mjs';
 
@@ -54,6 +54,9 @@ export async function runAgentTurn(ctx) {
     agentProxy = '', goalStore = null, goalCfg = null, log = () => {},
     // 多提供方故障转移：candidates 由 HTTP 面按模型目录注入（直连 Loop 的旧调用方不传即不转移）
     providerFailover = true, providerFailoverMaxAttempts = FAILOVER_DEFAULTS.maxAttempts, failoverCandidates = null,
+    // 熔断器 + 生效超时 + 队列：都由 HTTP 面按配置算好后注入（failover-state.mjs / failover.mjs），
+    // Loop 只负责在 onSwitch 里写热切换偏好，不自己读配置
+    failoverState = null, failoverTimeouts = null, failoverQueue = null,
   } = ctx;
   const sessionId = session.id;
   const turnId = randomUUID();
@@ -72,13 +75,27 @@ export async function runAgentTurn(ctx) {
   });
   // 故障转移接线（判定与配置见 llm/failover.mjs）：只在流尚未打开时换路，
   // 已产出字节后的失败按既有行为传播（客户端已收到部分内容，不能透明换路）
+  const failoverEnabled = providerFailover !== false && typeof failoverCandidates === 'function';
+  // 预读（primeUpstreamStream）：把「200 的错误 envelope」与「首包超时」变成连接期错误，
+  // 从而在还没向客户端写出任何字节前换路。仅在故障转移开启时启用——关闭就得保持老行为。
+  const primeUpstream = async (reader, translate, signal) => primeUpstreamStream(reader, {
+    firstByteMs: failoverTimeouts?.firstByteMs || 0,
+    detectFailure: failoverEnabled ? semanticFailure : null,
+    signal,
+  });
   const failoverIo = () => ({
+    ...(failoverEnabled && failoverState ? { circuit: failoverState.circuits } : {}),
+    ...(failoverEnabled && failoverTimeouts ? { timeouts: failoverTimeouts, nonStreamMs: failoverTimeouts.nonStreamMs } : {}),
+    ...(failoverEnabled ? { prime: primeUpstream } : {}),
     failover: {
-      enabled: providerFailover !== false && typeof failoverCandidates === 'function',
+      enabled: failoverEnabled,
       maxAttempts: providerFailoverMaxAttempts,
+      queue: failoverQueue ? failoverQueue() : [],
       candidates: (cur) => failoverCandidates(cur),
       onSwitch: ({ from, to, reason, attempt }) => {
         activeProvider = to;
+        // 热切换偏好：下次同一模型直接优先找这家（TTL 内有效，见 failover-state.mjs）
+        failoverState?.setPref(model, to.id);
         log('warn', '上游暂不可用，已切换提供方重试', { from: from.id, to: to.id, reason, attempt, sessionId });
         emit('provider_switched', { sessionId, turnId, from: from.id, fromName: from.name, to: to.id, toName: to.name, reason, attempt, round });
       },
@@ -183,7 +200,7 @@ export async function runAgentTurn(ctx) {
     try {
       const opened = await openChatStream(activeProvider, { model, messages: compactionMessages(plan.head), maxTokens: 1024 }, { signal: controller.signal, ...failoverIo() });
       let summary = '';
-      await consumeAgentStream(opened.reader, { controller, usage: null }, { onText: (t) => { summary += t; } }, { translate: opened.translate });
+      await consumeAgentStream(opened.reader, { controller, usage: null }, { onText: (t) => { summary += t; } }, { translate: opened.translate, idleMs: failoverTimeouts?.idleMs || 0 });
       if (!summary.trim()) throw new Error('压缩结果为空');
       store.replaceRecords(sessionId, [{ t: 'summary', text: summary.trim() }, ...plan.tail]);
       records = store.records(sessionId);
@@ -245,11 +262,21 @@ export async function runAgentTurn(ctx) {
     currentEntry = { controller, usage: null };
     let roundText = '';
     let roundThink = '';
-    const { toolCalls } = await consumeAgentStream(opened.reader, currentEntry, {
-      onText: (t) => { roundText += t; emit('text_chunk', { sessionId, turnId, text: t }); },
-      onThinking: (t) => { roundThink += t; emit('thinking_chunk', { sessionId, turnId, text: t }); },
-      onToolCallDelta: (i, cur) => emit('tool_event', { sessionId, turnId, phase: 'params_partial', toolId: cur.id || `call_${i}`, toolName: cur.name, params: cur.args }),
-    }, { translate: opened.translate });
+    let consumed;
+    try {
+      consumed = await consumeAgentStream(opened.reader, currentEntry, {
+        onText: (t) => { roundText += t; emit('text_chunk', { sessionId, turnId, text: t }); },
+        onThinking: (t) => { roundThink += t; emit('thinking_chunk', { sessionId, turnId, text: t }); },
+        onToolCallDelta: (i, cur) => emit('tool_event', { sessionId, turnId, phase: 'params_partial', toolId: cur.id || `call_${i}`, toolName: cur.name, params: cur.args }),
+      }, { translate: opened.translate, idleMs: failoverTimeouts?.idleMs || 0 });
+    } catch (e) {
+      // 流已开始后的失败（空闲超时 / 连接中断）：已产出部分内容，不能透明换路，按 turn 失败收尾
+      if (controller.signal.aborted || e?.name === 'AbortError') throw e;
+      log('warn', '上游流式中断', { kind: e.kind, error: String(e), provider: activeProvider.id, sessionId });
+      emit('turn_failed', { sessionId, turnId, error: e.message, round });
+      return { failed: true };
+    }
+    const { toolCalls } = consumed;
     if (roundThink) store.append(sessionId, { t: 'thinking', text: roundThink });
     if (roundText) {
       store.append(sessionId, { t: 'assistant', text: roundText });

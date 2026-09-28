@@ -2894,11 +2894,22 @@ await test('代码高亮源码契约：Markdown 代码块接入零依赖高亮�
     assert(rec, 'usage 账本没有记录被停止的请求');
     eq(rec.stopped, true);
   });
-  await test('网络层失败时连接期自动重试并成功', async () => {
+  // 故障转移开启时每提供方只试一次（网络抖动直接换路，别在同一家上耗 3 次退避）；
+  // 关闭故障转移时才沿用历史语义：同提供方内重试 3 次。两条路径各自有用例守住。
+  await test('关闭故障转移时网络层失败仍在同提供方内自动重试', async () => {
+    const off = await (await fetch(`${BASE}/api/settings/failover`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ providerFailover: false }),
+    })).json();
+    eq(off.providerFailover, false, '关闭故障转移失败');
     const before = mock.state.requests.length;
     const s = await readStream(await chat({ messages: [{ role: 'user', content: 'FLAKY 网络抖动一下' }] }));
     assert(s.raw.includes('LongCat-2.5-Preview'), '重试后仍未拿到回答');
     assert(mock.state.requests.length >= before + 2, '没有发生连接期重试');
+    await (await fetch(`${BASE}/api/settings/failover`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ providerFailover: true, providerFailoverMaxAttempts: 3 }),
+    })).json();
   });
   // ---------- 自定义 Provider（e2e） ----------
   const MOCK_ORIGIN = `http://127.0.0.1:${MOCK_PORT}`;
@@ -3211,6 +3222,157 @@ async function drainAgentStream(stream, { until, onEvent } = {}) {
     assert(row, '速测账本应归属切换后的提供方');
     await deleteProvider('fo-e');
     await deleteProvider('fo-f');
+  });
+  await test('/api/chat：HTTP 200 的错误 envelope 也触发故障转移', async () => {
+    // 非 SSE 的 200 JSON 错误体
+    await createFailoverProvider('fo-env', 'ak-envelope');
+    await createFailoverProvider('fo-env-ok', 'ak-ok');
+    const s = await readStream(await chat({ messages: [{ role: 'user', content: ' envelope 试探' }], provider: 'fo-env', model: 'shared-model' }));
+    assert(s.raw.includes('shared-model'), '200 错误 envelope 应换路后拿到正常回答');
+    // SSE 形状的 200 错误帧
+    await createFailoverProvider('fo-env-sse', 'ak-envelope-sse');
+    const s2 = await readStream(await chat({ messages: [{ role: 'user', content: 'envelope sse 试探' }], provider: 'fo-env-sse', model: 'shared-model' }));
+    assert(s2.raw.includes('shared-model'), 'SSE 错误帧也应换路后拿到正常回答');
+    assert(!s2.raw.includes('gateway rejected'), '错误 envelope 不应透传给用户');
+    for (const id of ['fo-env', 'fo-env-ok', 'fo-env-sse']) await deleteProvider(id);
+  });
+  await test('/api/chat：首包超时把挂起的上游变成可换路错误', async () => {
+    const cfg = await (await fetch(`${BASE}/api/settings/failover`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ failover: { firstByteMs: 400 } }),
+    })).json();
+    eq(cfg.failover.firstByteMs, 400, '首包超时应落盘');
+    await createFailoverProvider('fo-hang', 'ak-hang');
+    await createFailoverProvider('fo-hang-ok', 'ak-ok');
+    const t0 = Date.now();
+    const s = await readStream(await chat({ messages: [{ role: 'user', content: 'hang 试探' }], provider: 'fo-hang', model: 'shared-model' }));
+    assert(s.raw.includes('shared-model'), '首包挂起应换路后拿到正常回答');
+    assert(Date.now() - t0 < 5000, '首包超时后应尽快换路，而不是干等默认 60s');
+    await (await fetch(`${BASE}/api/settings/failover`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ failover: { firstByteMs: 60000 } }),
+    })).json();
+    for (const id of ['fo-hang', 'fo-hang-ok']) await deleteProvider(id);
+  });
+  await test('熔断器：连续失败达阈值后直接跳过该提供方，重置后恢复', async () => {
+    const cfg = await (await fetch(`${BASE}/api/settings/failover`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ failover: { circuit: { failureThreshold: 2 } } }),
+    })).json();
+    eq(cfg.failover.circuit.failureThreshold, 2, '熔断阈值应落盘并热更新');
+    await createFailoverProvider('cb-a', 'ak-fail');
+    await createFailoverProvider('cb-b', 'ak-fail');
+    for (let i = 0; i < 2; i++) {
+      const s = await createAgentSession({ name: `熔断会话${i}`, provider: 'cb-a', model: 'shared-model' });
+      const resp = await fetch(`${AGENT}/turn`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: s.id, input: '踩一次' }),
+      });
+      await drainAgentStream(openAgentStream(resp));
+    }
+    const health = (await (await fetch(`${BASE}/api/settings/failover`)).json()).health;
+    eq(health.find((h) => h.providerId === 'cb-a')?.state, 'open', '连续失败 2 次后应开闸');
+    eq(health.find((h) => h.providerId === 'cb-b')?.state, 'open', '备选提供方同样开闸');
+    // 全熔断时连请求都不该发：换过去也只是再撞一次同样的 429
+    const before = mock.state.requests.length;
+    const s3 = await createAgentSession({ name: '熔断会话三', provider: 'cb-a', model: 'shared-model' });
+    const third = await fetch(`${AGENT}/turn`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: s3.id, input: '再踩一次' }),
+    });
+    const events3 = await drainAgentStream(openAgentStream(third));
+    const failed = events3.find((e) => e.type === 'turn_failed');
+    assert(failed && failed.error.includes('熔断'), '全部候选熔断时应报熔断，而不是再打一遍上游');
+    eq(mock.state.requests.length, before, '熔断期间不应再向上游发请求');
+    const reset = await (await fetch(`${BASE}/api/settings/failover/reset`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+    })).json();
+    eq(reset.ok, true, '重置应成功');
+    eq(reset.health.filter((h) => h.state === 'open').length, 0, '重置后不应有 open 状态');
+    // 还原缺省阈值，避免影响后续用例
+    await (await fetch(`${BASE}/api/settings/failover`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ failover: { circuit: { failureThreshold: 4 } } }),
+    })).json();
+    for (const id of ['cb-a', 'cb-b']) await deleteProvider(id);
+  });
+  await test('故障转移队列：读写、顺序即优先级、删除提供方自动清出', async () => {
+    await createFailoverProvider('q-a', 'ak-ok');
+    await createFailoverProvider('q-b', 'ak-fail');
+    await createFailoverProvider('q-c', 'ak-ok');
+    const empty = await (await fetch(`${BASE}/api/providers/failover-queue`)).json();
+    eq(empty.queue.length, 0, '初始队列为空');
+    const set = await (await fetch(`${BASE}/api/providers/failover-queue`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ queue: ['longcat', 'q-c', 'q-a'] }),
+    })).json();
+    eq(set.queue.join(','), 'longcat,q-c,q-a', '整队列替换应保持给定顺序');
+    const bad = await (await fetch(`${BASE}/api/providers/failover-queue`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ queue: ['ghost'] }),
+    })).json();
+    eq(bad.ok, false, '未知提供方 ID 应被拒绝');
+    const moved = await (await fetch(`${BASE}/api/providers/failover-queue`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ move: { id: 'q-a', delta: -1 } }),
+    })).json();
+    eq(moved.queue.join(','), 'longcat,q-a,q-c', '上移一位');
+    const added = await (await fetch(`${BASE}/api/providers/failover-queue`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ add: 'q-b' }),
+    })).json();
+    eq(added.queue.join(','), 'longcat,q-a,q-c,q-b', '入队追加到末尾');
+    // 队列顺序即优先级：主提供方 429，队列第一位 longcat 不含该模型，第二位 q-a 顶上
+    const s = await createAgentSession({ name: '队列会话', provider: 'q-b', model: 'shared-model' });
+    const resp = await fetch(`${AGENT}/turn`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: s.id, input: '队列转移' }),
+    });
+    const events = await drainAgentStream(openAgentStream(resp));
+    const switched = events.find((e) => e.type === 'provider_switched');
+    assert(switched, '应按队列转移');
+    eq(switched.to, 'q-a', '队列序决定转移目标');
+    await deleteProvider('q-a');
+    const afterDel = await (await fetch(`${BASE}/api/providers/failover-queue`)).json();
+    eq(afterDel.queue.includes('q-a'), false, '删除提供方应同步清出队列');
+    await (await fetch(`${BASE}/api/providers/failover-queue`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ queue: [] }),
+    })).json();
+    for (const id of ['q-b', 'q-c']) await deleteProvider(id);
+  });
+  await test('热切换偏好：转移成功后同模型优先走新提供方', async () => {
+    await createFailoverProvider('pf-a', 'ak-fail');
+    await createFailoverProvider('pf-b', 'ak-ok');
+    // 不显式指定提供方：按创建顺序落到 pf-a（隐含顺序 = 内置在前 + 自定义按创建序）
+    const s = await createAgentSession({ name: '偏好会话', model: 'shared-model' });
+    const first = await fetch(`${AGENT}/turn`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: s.id, input: '第一次' }),
+    });
+    const events = await drainAgentStream(openAgentStream(first));
+    assert(events.find((e) => e.type === 'provider_switched'), '首次应发生转移');
+    // 第二个会话在偏好写入之后创建：直接解析到 pf-b，不再需要转移
+    const s2 = await createAgentSession({ name: '偏好会话二', model: 'shared-model' });
+    eq(s2.provider, 'pf-b', '热切换偏好应让新会话直接解析到可用的提供方');
+    const second = await fetch(`${AGENT}/turn`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: s2.id, input: '第二次' }),
+    });
+    const events2 = await drainAgentStream(openAgentStream(second));
+    eq(events2.filter((e) => e.type === 'provider_switched').length, 0, '偏好生效后不应再转移');
+    assert(events2.find((e) => e.type === 'turn_completed'), '偏好路径应正常跑完');
+    // 重置清空偏好：再发起一次又回到从 pf-a 出发（于是再次转移）
+    await (await fetch(`${BASE}/api/settings/failover/reset`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+    })).json();
+    const s3 = await createAgentSession({ name: '偏好会话三', model: 'shared-model' });
+    const third = await fetch(`${AGENT}/turn`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: s3.id, input: '第三次' }),
+    });
+    const events3 = await drainAgentStream(openAgentStream(third));
+    assert(events3.find((e) => e.type === 'provider_switched'), '重置偏好后应重新转移');
+    for (const id of ['pf-a', 'pf-b']) await deleteProvider(id);
   });
   await test('不可转移错误（401）不触发故障转移，原样透传', async () => {
     await createFailoverProvider('fo-g', 'ak-401-a');

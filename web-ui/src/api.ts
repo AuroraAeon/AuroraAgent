@@ -1,5 +1,5 @@
 /** API 客户端：全部走 web.mjs 的同源 /api/*；turn 用 fetch 读 SSE（EventSource 不支持 POST） */
-import type { AgentEvent, ErrorLogEntry, GoalState, UpdateInfo, Harness, McpServerRow, ModelInfo, ProviderRow, SessionMeta, SessionRecord, SettingsInfo, SkillRow, TuiSettings, UsageSummary, WorkspaceInfo } from './types';
+import type { AgentEvent, ErrorLogEntry, FailoverQueue, FailoverSettings, GoalState, UpdateInfo, Harness, McpServerRow, ModelInfo, ProviderRow, SessionMeta, SessionRecord, SettingsInfo, SkillRow, TuiSettings, UsageSummary, WorkspaceInfo } from './types';
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(path, {
@@ -46,9 +46,20 @@ export const saveGeneration = (body: { temperature?: number; maxTokens?: number 
 export const getKeyState = () => api<{ ok: boolean; hasKey: boolean }>('/api/settings/key');
 export const saveApiKey = (apiKey: string) =>
   api<{ ok: boolean; hasKey: boolean }>('/api/settings/key', { method: 'POST', body: JSON.stringify({ apiKey }) });
-export const getFailoverSettings = () => api<{ ok: boolean; providerFailover: boolean; providerFailoverMaxAttempts: number }>('/api/settings/failover');
-export const saveFailoverSettings = (body: { providerFailover?: boolean; providerFailoverMaxAttempts?: number }) =>
-  api<{ ok: boolean; providerFailover: boolean; providerFailoverMaxAttempts: number }>('/api/settings/failover', { method: 'POST', body: JSON.stringify(body) });
+/** 故障转移设置 + 熔断健康视图 + 当前队列（设置页「故障转移」面板一次拉全） */
+export const getFailoverSettings = () => api<FailoverSettings>('/api/settings/failover');
+export const saveFailoverSettings = (body: {
+  providerFailover?: boolean; providerFailoverMaxAttempts?: number;
+  failover?: { firstByteMs?: number; idleMs?: number; nonStreamMs?: number; prefTtlHours?: number; circuit?: Record<string, number> };
+}) => api<FailoverSettings>('/api/settings/failover', { method: 'POST', body: JSON.stringify(body) });
+/** 手动恢复：providerId 缺省重置全部熔断器并清空热切换偏好 */
+export const resetFailoverState = (providerId?: string) =>
+  api<{ ok: boolean; health: FailoverSettings['health'] }>('/api/settings/failover/reset', { method: 'POST', body: JSON.stringify(providerId ? { providerId } : {}) });
+/** 故障转移队列（用户编排的优先级）：读队列 + 提供方列表 */
+export const getFailoverQueue = () => api<FailoverQueue>('/api/providers/failover-queue');
+/** 写队列：整队列替换（queue）/ 追加（add）/ 移除（remove）/ 上移下移（move.delta） */
+export const saveFailoverQueue = (body: { queue?: string[]; add?: string; remove?: string; move?: { id: string; delta: number } }) =>
+  api<FailoverQueue>('/api/providers/failover-queue', { method: 'POST', body: JSON.stringify(body) });
 export const getTuiSettings = () => api<TuiSettings>('/api/settings/tui');
 export const saveTuiSettings = (body: { terminalTitle?: string[]; notifications?: { when?: string; method?: string; events?: string[] } }) =>
   api<{ ok: boolean; tui: TuiSettings['tui'] }>('/api/settings/tui', { method: 'POST', body: JSON.stringify(body) });

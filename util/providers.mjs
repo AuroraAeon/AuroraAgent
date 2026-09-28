@@ -2,6 +2,8 @@
  * 自定义 Provider 存储（结构借鉴 dsh 的 llm-pi-ai 路由目录）：
  * 每个 Provider 自带端点、线路协议、API Key 与模型目录，代码不硬编码任何厂商清单。
  * 数据落 <数据目录>/providers.json（含 Key，已在 .gitignore），写盘先落临时文件再原子替换。
+ * 顶层 failoverQueue 是用户编排的故障转移优先级（P1 → Pn，可含内置提供方）：
+ * 与 llm/failover-state.mjs 的运行时观测（熔断 / 热切换偏好）分工，互不覆盖。
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -201,8 +203,18 @@ function normalizeStored(raw) {
  * 内置提供方由 env / 配置派生，排在最前且只读，保证既有行为不变。
  */
 export class ProviderStore {
-  constructor(dataDir, builtin = {}, builtinModels = () => []) {
+  /**
+   * @param dataDir 数据目录
+   * @param builtin  内置提供方合成参数（env / 配置派生）
+   * @param builtinModels 内置模型目录（上游结果注入）
+   * @param deps { prefFor(modelId) => providerId|null, failoverEnabled() => boolean }
+   *             故障转移依赖：偏好来自 llm/failover-state.mjs（转移成功后写入），
+   *             这里只读不写，避免 providers.mjs 反向依赖 llm 层
+   */
+  constructor(dataDir, builtin = {}, builtinModels = () => [], deps = {}) {
     this.path = join(dataDir, 'providers.json');
+    this.deps = deps && typeof deps === 'object' ? deps : {};
+    this.failoverQueue = [];
     this.builtin = {
       id: BUILTIN_ID,
       name: builtin.name || '美团 LongCat',
@@ -218,15 +230,19 @@ export class ProviderStore {
 
   #load() {
     this.custom = [];
+    this.failoverQueue = [];
     try {
       const j = JSON.parse(readFileSync(this.path, 'utf8'));
       const list = Array.isArray(j.providers) ? j.providers : [];
       this.custom = list.map(normalizeStored).filter(Boolean);
+      if (Array.isArray(j.failoverQueue)) {
+        this.failoverQueue = j.failoverQueue.map((id) => String(id || '').trim()).filter(Boolean);
+      }
     } catch { this.custom = []; }
   }
 
   #save() {
-    const payload = JSON.stringify({ version: 1, providers: this.custom }, null, 2);
+    const payload = JSON.stringify({ version: 1, providers: this.custom, failoverQueue: this.failoverQueue }, null, 2);
     const tmp = `${this.path}.tmp`;
     try {
       mkdirSync(join(this.path, '..'), { recursive: true });
@@ -273,6 +289,8 @@ export class ProviderStore {
       thinking: Boolean(p.thinking),
       maxTokens: p.maxTokens || null,
       models: p.models.map((m) => ({ ...m })),
+      // 队列位置（-1 = 不在队列）：设置页「故障转移队列」区据此渲染顺序与加入 / 移除态
+      failoverIndex: this.failoverQueue.indexOf(p.id),
     }));
   }
 
@@ -283,13 +301,74 @@ export class ProviderStore {
     return found ? { ...found, builtin: false } : null;
   }
 
-  /** 按模型 ID 反查提供方；找不到回退到内置（保持既有默认行为） */
+  /** 按模型 ID 反查提供方；找不到回退到内置（保持既有默认行为）。
+   *  热切换偏好优先：上次真正接通过该模型的提供方排在最前（仅故障转移开启时生效），
+   *  偏好提供方已不可用（删了 / 没 Key / 不含该模型）时静默回退默认顺序 */
   providerForModel(modelId) {
     const key = String(modelId || '');
     if (key) {
+      if (this.deps.failoverEnabled?.() !== false) {
+        const preferred = this.deps.prefFor?.(key);
+        if (preferred) {
+          const hit = this.get(preferred);
+          if (hit && hit.apiKey && Array.isArray(hit.models) && hit.models.some((m) => m.id === key)) return hit;
+        }
+      }
       for (const p of this.all()) if (p.models.some((m) => m.id === key)) return p;
     }
     return this.builtinProvider();
+  }
+
+  /** 故障转移队列（用户编排的优先级顺序，可含内置提供方）；返回副本防外部改坏内部态 */
+  failoverQueueIds() {
+    return [...this.failoverQueue];
+  }
+
+  /** 整队列替换（设置页拖拽 / 上移下移后一次性提交）；校验 id 必须存在 */
+  setFailoverQueue(ids) {
+    const known = new Set(this.all().map((p) => p.id));
+    const next = [];
+    for (const raw of Array.isArray(ids) ? ids : []) {
+      const id = String(raw || '').trim();
+      if (!known.has(id) || next.includes(id)) throw new ProviderError(`提供方不存在：${id || '(空)'}`, 'queue');
+      next.push(id);
+    }
+    this.failoverQueue = next;
+    this.#save();
+    return this.failoverQueueIds();
+  }
+
+  /** 入队（追加到末尾）；已在队列里则保持原位不动 */
+  addToFailoverQueue(id) {
+    const key = String(id || '').trim();
+    if (!this.all().some((p) => p.id === key)) throw new ProviderError('提供方不存在', 'queue');
+    if (this.failoverQueue.includes(key)) return this.failoverQueueIds();
+    this.failoverQueue.push(key);
+    this.#save();
+    return this.failoverQueueIds();
+  }
+
+  removeFromFailoverQueue(id) {
+    const key = String(id || '').trim();
+    const idx = this.failoverQueue.indexOf(key);
+    if (idx < 0) return this.failoverQueueIds();
+    this.failoverQueue.splice(idx, 1);
+    this.#save();
+    return this.failoverQueueIds();
+  }
+
+  /** 队列内上移 / 下移一步；已在端点或不在队列里则原样返回 */
+  moveInFailoverQueue(id, delta) {
+    const key = String(id || '').trim();
+    const idx = this.failoverQueue.indexOf(key);
+    const to = idx + Number(delta || 0);
+    if (idx < 0 || to < 0 || to >= this.failoverQueue.length) return this.failoverQueueIds();
+    const next = [...this.failoverQueue];
+    next.splice(idx, 1);
+    next.splice(to, 0, key);
+    this.failoverQueue = next;
+    this.#save();
+    return this.failoverQueueIds();
   }
 
   create(draft) {
@@ -332,6 +411,7 @@ export class ProviderStore {
     const idx = this.custom.findIndex((p) => p.id === key);
     if (idx < 0) throw new ProviderError('提供方不存在，可能已被删除。', '');
     this.custom.splice(idx, 1);
+    this.failoverQueue = this.failoverQueue.filter((qid) => qid !== key); // 队列里的孤儿一并清掉
     this.#save();
     return true;
   }
@@ -488,6 +568,28 @@ export async function handleProviderApi(req, res, url, ctx) {
       log('warn', '拉取提供方模型目录失败', { error: e.message });
       fail(e instanceof ProviderError ? 400 : 500, e.message, e.field);
     }
+    return true;
+  }
+
+  // 故障转移队列（用户编排的优先级）：读队列 + 提供方列表；写支持整队列替换与增删移
+  if (url === '/api/providers/failover-queue') {
+    if (req.method === 'GET') {
+      json(res, 200, { ok: true, queue: store.failoverQueueIds(), providers: store.list() });
+      return true;
+    }
+    if (req.method !== 'POST') { json(res, 405, { ok: false, error: '仅支持 GET / POST' }); return true; }
+    const body = await readBody(req, 64 * 1024);
+    if (!body) { fail(400, '请求体不是合法 JSON'); return true; }
+    try {
+      let queue;
+      if (Array.isArray(body.queue)) queue = store.setFailoverQueue(body.queue);
+      else if (body.add !== undefined) queue = store.addToFailoverQueue(body.add);
+      else if (body.remove !== undefined) queue = store.removeFromFailoverQueue(body.remove);
+      else if (body.move && typeof body.move === 'object') queue = store.moveInFailoverQueue(body.move.id, body.move.delta);
+      else { fail(400, '请提供 queue（整队列数组）、add、remove 或 move'); return true; }
+      log('info', '已更新故障转移队列', { queue });
+      json(res, 200, { ok: true, queue, providers: store.list() });
+    } catch (e) { fail(400, e.message, e.field); }
     return true;
   }
 

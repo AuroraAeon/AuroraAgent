@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { parseGoalConfig } from './agent/goal/config.mjs';
 import { parseTuiConfig } from './tui/config.mjs';
 import { parseAgentProxy } from './proxy.mjs';
-import { parseFailoverConfig, FAILOVER_DEFAULTS } from './llm/failover.mjs';
+import { parseFailoverConfig, parseFailoverSection, FAILOVER_DEFAULTS } from './llm/failover.mjs';
 
 /** 限时折扣价: 输入 ¥2 / 输出 ¥8 每百万 tokens */
 export const PRICE = { input: 2, output: 8 };
@@ -100,6 +100,9 @@ export function loadConfig({ warn } = {}) {
     tui: parseTuiConfig(saved.tui, warn ? { warn } : {}),
     providerFailover: failover.enabled,
     providerFailoverMaxAttempts: failover.maxAttempts,
+    // failover 段原样透出（超时三件套 / 熔断五项 / 偏好有效期）：设置页读写与 saveConfig
+    // 的白名单回写都要靠它在内存里存活，否则任何一次其它设置保存都会把这一节抹掉
+    failover: parseFailoverSection(saved.failover),
   };
 }
 
@@ -133,6 +136,7 @@ export function saveConfig(cfg) {
     providerFailover: cfg.providerFailover !== undefined ? parseFailoverConfig(cfg, {}).enabled : savedFailover().providerFailover,
     providerFailoverMaxAttempts: cfg.providerFailoverMaxAttempts !== undefined
       ? parseFailoverConfig(cfg, {}).maxAttempts : savedFailover().providerFailoverMaxAttempts,
+    failover: parseFailoverSection(cfg.failover),
   };
   if (!cfg.keyIsOverride) out.apiKey = cfg.apiKey;
   writeFileSync(join(resolveDataDir(), CONFIG_FILE), JSON.stringify(out, null, 2) + '\n');

@@ -12,15 +12,39 @@ import { toAnthropicTool } from './llm/tool.mjs';
  * 连接期退避重试：仅网络层失败（fetch 抛 TypeError）且信号未中止时重试。
  * 与 /api/chat 历史语义一致：最多 attempts 次，间隔 500ms 递增。
  */
-export async function fetchUpstream(wire, { signal, attempts = 3, onRetry } = {}) {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await fetch(wire.url, { method: 'POST', headers: wire.headers, body: JSON.stringify(wire.body), signal });
-    } catch (e) {
-      if (attempt >= attempts - 1 || signal?.aborted || e.name !== 'TypeError') throw e;
-      onRetry?.(attempt + 1, e);
-      await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+export async function fetchUpstream(wire, { signal, attempts = 3, onRetry, timeoutMs = 0 } = {}) {
+  // 连接期总时限（对应 CC Switch 的 non_streaming_timeout）：Node 内置 fetch 没有超时，
+  // 上游挂着不返响应头时会一直挂住，用户面对一个永不结束的转圈。用派生 AbortController
+  // 把时限叠到调用方 signal 上（不用 AbortSignal.any，保持 Node 18 可用）。
+  const deadline = Number(timeoutMs) > 0 ? new AbortController() : null;
+  const forward = () => deadline.abort(signal?.reason);
+  let timer = null;
+  if (deadline) {
+    timer = setTimeout(() => {
+      const e = new Error(`上游连接超过 ${Math.round(Number(timeoutMs) / 1000)}s 未返回`);
+      e.kind = 'timeout';
+      e.name = 'TimeoutError';
+      deadline.abort(e);
+    }, Number(timeoutMs));
+    if (typeof timer.unref === 'function') timer.unref();
+    if (signal) {
+      if (signal.aborted) forward();
+      else signal.addEventListener('abort', forward, { once: true });
     }
+  }
+  try {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await fetch(wire.url, { method: 'POST', headers: wire.headers, body: JSON.stringify(wire.body), signal: deadline ? deadline.signal : signal });
+      } catch (e) {
+        if (attempt >= attempts - 1 || signal?.aborted || e.name !== 'TypeError') throw e;
+        onRetry?.(attempt + 1, e);
+        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+      }
+    }
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (deadline && signal) signal.removeEventListener('abort', forward);
   }
 }
 

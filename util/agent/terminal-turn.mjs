@@ -11,7 +11,7 @@ import { GOAL_STATUS_LABELS, GOAL_WAIT_LABELS } from './goal/types.mjs';
 import { goalUsageChip } from './goal/budget.mjs';
 
 /** 故障转移切换原因中文文案（后端 llm/failover.mjs 的 failoverReason 词表镜像） */
-const SWITCH_REASON_LABELS = { rate_limit: '上游限流', server: '上游故障', network: '网络异常', timeout: '上游超时', unknown: '上游异常' };
+const SWITCH_REASON_LABELS = { rate_limit: '上游限流', server: '上游故障', network: '网络异常', timeout: '上游超时', semantic: '上游返回错误', circuit_open: '提供方已熔断', unknown: '上游异常' };
 
 /**
  * 跑一个 turn 并渲染。session 引用会被 loop 更新，故结束后经 onSession 回传最新 meta。
@@ -21,7 +21,8 @@ const SWITCH_REASON_LABELS = { rate_limit: '上游限流', server: '上游故障
  * notifier（util/tui/notify.mjs）可选：完成 / 失败 / 授权 / 提问四类事件按 tui.notifications
  * 配置发系统通知（unfocused 时先尽力探测焦点，失败按未聚焦通知——宁可多响不漏响）。
  */
-export async function runTerminalTurn({ store, usage, session, input, provider, model, harness, cfg, painter, ask, onUsage, onSession, hooks, extraTools = [], goalStore = null, notifier = null, failoverCandidates = null, providerFailover = true, providerFailoverMaxAttempts }) {
+export async function runTerminalTurn({ store, usage, session, input, provider, model, harness, cfg, painter, ask, onUsage, onSession, hooks, extraTools = [], goalStore = null, notifier = null, failoverCandidates = null, providerFailover = true, providerFailoverMaxAttempts,
+  failoverState = null, failoverTimeouts = null, failoverQueue = null }) {
   const started = Date.now();
   let phase = 'idle'; // idle -> think -> text
   let atLineStart = true;
@@ -212,6 +213,7 @@ export async function runTerminalTurn({ store, usage, session, input, provider, 
       providerFailover: providerFailover !== false && cfg.providerFailover !== false,
       providerFailoverMaxAttempts: providerFailoverMaxAttempts || cfg.providerFailoverMaxAttempts,
       failoverCandidates,
+      failoverState, failoverTimeouts, failoverQueue,
       // 权限询问与主输入共用同一条 line 通道（ask()），避免 readline 双消费；
       // 中断（Ctrl+C）时按拒绝放行，让循环收尾成 turn_cancelled
       requestPermission: ({ toolName, params, resource }) => new Promise((resolve) => {

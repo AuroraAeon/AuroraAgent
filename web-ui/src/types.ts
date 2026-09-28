@@ -86,7 +86,33 @@ export type ModelInfo = { id: string; name?: string; tag?: string; provider: str
 export type ProviderRow = {
   id: string; name: string; protocol: string; baseUrl: string; pathPrefix?: string;
   builtin: boolean; hasKey: boolean; model: string; models: ModelInfo[]; price?: { input?: number; output?: number };
+  /** 故障转移队列位置（-1 = 不在队列）；队列是用户编排的优先级，见 util/providers.mjs */
+  failoverIndex?: number;
 };
+
+/** 熔断器三态（对齐 util/llm/circuit.mjs）：closed 正常 / open 开闸跳过 / half_open 放行探测 */
+export type CircuitState = 'closed' | 'open' | 'half_open';
+export type CircuitHealth = {
+  providerId: string; state: CircuitState;
+  consecutiveFailures: number; consecutiveSuccesses: number;
+  totalRequests: number; failedRequests: number; errorRate: number;
+  openedAt: number; lastError: string;
+};
+export type FailoverCircuitConfig = {
+  failureThreshold: number; successThreshold: number; timeoutSeconds: number;
+  errorRateThreshold: number; minRequests: number;
+};
+/** 故障转移段（超时三件套 0 = 禁用 + 熔断五项 + 热切换偏好有效期，解析见 util/llm/failover.mjs） */
+export type FailoverSection = {
+  firstByteMs: number; idleMs: number; nonStreamMs: number;
+  circuit: FailoverCircuitConfig; prefTtlHours: number;
+};
+export type FailoverSettings = {
+  ok: boolean; providerFailover: boolean; providerFailoverMaxAttempts: number;
+  failover: FailoverSection; queue: string[]; health: CircuitHealth[];
+};
+/** 故障转移队列（providers.json 顶层字段）：整队列替换 / 增删移，后端返回最新队列与提供方列表 */
+export type FailoverQueue = { ok: boolean; queue: string[]; providers: ProviderRow[] };
 
 export type SkillRow = { name: string; description: string; source: string };
 

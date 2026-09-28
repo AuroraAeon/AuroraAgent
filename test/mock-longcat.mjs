@@ -48,6 +48,22 @@ export function startMock(port = 18901) {
           res.writeHead(503, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ error: { code: 'service_unavailable', message: 'upstream overloaded' } }));
         }
+        // 故障转移夹具：HTTP 200 但 body 是错误 envelope（中转网关的常见形态）。
+        // 只判状态码的实现会把这种响应当成功吐给用户，故单独立用例守住
+        if (authKey.includes('ak-envelope-sse')) {
+          res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+          return res.end('data: {"error":{"code":"upstream_rejected","message":"gateway rejected this request"}}\n\ndata: [DONE]\n\n');
+        }
+        if (authKey.includes('ak-envelope')) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: { code: 'upstream_rejected', message: 'gateway rejected this request' } }));
+        }
+        // 故障转移夹具：响应头已回但迟迟不吐首包（上游挂起）。首包超时把这种也变成可换路错误
+        if (authKey.includes('ak-hang')) {
+          res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+          res.flushHeaders(); // 必须真把响应头发出去：只 writeHead 不 flush 时字节还在缓冲区，客户端连响应头都收不到
+          return; // 永不写 body，模拟上游挂起
+        }
         if (lastText.includes('BAD_KEY')) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ error: { code: 'invalid_api_key', message: 'incorrect api key' } }));

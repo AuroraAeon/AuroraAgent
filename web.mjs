@@ -16,9 +16,10 @@ import { ErrorLog, createDeduper } from './util/errorlog.mjs';
 import { checkUpdate } from './util/update.mjs';
 import { SERVICE_LOG, servicePid, isManaged, autostartInstalled } from './util/service.mjs';
 import { ProviderStore, ProviderError, handleProviderApi } from './util/providers.mjs';
-import { pumpSse, pumpTranslated } from './util/stream.mjs';
+import { pumpSse, pumpTranslated, primeUpstreamStream } from './util/stream.mjs';
 import { openChatStream } from './util/llm/provider.mjs';
-import { handleFailoverApi } from './util/llm/failover.mjs';
+import { handleFailoverApi, parseFailoverConfig, effectiveTimeouts, semanticFailure } from './util/llm/failover.mjs';
+import { FailoverState } from './util/llm/failover-state.mjs';
 import { handleGenerationApi } from './util/settings-generation.mjs';
 import { createAgentApi } from './util/agent/http.mjs';
 import { handleTuiSettingsApi } from './util/tui/settings-api.mjs';
@@ -37,6 +38,14 @@ const VERSION = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8')
 const errorLog = new ErrorLog(DATA_DIR, { version: VERSION, warn: (m, e) => log('warn', m, e) });
 // 上报去重：同 kind+message 30 秒内只记一条，崩溃循环不刷屏
 const errorDeduper = createDeduper(30_000, 50);
+// 故障转移运行时状态（<数据目录>/failover-state.json）：熔断快照 + 热切换偏好。
+// 网页与终端各有一份进程内注册表，但读写同一份文件，两侧的健康记忆互为补充
+const bootFo = parseFailoverConfig(loadConfig(), {});
+const failoverState = new FailoverState(DATA_DIR, {
+  warn: (m, e) => log('warn', m, e),
+  config: { circuit: bootFo.circuit },
+  prefTtlMs: bootFo.prefTtlHours * 3600_000,
+}).load();
 // 自定义 Provider 仓库：内置提供方（美团 LongCat）由 env/配置合成，自定义提供方落 providers.json
 const providers = new ProviderStore(DATA_DIR, {
   name: '美团 LongCat',
@@ -44,7 +53,10 @@ const providers = new ProviderStore(DATA_DIR, {
   pathPrefix: '/openai/v1',
   apiKey: () => loadConfig().apiKey,
   model: () => loadConfig().model,
-}, () => modelCatalog.models);
+}, () => modelCatalog.models, {
+  prefFor: (m) => failoverState.prefFor(m),
+  failoverEnabled: () => loadConfig().providerFailover !== false,
+});
 
 // Agent 运行时 HTTP 面（/api/agent/* 与 /api/mcp/*）：实现拆在 util/agent/http.mjs，此处只按前缀委派
 const agentApi = createAgentApi({
@@ -52,6 +64,7 @@ const agentApi = createAgentApi({
   usage,
   resolveChatProvider,
   providerStore: providers,
+  failoverState,
   loadConfig,
   pickModel: (raw, fallback) => (MODEL_RE.test(String(raw || '')) ? String(raw) : fallback),
   log: (level, msg, extra) => log(level, msg, extra),
@@ -400,7 +413,12 @@ const server = createServer(async (req, res) => {
   }
   // 多提供方故障转移偏好（/api/settings/failover，实现见 util/llm/failover.mjs；下一轮请求即时生效）
   if (url.startsWith('/api/settings/failover')) {
-    if (await handleFailoverApi(req, res, url, { loadConfig, saveConfig, log })) return;
+    if (await handleFailoverApi(req, res, url, {
+      loadConfig, saveConfig, log,
+      state: failoverState,
+      queue: { get: () => providers.failoverQueueIds() },
+      healthIds: () => providers.all().map((p) => p.id),
+    })) return;
   }
 
   if (req.method === 'POST' && url === '/api/abort') {
@@ -477,19 +495,32 @@ const server = createServer(async (req, res) => {
         });
         // LLM 抽象层统一入口（与 Agent Loop 同源）：构造请求 + 连接期重试 + 错误话术 + 帧翻译选择
         // + 多提供方故障转移（429/5xx/网络错误时换到提供同模型的其它提供方，用户无感知）
+        // 故障转移开关 + 生效超时（关闭时超时归零，行为与接入前一致）+ 队列 + 熔断器
+        const foCfg = parseFailoverConfig(cfg, {});
+        const foEnabled = foCfg.enabled !== false;
+        const foTimeouts = effectiveTimeouts(foCfg);
         let opened;
         try {
           opened = await openChatStream(provider, { model, messages, ...genFor(provider) }, {
             signal: entry.controller.signal,
             onRetry: (n, e) => log('warn', '上游连接失败，准备重试', { attempt: n, error: String(e) }),
+            ...(foEnabled ? { circuit: failoverState.circuits, timeouts: foTimeouts, nonStreamMs: foTimeouts.nonStreamMs } : {}),
+            // 预读：200 的错误 envelope 与首包超时在写字节前变成可换路错误
+            ...(foEnabled ? {
+              prime: (reader, translate, signal) => primeUpstreamStream(reader, {
+                firstByteMs: foTimeouts.firstByteMs, detectFailure: semanticFailure, signal,
+              }),
+            } : {}),
             failover: {
-              enabled: cfg.providerFailover !== false,
-              maxAttempts: cfg.providerFailoverMaxAttempts,
+              enabled: foEnabled,
+              maxAttempts: foCfg.maxAttempts,
+              queue: providers.failoverQueueIds(),
               candidates: () => providers.all(),
               // 记账归属跟随真实产出 token 的提供方（settleUsage 在收尾时读 entry）
               onSwitch: ({ from, to, reason, attempt }) => {
                 entry.provider = to.id;
                 entry.price = to.price;
+                failoverState.setPref(model, to.id); // 热切换偏好：下次同模型优先这家
                 log('warn', '上游暂不可用，已切换提供方重试', { from: from.id, to: to.id, reason, attempt });
               },
             },
@@ -507,8 +538,8 @@ const server = createServer(async (req, res) => {
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' });
         reader = opened.reader;
         // Anthropic Messages 的帧形状不同，逐帧翻译成 OpenAI 兼容帧，前端零改动
-        if (opened.translate) await pumpTranslated(reader, res, entry, opened.translate);
-        else await pumpSse(reader, res, entry);
+        if (opened.translate) await pumpTranslated(reader, res, entry, opened.translate, { idleMs: foTimeouts.idleMs });
+        else await pumpSse(reader, res, entry, { idleMs: foTimeouts.idleMs });
         const rec = settleUsage(entry, Date.now() - started);
         log('info', '对话完成', { ms: rec.ms, inputTokens: rec.inputTokens, outputTokens: rec.outputTokens, cost: rec.cost, requestId });
       } catch (err) {

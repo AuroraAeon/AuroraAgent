@@ -16,6 +16,7 @@ import { searchWorkspaceFiles } from './files.mjs';
 import { SideSession } from './side-session.mjs';
 import { PERMISSION_MODES, TITLE_MODES, experimentalEnabled } from '../config.mjs';
 import { McpRegistry } from '../mcp/registry.mjs';
+import { parseFailoverConfig, effectiveTimeouts } from '../llm/failover.mjs';
 
 const SESSION_RE = /^\/api\/agent\/sessions\/([0-9a-f-]{36})$/;
 const SESSION_FORK_RE = /^\/api\/agent\/sessions\/([0-9a-f-]{36})\/fork$/;
@@ -42,8 +43,12 @@ function json(res, status, obj) {
  */
 export function createAgentApi(deps) {
   const { dataDir, usage, resolveChatProvider, providerStore = null, loadConfig, pickModel, log = () => {}, builtinPrice } = deps;
-  // 故障转移候选源：全部提供方（内置在前）；挑选时的同模型 / 有 Key / 排除已试过滤在 llm/failover.mjs
+  // 故障转移候选源：全部提供方（内置在前）；挑选时的同模型 / 有 Key / 排除已试 / 队列 / 熔断
+  // 过滤都在 llm/failover.mjs 与 llm/circuit.mjs
   const failoverCandidates = providerStore ? () => providerStore.all() : null;
+  // 熔断器与运行时状态（failover-state.mjs）：跨 turn 共享才有多请求记忆的意义
+  const failoverState = deps.failoverState || null;
+  const failoverQueue = providerStore ? () => providerStore.failoverQueueIds() : null;
   const sessions = new SessionStore(dataDir, { warn: (m, e) => log('warn', m, e) });
   // Goal 存储：<数据目录>/goals/<sessionId>.json（一会话一个目标）
   const goals = new GoalStore(dataDir, { warn: (m, e) => log('warn', m, e) });
@@ -397,6 +402,10 @@ export function createAgentApi(deps) {
           agentProxy: cfg.agentProxy,
           providerFailover: cfg.providerFailover, providerFailoverMaxAttempts: cfg.providerFailoverMaxAttempts,
           failoverCandidates,
+          failoverState,
+          // 生效超时：故障转移关闭时归零（effectiveTimeouts 单点保证），关闭即完全回到老行为
+          failoverTimeouts: effectiveTimeouts(parseFailoverConfig(cfg, {})),
+          failoverQueue,
           goalStore: side ? null : goals, goalCfg: cfg.goal,
           requestPermission: ({ requestId }) => new Promise((resolve) => {
             pendingPermissions.set(requestId, { resolve, sessionId });

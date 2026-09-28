@@ -2,10 +2,10 @@
  *  逻辑自原 SettingsDialog 平移；内置提供方只读，自定义提供方存 providers.json（util/providers.mjs）。 */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  IconAlert, IconCheck, IconClose, IconKey, IconPlus, IconSearch,
+  IconAlert, IconArrowDown, IconArrowUp, IconCheck, IconClose, IconKey, IconPlus, IconSearch,
 } from '../icons';
 import {
-  createProvider, deleteProvider, discoverModels, listProviders, updateProvider,
+  createProvider, deleteProvider, discoverModels, getFailoverQueue, listProviders, saveFailoverQueue, updateProvider,
 } from '../api';
 import type { ProviderRow } from '../types';
 import { ProviderEditor, draftToPayload, fmtCap, validateDraft, type Candidate, type Draft } from './ProviderEditor';
@@ -47,11 +47,17 @@ export function ProvidersPanel({ onProvidersChanged }: Props) {
   const [discoverError, setDiscoverError] = useState('');
   const [picker, setPicker] = useState<{ models: Candidate[]; picked: Set<string>; q: string } | null>(null);
   const [delTarget, setDelTarget] = useState<{ id: string; name: string } | null>(null);
+  // 故障转移队列（providers.json 顶层 failoverQueue）：顺序即优先级，内置提供方亦可入队
+  const [queue, setQueue] = useState<string[]>([]);
+  const [queuePick, setQueuePick] = useState('');
+  const [queueBusy, setQueueBusy] = useState(false);
 
   const reload = useCallback(async () => {
-    const pv = await listProviders();
+    // 协议列表只有 /api/providers 给；队列单独一口（写队列的响应也带最新队列与提供方）
+    const [pv, fq] = await Promise.all([listProviders(), getFailoverQueue()]);
     setProviders(pv.providers);
     setProtocols(pv.protocols);
+    setQueue(fq.queue);
   }, []);
 
   useEffect(() => { reload().catch(() => {}); }, [reload]);
@@ -148,6 +154,21 @@ export function ProvidersPanel({ onProvidersChanged }: Props) {
     }
   };
 
+  /** 队列变更：整队列替换 / 追加 / 移除 / 上移下移，后端返回最新队列与提供方列表 */
+  const applyQueue = async (body: Parameters<typeof saveFailoverQueue>[0]) => {
+    setQueueBusy(true);
+    setFormError('');
+    try {
+      const r = await saveFailoverQueue(body);
+      setQueue(r.queue);
+      setProviders(r.providers);
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setQueueBusy(false);
+    }
+  };
+
   const kw = (picker?.q || '').trim().toLowerCase();
   const shown = picker ? picker.models.filter((m) => !kw || m.id.toLowerCase().includes(kw) || (m.name || '').toLowerCase().includes(kw)) : [];
 
@@ -162,6 +183,7 @@ export function ProvidersPanel({ onProvidersChanged }: Props) {
               <span className="pv-row-name">
                 {p.name}
                 {p.builtin ? <span className="pv-badge">内置</span> : null}
+                {p.failoverIndex != null && p.failoverIndex >= 0 ? <span className="pv-badge">队列 #{p.failoverIndex + 1}</span> : null}
                 {p.hasKey ? <span className="pv-badge ok"><IconKey size={11} /> 已配置密钥</span> : <span className="pv-badge warn">未配置密钥</span>}
               </span>
               <span className="pv-row-meta">
@@ -186,6 +208,81 @@ export function ProvidersPanel({ onProvidersChanged }: Props) {
           添加自定义提供方
         </button>
       )}
+
+      <div className="foq">
+        <div className="foq-head">
+          <span className="foq-t">故障转移队列</span>
+          <span className="foq-d">主提供方不可用时按队列顺序挑选候选（提供同模型且有密钥）；队列为空时回退按模型目录匹配，内置提供方优先。</span>
+        </div>
+        {queue.length ? (
+          <ol className="foq-list">
+            {queue.map((id, i) => {
+              const p = providers.find((x) => x.id === id);
+              return (
+                <li className="foq-item" key={id}>
+                  <span className="foq-pos">{i + 1}</span>
+                  <span className="foq-name">
+                    {p?.name || id}
+                    {p?.builtin ? <span className="pv-badge">内置</span> : null}
+                    {p && !p.hasKey ? <span className="pv-badge warn">未配置密钥</span> : null}
+                  </span>
+                  <span className="foq-acts">
+                    <button
+                      type="button"
+                      className="btn btn-link"
+                      aria-label={`上移 ${p?.name || id}`}
+                      disabled={queueBusy || i === 0}
+                      onClick={() => applyQueue({ move: { id, delta: -1 } })}
+                    >
+                      <IconArrowUp size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-link"
+                      aria-label={`下移 ${p?.name || id}`}
+                      disabled={queueBusy || i === queue.length - 1}
+                      onClick={() => applyQueue({ move: { id, delta: 1 } })}
+                    >
+                      <IconArrowDown size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-link danger"
+                      aria-label={`移出队列 ${p?.name || id}`}
+                      disabled={queueBusy}
+                      onClick={() => applyQueue({ remove: id })}
+                    >
+                      <IconClose size={13} />
+                    </button>
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+        ) : <p className="foq-empty">队列为空：转移时按模型目录匹配挑候选（内置提供方优先）。</p>}
+        <div className="foq-add">
+          <select
+            className="foq-select"
+            aria-label="选择要加入队列的提供方"
+            value={queuePick}
+            disabled={queueBusy}
+            onChange={(e) => setQueuePick(e.currentTarget.value)}
+          >
+            <option value="">选择要加入队列的提供方…</option>
+            {providers.filter((p) => !queue.includes(p.id)).map((p) => (
+              <option key={p.id} value={p.id}>{p.name}{p.builtin ? '（内置）' : ''}</option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="btn"
+            disabled={queueBusy || !queuePick}
+            onClick={() => { const id = queuePick; setQueuePick(''); applyQueue({ add: id }); }}
+          >
+            <IconPlus size={13} /> 加入队列
+          </button>
+        </div>
+      </div>
       {card && draft ? (
         <ProviderEditor
           draft={draft}
