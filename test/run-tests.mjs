@@ -1634,8 +1634,9 @@ try {
     const plan = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'PlanCard.tsx'), 'utf8');
     assert(plan.includes('批准执行') && plan.includes('驳回'), '计划卡应有批准 / 驳回动作');
     assert(plan.includes("decided: 'pending'") || plan.includes("plan.decided === 'pending'"), '计划卡应区分待决状态');
+    const pickers = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ComposerPickers.tsx'), 'utf8');
+    assert(pickers.includes('PERM_LABEL') && pickers.includes('always_ask') && pickers.includes('never_ask'), '输入区应有权限三档选择器');
     const composer = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Composer.tsx'), 'utf8');
-    assert(composer.includes('PERM_LABEL') && composer.includes('always_ask') && composer.includes('never_ask'), '输入区应有权限三档选择器');
     assert(composer.includes('onPlanMode'), '输入区应有计划模式开关');
     const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
     assert(app.includes('respondPlan') && app.includes('plan_proposed') && app.includes('plan_approved'), 'App 应接线计划决策回传与计划事件');
@@ -1678,14 +1679,29 @@ try {
     assert(css.includes('prefers-reduced-motion'), '动画应尊重系统减少动效设置');
   });
   await test('更新检查源码契约：设置页入口、路由与缓存语义', () => {
-    const settings = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SettingsDialog.tsx'), 'utf8');
-    assert(settings.includes('checkUpdate(true)') && settings.includes('检查更新'), '设置页应有检查更新入口');
-    assert(settings.includes('updateAvailable') && settings.includes('查看发布页与安装包'), '发现新版本应给出去发布页的链接');
+    const general = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'GeneralPanel.tsx'), 'utf8');
+    assert(general.includes('checkUpdate(true)') && general.includes('检查更新'), '设置页应有检查更新入口');
+    assert(general.includes('updateAvailable') && general.includes('查看发布页与安装包'), '发现新版本应给出去发布页的链接');
+    assert(!general.includes('useState(() => {'), '面板副作用应走 useEffect，不得在渲染期发起请求');
     const web = readFileSync(join(__dirname, '..', 'web.mjs'), 'utf8');
     assert(web.includes("/api/update/check") && web.includes("checkUpdate({ current: VERSION"), 'web.mjs 应接更新检查路由');
     const upd = readFileSync(join(__dirname, '..', 'util', 'update.mjs'), 'utf8');
     assert(upd.includes('CACHE_TTL_MS') && upd.includes('releases/latest'), '应有 6 小时缓存与 GitHub latest 查询');
     assert(upd.includes('FETCH_TIMEOUT_MS'), '查询应带超时，别让界面干等');
+  });
+  await test('设置弹层分级导航源码契约：左分类轨、懒挂载缓存与壳承担 section 标题', () => {
+    const settings = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SettingsDialog.tsx'), 'utf8');
+    assert(settings.includes('set-rail') && settings.includes('set-nav-cell') && settings.includes('set-content'), '设置弹层应为左导航轨 + 右侧内容区的分级布局（对齐 dsh web SettingsRoot）');
+    assert(settings.includes("aria-current={on ? 'page' : undefined}"), '当前分类应标记 aria-current 供读屏软件感知');
+    assert(settings.includes('const [mounted, setMounted]') && settings.includes('hidden={id !== active}'), '各 section 应懒挂载并用 hidden 缓存（切换保留面板内部草稿态）');
+    for (const id of ['general', 'providers', 'failover', 'network', 'skills', 'mcp', 'terminal', 'usage', 'errlog']) {
+      assert(settings.includes(`id: '${id}'`), `分类轨应登记 ${id}`);
+      assert(settings.includes(`case '${id}':`), `设置壳应挂载 ${id} 面板`);
+    }
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    assert(css.includes('.set-rail {') && css.includes('.set-row {') && css.includes('.set-group-t {'), 'app.css 应有分级导航与行式条目样式');
+    assert(css.includes('.set-page[hidden] { display:none; }'), '缓存的非当前 section 应真正隐藏');
+    assert(!css.includes('.pv-sec {'), 'section 标题已由壳 header 承担，旧包裹样式应退役');
   });
   await test('对话区跟手与渲染性能源码契约：贴底才跟随、历史 memo、快捷键聚焦', () => {
     const chat = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ChatView.tsx'), 'utf8');
@@ -1703,7 +1719,7 @@ try {
   });
   await test('用量与错误日志面板源码契约：设置弹层两块新面板在场', () => {
     const settings = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SettingsDialog.tsx'), 'utf8');
-    assert(settings.includes('<UsagePanel />') && settings.includes('<ErrorLogPanel />'), '设置弹层应接入用量与错误日志面板');
+    assert(settings.includes("case 'usage': return <UsagePanel />;") && settings.includes("case 'errlog': return <ErrorLogPanel />;"), '设置弹层应接入用量与错误日志面板');
     const usage = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'UsagePanel.tsx'), 'utf8');
     assert(usage.includes('DayBars') && usage.includes('usage-stack'), '用量面板应有逐日柱状与构成占比条');
     assert(usage.includes('getUsage'), '用量面板应走 /api/usage');
@@ -1731,10 +1747,29 @@ try {
     assert(html.includes("localStorage.getItem('auroraagent.theme')") && html.includes('dataset.theme'), 'index.html 应首帧预置 data-theme 防闪');
     const theme = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'theme.ts'), 'utf8');
     assert(theme.includes('watchSystemTheme') && theme.includes("matchMedia('(prefers-color-scheme: dark)')"), 'theme.ts 应跟随系统主题');
-    const settings = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SettingsDialog.tsx'), 'utf8');
-    assert(settings.includes('useThemePreference') && settings.includes('THEME_OPTIONS'), '设置页应有主题切换');
+    const general = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'GeneralPanel.tsx'), 'utf8');
+    assert(general.includes('useThemePreference') && general.includes('THEME_OPTIONS'), '设置页应有主题切换');
     const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
     assert(!/box-shadow:0 14px 44px rgb\(0 0 0/.test(app), '浮层阴影应走令牌，浅色下自动变淡');
+  });
+  await test('思考强度两级选择器源码契约：思考按钮已并入模型选择器、档位表按上游能力组织', async () => {
+    const com = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Composer.tsx'), 'utf8');
+    assert(com.includes("useState<'root' | 'model' | 'effort'>('root')"), '模型选择器应为两级结构（根菜单 -> 模型 / 思考强度列表）');
+    assert(com.includes('思考强度') && com.includes('mpick-effort') && com.includes('mpick-cell'), '根菜单应有「模型 / 思考强度」两行，触发钮带强度 caption');
+    assert(com.includes('EFFORT_LEVELS') && com.includes("id: 'standard'") && com.includes("id: 'off'"), '档位表应按上游真实能力组织（当前仅标准 / 关闭两档，禁虚构轻量深度档）');
+    assert(com.includes('onEffort') && !com.includes('onThinking'), '输入区应改用 effort 属性，独立思考按钮已删除');
+    assert(!com.includes('bulb') && !com.includes('IconBulb'), '思考按钮（灯泡图标）不应再出现');
+    const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
+    assert(app.includes('changeEffort') && app.includes('patchSession(current.id, { thinking: on })'), 'App 应经 PATCH meta.thinking 落盘思考开关');
+    assert(app.includes("setEffort(got.meta.thinking === false ? 'off' : 'standard')"), '打开会话应按 meta.thinking 还原强度');
+    assert(app.includes('thinking: effort !== \'off\''), 'turn 请求应按强度带 thinking 布尔');
+    const types = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'types.ts'), 'utf8');
+    assert(types.includes('thinking?: boolean'), 'SessionMeta 应声明 thinking 字段');
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    assert(css.includes('.mpick-effort {') && css.includes('.mpick-chevron'), 'app.css 应有强度 caption 与箭号样式');
+    const html = await (await fetch(`${BASE}/`)).text();
+    const js = await (await fetch(`${BASE}${/\/app\/assets\/[A-Za-z0-9._-]+\.js/.exec(html)[0]}`)).text();
+    assert(js.includes('onEffort'), '构建产物应含强度选择器接线（改了 web-ui 忘了 build:web 会红）');
   });
   await test('输入区窄屏布局源码契约：工具栏可换行、芯片不收缩不折行、尾部右对齐', () => {
     const com = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Composer.tsx'), 'utf8');
@@ -1761,9 +1796,11 @@ try {
     assert(term.includes("name: 'new'") && term.includes('titleMode: TITLE_MODES.includes(meta.titleMode)'), '终端新建会话应继承标题生成方式');
     const footer = readFileSync(join(__dirname, '..', 'util', 'tui', 'footer.mjs'), 'utf8');
     assert(footer.includes("state.titleMode === 'model'"), '状态栏应在模型总结模式下提示标题段');
+    const pickers = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ComposerPickers.tsx'), 'utf8');
+    assert(pickers.includes('function TitlePicker'), '标题生成方式选择器应拆在 ComposerPickers');
     const composer = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Composer.tsx'), 'utf8');
-    assert(composer.includes('function TitlePicker') && composer.includes('<TitlePicker'), '输入区应有标题生成方式选择器');
-    assert(composer.includes("TITLE_HINT.local") === false && composer.includes('本地推导') && composer.includes('模型总结'), '选择器应说明两种方式的代价');
+    assert(composer.includes('<TitlePicker'), '输入区应挂载标题生成方式选择器');
+    assert(pickers.includes("TITLE_HINT.local") === false && pickers.includes('本地推导') && pickers.includes('模型总结'), '选择器应说明两种方式的代价');
     assert(app.includes('changeTitleMode') && app.includes('onTitleMode={changeTitleMode}'), 'App 应接线标题生成方式切换');
     assert(app.includes("setTitleMode(got.meta.titleMode || 'local')"), '打开会话应同步标题生成方式');
     const js2 = await (await fetch(`${BASE}${/\/app\/assets\/[A-Za-z0-9._-]+\.js/.exec(await (await fetch(`${BASE}/`)).text())[0]}`)).text();
@@ -1792,7 +1829,7 @@ try {
     const prov = readFileSync(join(__dirname, '..', 'util', 'llm', 'provider.mjs'), 'utf8');
     assert(prov.includes('isFailoverable') && prov.includes('pickFailoverCandidate'), 'openChatStream 应做转移判定与候选挑选');
     const settings = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SettingsDialog.tsx'), 'utf8');
-    assert(settings.includes('<FailoverPanel />'), '设置弹层应接入故障转移面板');
+    assert(settings.includes("case 'failover': return <FailoverPanel />;"), '设置弹层应接入故障转移面板');
     const panel = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'FailoverPanel.tsx'), 'utf8');
     assert(panel.includes('getFailoverSettings') && panel.includes('saveFailoverSettings'), '面板应走 /api/settings/failover 读写');
     assert(!hasEmoji(panel), '故障转移面板零 emoji 铁律');
@@ -1813,26 +1850,26 @@ try {
     const types = readFileSync(join(__dirname, '..', 'util', 'agent', 'goal', 'types.mjs'), 'utf8');
     assert(types.includes('GOAL_WAIT_LABELS'), 'goal 类型模块应有等待原因文案表');
   });
-  await test('Goal 前端接线源码契约：GoalBanner、四类事件联合类型与产物同步', async () => {
+  await test('Goal 前端接线源码契约：GoalBar 单行条、四类事件联合类型与产物同步', async () => {
     const types = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'types.ts'), 'utf8');
     for (const t of ["type: 'goal_created'", "type: 'goal_status_changed'", "type: 'goal_usage_updated'", "type: 'goal_wait_changed'"]) {
       assert(types.includes(t), `前端事件类型应声明 ${t}`);
     }
     assert(types.includes('GoalStatus') && types.includes('goalActionsFor'), '前端应有 Goal 状态类型与动作裁剪函数');
-    const banner = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'GoalBanner.tsx'), 'utf8');
-    assert(banner.includes('goalbanner-chip') && banner.includes('GOAL_STATUS_LABELS[goal.status]'), '横幅应有状态芯片');
-    assert(banner.includes('goalActionsFor(goal.status)'), '横幅动作应按状态裁剪');
-    assert(banner.includes('tokenBudget != null'), '横幅应展示预算上限');
-    assert(banner.includes("goal.status === 'usage_limited'") && banner.includes('等待提供方访问'), 'usage_limited 应展示恢复提示（对齐 MiniMax goalPolicySummary）');
-    assert(banner.includes('goal.turnsUsed') && banner.includes('最近验证'), '横幅应展示轮次用量与最近验证结论');
-    assert(banner.includes('setInterval') && banner.includes('goalActionHint(goal.status)'), '横幅应有 live elapsed 与随状态动作提示');
-    assert(banner.includes("goal.status === 'complete') return null"), '横幅 complete 时隐藏（回执由 notice 承载，对齐 MiniMax banner）');
-    assert(banner.includes('GOAL_WAIT_LABELS[goal.executionWait') && banner.includes('chipLabel'), 'active 等待时用等待标签替换状态芯片（对齐 MiniMax goalPresentation）');
-    assert(banner.includes('v.missing') && banner.includes('+${missingOmitted}'), 'not_met 应展示前 2 条 missing 并记 +N');
-    assert(!hasEmoji(banner), 'GoalBanner 零 emoji 铁律');
+    const bar = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'GoalBar.tsx'), 'utf8');
+    assert(bar.includes('goalbar-chip') && bar.includes('GOAL_STATUS_LABELS[goal.status]'), '目标条应有状态芯片');
+    assert(bar.includes('goalActionsFor(goal.status)'), '目标条动作应按状态裁剪');
+    assert(bar.includes('tokenBudget != null'), '目标条应展示预算上限');
+    assert(bar.includes('goal.turnsUsed') && bar.includes('formatGoalDuration'), '目标条应展示轮次用量与活跃时长');
+    assert(bar.includes('setInterval') && bar.includes('goalActionHint(goal.status)'), '目标条应有 live elapsed 与随状态动作提示');
+    assert(bar.includes("goal.status === 'complete') return null"), '目标条 complete 时隐藏（回执由 notice 承载，对齐 MiniMax banner）');
+    assert(bar.includes('GOAL_WAIT_LABELS[goal.executionWait') && bar.includes('chipLabel'), 'active 等待时用等待标签替换状态芯片（对齐 MiniMax goalPresentation）');
+    assert(bar.includes('goalbar-verify') && bar.includes('notMetStreak'), '目标条应压入验证结论芯片（verdict × 连击）');
+    assert(bar.includes('goalbar-objective') && bar.includes('data-goal-bar'), '目标条应为单行结构（目标省略 + data 钩子），不是半透明遮罩');
+    assert(!hasEmoji(bar), 'GoalBar 零 emoji 铁律');
     const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
     assert(app.includes("ev.type === 'goal_created'") && app.includes('setGoal(ev.goal)'), 'App 应处理四类 goal 事件');
-    assert(app.includes('goalAction(currentId, action)') && app.includes('onGoalAction={decideGoal}'), 'App 应接线目标动作回传');
+    assert(app.includes('goalAction(currentId, action)') && app.includes('onAction={decideGoal}'), 'App 应接线目标条动作回传');
     assert(app.includes('handleGoalCommand') && app.includes('onGoalCommand={handleGoalCommand}'), 'App 应接线 /goal 命令处理');
     assert(app.includes('parseGoalCommand(rawArgs)') && app.includes('createGoal(sid') && app.includes('editGoal(sid'), 'App 应走共享解析器并区分创建与改写');
     assert(app.includes("kind: 'notice'") && !app.includes("kind: 'system', key: `g"), 'goal 命令输出应走 notice 消息（不套压缩摘要前缀）');
@@ -1859,8 +1896,7 @@ try {
     const msg = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Message.tsx'), 'utf8');
     assert(msg.includes("msg.kind === 'notice'") && msg.includes('row-notice'), 'Message 应渲染 notice 行');
     assert(/msg\.kind === 'notice'[\s\S]{0,200}\{msg\.text\}/.test(msg), 'notice 行应直出文本（不套压缩摘要前缀）');
-    const cv = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ChatView.tsx'), 'utf8');
-    assert(cv.includes('<GoalBanner goal={goal}'), 'ChatView 应挂载目标横幅');
+    assert(app.includes('<GoalBar goal={goal}') && app.indexOf('<GoalBar') < app.indexOf('<Composer'), 'App 应在输入框上方挂载目标条（不再走 ChatView 半透明横幅）');
     const composerSrc = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Composer.tsx'), 'utf8');
     assert(composerSrc.includes('onGoalCommand') && composerSrc.includes("/^\\/goal(\\s|$)/"), 'Composer 应拦截 /goal 命令');
     assert(composerSrc.includes('goalPrefill') && composerSrc.includes('lastPrefillNonce'), 'Composer 应支持 edit 回填（nonce 去重）');
@@ -1878,7 +1914,7 @@ try {
     assert(api.includes('createGoal') && api.includes('editGoal') && api.includes('clearGoal'), 'api 客户端应覆盖设立 / 改写 / 移除');
     const html = await (await fetch(`${BASE}/`)).text();
     const js = await (await fetch(`${BASE}${/\/app\/assets\/[A-Za-z0-9._-]+\.js/.exec(html)[0]}`)).text();
-    assert(js.includes('goalbanner'), '构建产物应含目标横幅（改了 web-ui 忘了 build:web 会红）');
+    assert(js.includes('goalbar'), '构建产物应含目标条（改了 web-ui 忘了 build:web 会红）');
     // @ 提及：调色板组件、Composer 接线与产物同步
     const mention = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'MentionPalette.tsx'), 'utf8');
     assert(mention.includes('mentionpal-item') && mention.includes('kind') && !hasEmoji(mention), 'MentionPalette 应有列表项与类型徽标且零 emoji');
@@ -1900,13 +1936,13 @@ try {
     const api3 = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'api.ts'), 'utf8');
     assert(api3.includes('/api/settings/tui') && api3.includes('getTuiSettings') && api3.includes('saveTuiSettings'), 'api 客户端应覆盖终端偏好读写');
     const dlg = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SettingsDialog.tsx'), 'utf8');
-    assert(dlg.includes('<TuiPanel />'), '设置弹层应挂载终端偏好面板');
+    assert(dlg.includes("case 'terminal': return <TuiPanel />;"), '设置弹层应挂载终端偏好面板');
     assert(js.includes('tui-chip'), '构建产物应含终端偏好面板（改了 web-ui 忘了 build:web 会红）');
     // 网络面板：代理输入、保存接线与产物同步
     const proxyPanel = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ProxyPanel.tsx'), 'utf8');
     assert(proxyPanel.includes('validateProxyInput') && proxyPanel.includes('setAgentProxy') && proxyPanel.includes('127.0.0.1:7890') && !hasEmoji(proxyPanel), 'ProxyPanel 应有校验 / 保存接线与端口示例且零 emoji');
     assert(proxyPanel.includes('/api/settings/proxy') === false, '前端不直连路径，走 api.ts');
-    assert(dlg.includes('<ProxyPanel />'), '设置弹层应挂载网络面板');
+    assert(dlg.includes("case 'network': return <ProxyPanel />;"), '设置弹层应挂载网络面板');
     assert(js.includes('np-input'), '构建产物应含网络面板（改了 web-ui 忘了 build:web 会红）');
   });
   await test('OSC 终端标题接线源码契约：状态词随模式变、挂起清除、退出清空', async () => {
@@ -2000,7 +2036,7 @@ await test('代码高亮源码契约：Markdown 代码块接入零依赖高亮�
     assert(panel.includes('AURORAAGENT_EXPERIMENTAL_MCP=1'), '未开启实验时应给出开启指引');
     assert(panel.includes('mcp__') && panel.includes('测试连接') && panel.includes('stdio') && panel.includes('http'), '面板应呈现工具命名规则、连接测试与两种传输');
     const settings = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SettingsDialog.tsx'), 'utf8');
-    assert(settings.includes('<McpPanel />'), '设置弹层应嵌入 MCP 面板');
+    assert(settings.includes("case 'mcp': return <McpPanel />;"), '设置弹层应嵌入 MCP 面板');
     const api = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'api.ts'), 'utf8');
     assert(api.includes('listMcpServers') && api.includes('createMcpServer') && api.includes('deleteMcpServer') && api.includes('probeMcpServer'), 'api 客户端应覆盖 MCP 四个调用');
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
@@ -2574,6 +2610,16 @@ await test('PATCH /api/agent/sessions/:id 切换模式 / 改名 / 换模型', as
     body: JSON.stringify({ titleMode: 'model' }),
   })).json();
   eq(title.meta.titleMode, 'model', '标题生成方式应可切换为模型总结');
+  const think = await (await fetch(`${AGENT}/sessions/${s.id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ thinking: false }),
+  })).json();
+  eq(think.meta.thinking, false, '思考开关应可会话级关闭');
+  const thinkOn = await (await fetch(`${AGENT}/sessions/${s.id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ thinking: true }),
+  })).json();
+  eq(thinkOn.meta.thinking, true, '思考开关应可会话级开启');
   const badTitle = await fetch(`${AGENT}/sessions/${s.id}`, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ titleMode: 'magic' }),

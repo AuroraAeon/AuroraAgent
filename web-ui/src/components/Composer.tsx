@@ -1,10 +1,13 @@
-/** 输入区：自适应文本框 + 工具栏（思考开关 / 模式切换 / 模型选择器）+ 发送 / 停止。 */
+/** 输入区：自适应文本框 + 工具栏（模式 / 权限 / 标题 / 计划 + 模型与思考强度二级选择器）+ 发送 / 停止。
+ * 模型选择器对齐 dsh web 的两级结构：根菜单是「模型 / 思考强度」两行（标签 + 当前值 + 右箭），
+ * 各自钻进列表；触发钮同时显示模型名与思考强度（caption 调）。 */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
-  Dots, IconBulb, IconCheck, IconChevronDown, IconList, IconSend, IconShield, IconSpark, IconStop, IconTag,
+  Dots, IconCheck, IconChevronDown, IconChevronRight, IconList, IconSend, IconSpark, IconStop,
 } from '../icons';
 import type { Harness, ModelInfo, ProviderRow, SkillRow } from '../types';
 import { SkillPalette } from './SkillPalette';
+import { HarnessPicker, PermPicker, TitlePicker } from './ComposerPickers';
 import { MentionPalette } from './MentionPalette';
 import type { MentionItem } from './MentionPalette';
 import { searchFiles } from '../api';
@@ -31,16 +34,29 @@ function groupByProvider(models: ModelInfo[], providers: ProviderRow[]) {
   }));
 }
 
+/** 思考强度档位（会话级，PATCH 落 meta.thinking）。当前上游只表达思考开 / 关两态，
+ *  档位表按 dsh 的 reasoning.efforts 形态组织——上游支持分档思考后在此追加即可。 */
+const EFFORT_LEVELS: { id: string; label: string; hint: string }[] = [
+  { id: 'standard', label: '标准', hint: '展示完整思考过程后再作答（默认）' },
+  { id: 'off', label: '关闭', hint: '不进行思考，直接作答，响应最快' },
+];
+const EFFORT_LABEL: Record<string, string> = { standard: '标准', off: '关闭' };
+const effortLabelOf = (id: string) => EFFORT_LABEL[id] || EFFORT_LABEL.standard;
+
 function ModelPicker({
-  models, modelStatus, model, providers, onModel,
+  models, modelStatus, model, providers, effort, onModel, onEffort,
 }: {
-  models: ModelInfo[]; modelStatus: string; model: string; providers: ProviderRow[]; onModel: (m: ModelInfo) => void;
+  models: ModelInfo[]; modelStatus: string; model: string; providers: ProviderRow[];
+  effort: string; onModel: (m: ModelInfo) => void; onEffort: (v: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [pane, setPane] = useState<'root' | 'model' | 'effort'>('root');
   const [q, setQ] = useState('');
   const boxRef = useRef<HTMLDivElement>(null);
   const current = models.find((m) => m.id === model);
   const mark = vendorMarkFor(model);
+  const modelLabel = current?.name || model || '选择模型';
+  const effortCur = EFFORT_LABEL[effort] ? effort : 'standard';
   const kw = q.trim().toLowerCase();
   const groups = groupByProvider(models, providers)
     .map((g) => ({ ...g, models: kw ? g.models.filter((m) => m.id.toLowerCase().includes(kw) || (m.name || '').toLowerCase().includes(kw)) : g.models }))
@@ -55,233 +71,102 @@ function ModelPicker({
     return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
   }, [open]);
 
+  const close = () => { setOpen(false); setPane('root'); setQ(''); };
+
   return (
     <div className="mpick" ref={boxRef}>
       <button
         type="button"
         className="tchip tchip-model"
-        aria-haspopup="listbox"
+        aria-haspopup="menu"
         aria-expanded={open}
-        title={current ? current.id : '选择模型'}
-        onClick={() => setOpen((v) => !v)}
+        title={`${modelLabel} · 思考强度 ${effortLabelOf(effortCur)}`}
+        onClick={() => (open ? close() : setOpen(true))}
       >
         {mark ? <img className="mpick-mark" src={mark} alt="" /> : <IconSpark size={13} />}
-        <span className="mpick-label">{current?.name || model || '选择模型'}</span>
-        {current?.tag ? <span className="mpick-tag">{current.tag}</span> : null}
-        <IconChevronDown size={13} />
+        <span className="mpick-label">{modelLabel}</span>
+        <span className="mpick-effort">{effortLabelOf(effortCur)}</span>
+        <IconChevronDown size={13} className={open ? 'mpick-chevron open' : 'mpick-chevron'} />
       </button>
       {open ? (
-        <div className="mpick-menu" role="listbox" aria-label="选择模型">
-          <div className="mpick-search">
-            <input
-              autoFocus
-              type="search"
-              placeholder="搜索模型"
-              aria-label="搜索模型"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
-          </div>
-          {modelStatus === 'loading' ? <div className="mpick-status"><Dots label="加载中" />正在加载模型列表…</div> : null}
-          {!groups.length && modelStatus !== 'loading' ? <div className="mpick-status">没有匹配的模型</div> : null}
-          {groups.map((g) => (
-            <div key={g.pid} className="mpick-group">
-              <div className="mpick-head">{g.name}</div>
-              {g.models.map((m) => (
+        <div className="mpick-menu" role="menu" aria-label="模型与思考强度">
+          {pane === 'root' ? (
+            <>
+              <button type="button" role="menuitem" className="mpick-cell" onClick={() => setPane('model')}>
+                <span className="mpick-cell-label">模型</span>
+                <span className="mpick-cell-value">{modelLabel}</span>
+                <IconChevronRight size={13} className="mpick-cell-arrow" />
+              </button>
+              <button type="button" role="menuitem" className="mpick-cell" onClick={() => setPane('effort')}>
+                <span className="mpick-cell-label">思考强度</span>
+                <span className="mpick-cell-value">{effortLabelOf(effortCur)}</span>
+                <IconChevronRight size={13} className="mpick-cell-arrow" />
+              </button>
+            </>
+          ) : null}
+          {pane === 'model' ? (
+            <>
+              <button type="button" className="mpick-back" onClick={() => { setPane('root'); setQ(''); }}>
+                <IconChevronRight size={13} className="mpick-back-icon" />
+                返回
+              </button>
+              <div className="mpick-search">
+                <input
+                  autoFocus
+                  type="search"
+                  placeholder="搜索模型"
+                  aria-label="搜索模型"
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                />
+              </div>
+              {modelStatus === 'loading' ? <div className="mpick-status"><Dots label="加载中" />正在加载模型列表…</div> : null}
+              {!groups.length && modelStatus !== 'loading' ? <div className="mpick-status">没有匹配的模型</div> : null}
+              {groups.map((g) => (
+                <div key={g.pid} className="mpick-group">
+                  <div className="mpick-head">{g.name}</div>
+                  {g.models.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={m.id === model}
+                      className="mpick-item"
+                      onClick={() => { onModel(m); close(); }}
+                    >
+                      <span className="mpick-ck">{m.id === model ? <IconCheck size={13} /> : null}</span>
+                      <span className="mpick-nm">{m.name || m.id}</span>
+                      {m.tag ? <span className="mpick-tag">{m.tag}</span> : null}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </>
+          ) : null}
+          {pane === 'effort' ? (
+            <>
+              <button type="button" className="mpick-back" onClick={() => setPane('root')}>
+                <IconChevronRight size={13} className="mpick-back-icon" />
+                返回
+              </button>
+              {EFFORT_LEVELS.map((lv) => (
                 <button
-                  key={m.id}
+                  key={lv.id}
                   type="button"
-                  role="option"
-                  aria-selected={m.id === model}
-                  className="mpick-item"
-                  onClick={() => { onModel(m); setOpen(false); setQ(''); }}
+                  role="menuitemradio"
+                  aria-checked={lv.id === effortCur}
+                  className="mpick-item mpick-effort-item"
+                  onClick={() => { onEffort(lv.id); close(); }}
                 >
-                  <span className="mpick-ck">{m.id === model ? <IconCheck size={13} /> : null}</span>
-                  <span className="mpick-nm">{m.name || m.id}</span>
-                  {m.tag ? <span className="mpick-tag">{m.tag}</span> : null}
+                  <span className="mpick-ck">{lv.id === effortCur ? <IconCheck size={13} /> : null}</span>
+                  <span className="mpick-effort-copy">
+                    <span className="mpick-nm">{lv.label}</span>
+                    <span className="mpick-effort-hint">{lv.hint}</span>
+                  </span>
                 </button>
               ))}
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function HarnessPicker({
-  harnesses, harness, onHarness,
-}: {
-  harnesses: Harness[]; harness: string; onHarness: (id: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const boxRef = useRef<HTMLDivElement>(null);
-  const current = harnesses.find((h) => h.id === harness) || harnesses[0];
-
-  useLayoutEffect(() => {
-    if (!open) return;
-    const onDoc = (ev: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(ev.target as Node)) setOpen(false); };
-    const onKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape') setOpen(false); };
-    document.addEventListener('mousedown', onDoc);
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
-  }, [open]);
-
-  return (
-    <div className="hpick" ref={boxRef}>
-      <button
-        type="button"
-        className="tchip"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        title={current ? current.summary : '选择模式'}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <span className="hpick-dot" />
-        {current?.label || '模式'}
-        <IconChevronDown size={13} />
-      </button>
-      {open ? (
-        <div className="hpick-menu" role="listbox" aria-label="选择模式">
-          {harnesses.map((h) => (
-            <button
-              key={h.id}
-              type="button"
-              role="option"
-              aria-selected={h.id === harness}
-              className="hpick-item"
-              onClick={() => { onHarness(h.id); setOpen(false); }}
-            >
-              <span className="hpick-item-head">
-                <span className="mpick-ck">{h.id === harness ? <IconCheck size={13} /> : null}</span>
-                {h.label}
-                <span className="hpick-rounds">{h.maxRounds} 轮</span>
-              </span>
-              <span className="hpick-sum">{h.summary}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-const PERM_LABEL: Record<string, string> = {
-  always_ask: '始终询问',
-  ask_when_needed: '必要时询问',
-  never_ask: '完全自动',
-};
-const PERM_HINT: Record<string, string> = {
-  always_ask: '每次工具调用都需授权（最谨慎）',
-  ask_when_needed: '只读放行，写与执行需授权（默认）',
-  never_ask: 'ask 类动作直接放行（deny 规则仍拒绝）',
-};
-
-/** 权限三档选择器：始终询问 / 必要时询问 / 完全自动（会话级，PATCH 落 meta） */
-function PermPicker({ mode, onMode }: { mode: string; onMode: (m: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const boxRef = useRef<HTMLDivElement>(null);
-  const cur = PERM_LABEL[mode] ? mode : 'ask_when_needed';
-  useLayoutEffect(() => {
-    if (!open) return;
-    const onDoc = (ev: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(ev.target as Node)) setOpen(false); };
-    const onKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape') setOpen(false); };
-    document.addEventListener('mousedown', onDoc);
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
-  }, [open]);
-  return (
-    <div className="hpick" ref={boxRef}>
-      <button
-        type="button"
-        className="tchip"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        title={`权限：${PERM_LABEL[cur]}（${PERM_HINT[cur]}）`}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <IconShield size={14} />
-        {PERM_LABEL[cur]}
-        <IconChevronDown size={13} />
-      </button>
-      {open ? (
-        <div className="hpick-menu" role="listbox" aria-label="选择权限模式">
-          {Object.keys(PERM_LABEL).map((m) => (
-            <button
-              key={m}
-              type="button"
-              role="option"
-              aria-selected={m === cur}
-              className="hpick-item"
-              onClick={() => { onMode(m); setOpen(false); }}
-            >
-              <span className="hpick-item-head">
-                <span className="mpick-ck">{m === cur ? <IconCheck size={13} /> : null}</span>
-                {PERM_LABEL[m]}
-              </span>
-              <span className="hpick-sum">{PERM_HINT[m]}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-const TITLE_LABEL: Record<string, string> = {
-  local: '本地总结',
-  model: '模型总结',
-};
-const TITLE_HINT: Record<string, string> = {
-  local: '按首条消息本地推导标题，零成本零延迟（默认）',
-  model: '调模型总结标题：每个新会话多一次小额请求，失败自动回退本地推导',
-};
-
-/** 标题生成方式选择器：本地推导 / 模型总结（会话级，PATCH 落 meta） */
-function TitlePicker({ mode, onMode }: { mode: string; onMode: (m: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const boxRef = useRef<HTMLDivElement>(null);
-  const cur = TITLE_LABEL[mode] ? mode : 'local';
-  useLayoutEffect(() => {
-    if (!open) return;
-    const onDoc = (ev: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(ev.target as Node)) setOpen(false); };
-    const onKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape') setOpen(false); };
-    document.addEventListener('mousedown', onDoc);
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
-  }, [open]);
-  return (
-    <div className="hpick" ref={boxRef}>
-      <button
-        type="button"
-        className="tchip"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        title={`标题：${TITLE_LABEL[cur]}（${TITLE_HINT[cur]}）`}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <IconTag size={14} />
-        {TITLE_LABEL[cur]}
-        <IconChevronDown size={13} />
-      </button>
-      {open ? (
-        <div className="hpick-menu" role="listbox" aria-label="选择标题生成方式">
-          {Object.keys(TITLE_LABEL).map((m) => (
-            <button
-              key={m}
-              type="button"
-              role="option"
-              aria-selected={m === cur}
-              className="hpick-item"
-              onClick={() => { onMode(m); setOpen(false); }}
-            >
-              <span className="hpick-item-head">
-                <span className="mpick-ck">{m === cur ? <IconCheck size={13} /> : null}</span>
-                {TITLE_LABEL[m]}
-              </span>
-              <span className="hpick-sum">{TITLE_HINT[m]}</span>
-            </button>
-          ))}
+            </>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -301,8 +186,9 @@ type Props = {
   model: string;
   onModel: (m: ModelInfo) => void;
   providers: ProviderRow[];
-  thinking: boolean;
-  onThinking: (v: boolean) => void;
+  /** 思考强度：standard 展示思考过程 / off 直接作答（会话级，PATCH 落 meta.thinking） */
+  effort: string;
+  onEffort: (v: string) => void;
   harnesses: Harness[];
   harness: string;
   onHarness: (id: string) => void;
@@ -320,7 +206,7 @@ type Props = {
 };
 
 export function Composer({
-  busy, onSend, onStop, models, modelStatus, model, onModel, providers, thinking, onThinking, harnesses, harness, onHarness, disabled,
+  busy, onSend, onStop, models, modelStatus, model, onModel, providers, effort, onEffort, harnesses, harness, onHarness, disabled,
   permissionMode, onPermissionMode, titleMode, onTitleMode, planMode, onPlanMode, skills, sessionId, onGoalCommand, goalPrefill, focusNonce,
 }: Props) {
   const [text, setText] = useState('');
@@ -462,7 +348,9 @@ export function Composer({
               if (e.key === 'ArrowUp') { e.preventDefault(); setSkillIdx((i) => (n ? (i - 1 + n) % n : 0)); return; }
               if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
                 const kw = (slash?.[1] || '').toLowerCase();
-                const shown = skills.filter((sk) => !kw || sk.name.toLowerCase().includes(kw) || sk.description.toLowerCase().includes(kw));
+                const shown = skills.filter((sk) => {
+                  return !kw || sk.name.toLowerCase().includes(kw) || sk.description.toLowerCase().includes(kw);
+                });
                 const pick = shown[Math.min(skillIdx, shown.length - 1)];
                 if (pick) {
                   e.preventDefault();
@@ -484,31 +372,23 @@ export function Composer({
           }}
         />
         <div className="composer-bar">
-          <button
-            type="button"
-            className="tchip"
-            aria-pressed={thinking}
-            title="展示模型的思考过程"
-            onClick={() => onThinking(!thinking)}
-          >
-            <IconBulb size={14} />
-            思考
-          </button>
-          <HarnessPicker harnesses={harnesses} harness={harness} onHarness={onHarness} />
-          <PermPicker mode={permissionMode} onMode={onPermissionMode} />
-          <TitlePicker mode={titleMode} onMode={onTitleMode} />
-          <button
-            type="button"
-            className="tchip"
-            aria-pressed={planMode}
-            title={planMode ? '计划模式已开启：下一轮先出计划，批准后执行' : '计划模式：下一轮先出计划，批准后执行'}
-            onClick={() => onPlanMode(!planMode)}
-          >
-            <IconList size={14} />
-            计划
-          </button>
+          <div className="composer-tools">
+            <HarnessPicker harnesses={harnesses} harness={harness} onHarness={onHarness} />
+            <PermPicker mode={permissionMode} onMode={onPermissionMode} />
+            <TitlePicker mode={titleMode} onMode={onTitleMode} />
+            <button
+              type="button"
+              className="tchip tchip-plan"
+              aria-pressed={planMode}
+              title={planMode ? '计划模式已开启：下一轮先出计划，批准后执行' : '计划模式：下一轮先出计划，批准后执行'}
+              onClick={() => onPlanMode(!planMode)}
+            >
+              <IconList size={14} />
+              计划
+            </button>
+          </div>
           <div className="composer-tail">
-            <ModelPicker models={models} modelStatus={modelStatus} model={model} providers={providers} onModel={onModel} />
+            <ModelPicker models={models} modelStatus={modelStatus} model={model} providers={providers} effort={effort} onModel={onModel} onEffort={onEffort} />
             {busy ? (
               <button type="button" className="sendbtn sendbtn-stop" title="停止（Esc）" aria-label="停止" onClick={onStop}>
                 <IconStop size={14} />

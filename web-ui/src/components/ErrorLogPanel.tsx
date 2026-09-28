@@ -40,9 +40,8 @@ export function ErrorLogPanel() {
   if (err) return <p className="pv-err" role="alert">{err}</p>;
 
   return (
-    <section className="pv-sec">
+    <>
       <div className="usage-head">
-        <h3 className="pv-sec-t">错误日志</h3>
         <span className="usage-head-acts">
           <button type="button" className="btn btn-link" onClick={() => { reload().catch(() => {}); }} aria-label="刷新错误日志"><IconRefresh size={13} /></button>
           <button type="button" className="btn btn-link danger" onClick={() => void clear()} disabled={!total}>
@@ -68,6 +67,6 @@ export function ErrorLogPanel() {
           ))}
         </ul>
       ) : <p className="usage-empty">暂无错误记录，很好。</p>}
-    </section>
+    </>
   );
 }

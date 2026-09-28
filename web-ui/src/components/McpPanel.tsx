@@ -80,17 +80,15 @@ export function McpPanel() {
 
   if (servers === null) {
     return (
-      <section className="pv-sec">
-        <h3 className="pv-sec-t">MCP 服务器（实验特性）</h3>
+      <>
         <p className="pv-intro"><IconAlert size={12} /> {gate || '加载失败'}</p>
-        <p className="pv-intro">开启方式：为服务设置环境变量 <code>AURORAAGENT_EXPERIMENTAL_MCP=1</code> 后重启，即可在此管理 Model Context Protocol 服务器，其工具将并入 Agent 工具箱（调用前默认询问授权）。</p>
-      </section>
+        <p className="pv-intro">MCP 工具是实验特性（默认关闭）。开启方式：为服务设置环境变量 <code>AURORAAGENT_EXPERIMENTAL_MCP=1</code> 后重启，即可在此管理 Model Context Protocol 服务器，其工具将并入 Agent 工具箱（调用前默认询问授权）。</p>
+      </>
     );
   }
 
   return (
-    <section className="pv-sec">
-      <h3 className="pv-sec-t">MCP 服务器（实验特性）</h3>
+    <>
       <p className="pv-intro">连接 MCP 服务器后，其工具以 <code>mcp__&lt;服务器&gt;__&lt;工具&gt;</code> 名进入 Agent 工具箱，默认询问授权后执行。</p>
       <div className="pv-rows">
         {servers.map((s) => (
@@ -176,6 +174,6 @@ export function McpPanel() {
           添加 MCP 服务器
         </button>
       )}
-    </section>
+    </>
   );
 }

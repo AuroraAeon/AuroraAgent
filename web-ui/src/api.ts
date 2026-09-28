@@ -16,7 +16,7 @@ export const createSession = (body: { name?: string; model?: string; harness?: s
   api<{ session: SessionMeta }>('/api/agent/sessions', { method: 'POST', body: JSON.stringify(body) }).then((r) => r.session);
 export const getSession = (id: string) => api<{ meta: SessionMeta; records: SessionRecord[] }>(`/api/agent/sessions/${id}`);
 export const deleteSession = (id: string) => api<{ deleted: boolean }>(`/api/agent/sessions/${id}`, { method: 'DELETE' });
-export const patchSession = (id: string, body: { harness?: string; name?: string; model?: string; provider?: string; permissionMode?: string; planMode?: boolean; titleMode?: string }) =>
+export const patchSession = (id: string, body: { harness?: string; name?: string; model?: string; provider?: string; permissionMode?: string; planMode?: boolean; titleMode?: string; thinking?: boolean }) =>
   api<{ meta: SessionMeta }>(`/api/agent/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(body) }).then((r) => r.meta);
 export const forkSession = (id: string) =>
   api<{ session: SessionMeta }>(`/api/agent/sessions/${id}/fork`, { method: 'POST' }).then((r) => r.session);

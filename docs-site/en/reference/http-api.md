@@ -17,7 +17,7 @@ Same-origin `/api/*`, all JSON; SSE frames are `event:` + `data:` lines.
 | --- | --- |
 | `GET /api/agent/harnesses` | harness list |
 | `GET/POST /api/agent/sessions` | list / create (titleMode defaults to the global setting) |
-| `GET/PATCH/DELETE /api/agent/sessions/:id` | detail (`{ meta, records }`) / rename & switch (incl. titleMode) / delete |
+| `GET/PATCH/DELETE /api/agent/sessions/:id` | detail (`{ meta, records }`) / rename & switch (incl. titleMode, thinking) / delete |
 | `POST /api/agent/sessions/:id/fork` | fork a session: copies meta and full transcript into a new session (new id / timestamps / "（copy）" name suffix); goals are not copied |
 | `POST /api/agent/turn` | run a turn (SSE); single active turn (409); when the session still has the default name, the first round summarizes a title from the input and emits `session_renamed` (titleMode resolves as request body > session meta > global config) |
 | `POST /api/agent/abort` | abort, keeping generated content |

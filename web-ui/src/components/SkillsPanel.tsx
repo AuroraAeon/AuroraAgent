@@ -14,8 +14,7 @@ export function SkillsPanel() {
   useEffect(() => { listSkills().then(setSkills).catch((e) => setErr(e instanceof Error ? e.message : String(e))); }, []);
 
   return (
-    <section className="pv-sec">
-      <h3 className="pv-sec-t">技能</h3>
+    <>
       {skills === null ? (
         err ? <p className="pv-intro"><IconAlert size={12} /> {err}</p> : <p className="pv-intro">加载中…</p>
       ) : (
@@ -40,6 +39,6 @@ export function SkillsPanel() {
           </div>
         </>
       )}
-    </section>
+    </>
   );
 }

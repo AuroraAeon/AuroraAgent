@@ -75,7 +75,7 @@ export function formatGoalDuration(rawSeconds) {
   return `${hours}h${totalMinutes % 60}min${seconds}s`;
 }
 
-/** 用量芯片：tokens[ / 预算] · 时长（终端 footer / 状态变更行与网页 GoalBanner 共用同一套格式化） */
+/** 用量芯片：tokens[ / 预算] · 时长（终端 footer / 状态变更行与网页 GoalBar 共用同一套格式化） */
 export function goalUsageChip(goal) {
   const cap = goal.tokenBudget != null ? ` / ${formatGoalCount(goal.tokenBudget)}` : '';
   return `${formatGoalCount(goal.tokensUsed)}${cap} · ${formatGoalDuration(goal.timeUsedSeconds)}`;

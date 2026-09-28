@@ -17,7 +17,7 @@
 | --- | --- |
 | `GET /api/agent/harnesses` | 三档模式清单 |
 | `GET/POST /api/agent/sessions` | 会话列表 / 新建（titleMode 缺省继承全局配置） |
-| `GET/PATCH/DELETE /api/agent/sessions/:id` | 详情（`{ meta, records }`）/ 改名换模型换模式换标题生成方式 / 删除 |
+| `GET/PATCH/DELETE /api/agent/sessions/:id` | 详情（`{ meta, records }`）/ 改名换模型换模式换标题生成方式 / 思考开关 / 删除 |
 | `POST /api/agent/sessions/:id/fork` | 派生会话：复制 meta 与全部转录到新会话（新 id / 新时间戳 / 名字加「副本」后缀），goal 不随复制 |
 | `POST /api/agent/turn` | 跑一个 turn（SSE 事件流）；单活跃 turn（409）；会话仍是默认名时，首轮总结标题并推送 `session_renamed`（titleMode 按请求体 > 会话 meta > 全局配置解析） |
 | `POST /api/agent/abort` | 中止 turn（保留已生成内容） |

@@ -77,9 +77,8 @@ export function UsagePanel() {
   const t = data.totals;
   const st = data.stats;
   return (
-    <section className="pv-sec">
+    <>
       <div className="usage-head">
-        <h3 className="pv-sec-t">用量</h3>
         <button type="button" className="btn btn-link" onClick={() => { reload().catch(() => {}); toast.info('已刷新用量统计'); }} disabled={busy}>
           <IconRefresh size={13} /> 刷新
         </button>
@@ -122,6 +121,6 @@ export function UsagePanel() {
           </div>
         </>
       ) : null}
-    </section>
+    </>
   );
 }

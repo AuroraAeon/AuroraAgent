@@ -1,6 +1,6 @@
 /** 网络面板：Agent 沙箱出站代理（web_fetch 等工具用）——本机直连被重置的站点（如维基百科）的出路。 */
 import { useCallback, useEffect, useState } from 'react';
-import { IconAlert, IconCheck, IconGlobe } from '../icons';
+import { IconAlert, IconCheck } from '../icons';
 import { getAgentProxy, setAgentProxy } from '../api';
 import { validateProxyInput } from '../proxy-input';
 
@@ -38,8 +38,7 @@ export function ProxyPanel() {
   };
 
   return (
-    <section className="pv-sec">
-      <h3 className="pv-sec-t"><IconGlobe size={14} /> 网络</h3>
+    <>
       <p className="pv-intro">
         Agent 沙箱内的出站请求（抓取网页等工具）默认直连；本机直连被重置的站点（如维基百科）可经本机 HTTP 代理访问。保存后即时生效，不影响模型上游请求。
       </p>
@@ -61,6 +60,6 @@ export function ProxyPanel() {
       <p className="np-hint">
         常见本机代理端口：Clash / mihomo 7890、Surge 6152、V2Ray 10809。留空 = 直连。当前生效：{current || '直连'}
       </p>
-    </section>
+    </>
   );
 }

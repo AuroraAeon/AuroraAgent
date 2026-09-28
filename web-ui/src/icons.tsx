@@ -110,6 +110,12 @@ export const IconSend = (p: IconProps) => (
 export const IconStop = (p: IconProps) => (
   <Svg {...p}><rect x="7" y="7" width="10" height="10" rx="2.2" fill="currentColor" stroke="none" /></Svg>
 );
+export const IconPause = (p: IconProps) => (
+  <Svg {...p}><rect x="7" y="5.5" width="3.4" height="13" rx="1.2" fill="currentColor" stroke="none" /><rect x="13.6" y="5.5" width="3.4" height="13" rx="1.2" fill="currentColor" stroke="none" /></Svg>
+);
+export const IconPlay = (p: IconProps) => (
+  <Svg {...p}><path d="M8 5.6a1 1 0 0 1 1.5-.87l8.2 5.4a1 1 0 0 1 0 1.74l-8.2 5.4a1 1 0 0 1-1.5-.87z" fill="currentColor" stroke="none" /></Svg>
+);
 export const IconTrash = (p: IconProps) => (
   <Svg {...p}>
     <polyline points="4 7 20 7" />
@@ -145,6 +151,14 @@ export const IconKey = (p: IconProps) => (
   <Svg {...p}>
     <circle cx="8" cy="15" r="4" />
     <path d="M10.8 12.2L19.5 3.5M16.5 6.5l2.6 2.6M14 9l2.2 2.2" />
+  </Svg>
+);
+export const IconChart = (p: IconProps) => (
+  <Svg {...p}>
+    <line x1="4" y1="20" x2="20" y2="20" />
+    <rect x="5.5" y="12" width="3.6" height="6" rx="1" />
+    <rect x="10.2" y="7.5" width="3.6" height="10.5" rx="1" />
+    <rect x="14.9" y="10" width="3.6" height="8" rx="1" />
   </Svg>
 );
 export const IconClock = (p: IconProps) => (

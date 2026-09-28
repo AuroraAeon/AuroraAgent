@@ -83,6 +83,7 @@ export function createAgentApi(deps) {
         permissionMode: PERMISSION_MODES.includes(body.permissionMode) ? body.permissionMode : '',
         planMode: body.planMode === true,
         titleMode: TITLE_MODES.includes(body.titleMode) ? body.titleMode : cfg.titleMode,
+        thinking: typeof body.thinking === 'boolean' ? body.thinking : cfg.thinking,
       });
       log('info', 'Agent 会话已创建', { sessionId: meta.id, harness: harness.id });
       return json(res, 200, { session: meta });
@@ -126,6 +127,7 @@ export function createAgentApi(deps) {
         changes.permissionMode = body.permissionMode;
       }
       if (body.planMode !== undefined) changes.planMode = body.planMode === true;
+      if (body.thinking !== undefined) changes.thinking = body.thinking === true;
       if (body.titleMode !== undefined) {
         if (!TITLE_MODES.includes(body.titleMode)) {
           return json(res, 400, { error: { message: `未知标题生成方式：${body.titleMode}（可用 local / model）` } });

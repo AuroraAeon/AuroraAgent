@@ -1,6 +1,6 @@
 /** 终端偏好面板：OSC 标题项序 + 系统通知三档（服务端配置，终端下次启动生效）+ 浏览器通知开关（本地 opt-in，默认关）。 */
 import { useCallback, useEffect, useState } from 'react';
-import { IconAlert, IconCheck, IconTerminal } from '../icons';
+import { IconAlert, IconCheck } from '../icons';
 import { getTuiSettings, saveTuiSettings } from '../api';
 import type { TuiSettings as TuiSettingsShape } from '../types';
 
@@ -79,8 +79,7 @@ export function TuiPanel() {
   };
 
   return (
-    <section className="pv-sec">
-      <h3 className="pv-sec-t"><IconTerminal size={14} /> 终端</h3>
+    <>
       <p className="pv-intro">以下偏好写入服务端配置，终端（npm run chat）下一次启动时生效；浏览器通知只对当前浏览器生效。</p>
       {error ? <p className="pv-err" role="alert"><IconAlert size={12} /> {error}</p> : null}
 
@@ -159,6 +158,6 @@ export function TuiPanel() {
           {saved ? <><IconCheck size={13} /> 已保存</> : '保存终端偏好'}
         </button>
       </footer>
-    </section>
+    </>
   );
 }

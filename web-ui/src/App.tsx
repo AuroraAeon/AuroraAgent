@@ -15,6 +15,7 @@ import {
 } from './api';
 import { GOAL_COMMAND_HELP, formatGoalReceipt, formatGoalSummary, parseGoalCommand } from '../../util/agent/goal/command.mjs';
 import { connectGoalEvents } from './goal-events';
+import { GoalBar } from './components/GoalBar';
 import { GOAL_STATUS_LABELS, PROVIDER_SWITCH_REASONS } from './types';
 import type { AgentEvent, GoalState, Harness, LiveTurn, ModelInfo, MsgPart, MsgView, PlanView, ProviderRow, SessionMeta, SettingsInfo, TodoItem, ToolView, SkillRow } from './types';
 
@@ -98,7 +99,7 @@ export default function App() {
   const [providers, setProviders] = useState<ProviderRow[]>([]);
   const [harnesses, setHarnesses] = useState<Harness[]>([]);
   const [skills, setSkills] = useState<SkillRow[]>([]);
-  const [thinking, setThinking] = useState(true);
+  const [effort, setEffort] = useState('standard');
   const [settings, setSettings] = useState<SettingsInfo | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [error, setError] = useState('');
@@ -136,6 +137,7 @@ export default function App() {
       getGoal(id).then((r) => { if (goalViewEpochRef.current === epoch) setGoal(r.goal); }).catch(() => { if (goalViewEpochRef.current === epoch) setGoal(null); });
       setPermMode(got.meta.permissionMode || 'ask_when_needed');
       setTitleMode(got.meta.titleMode || 'local');
+      setEffort(got.meta.thinking === false ? 'off' : 'standard');
       setPlanOn(got.meta.planMode === true);
     } catch {
       setMessages([]);
@@ -180,7 +182,7 @@ export default function App() {
     setLive({ turnId: '', parts: [], thinking: '', usage: null, compression: null, plan: null, round: 0, startedAt: Date.now() });
     try {
       await runTurn(
-        { sessionId: cur.id, input: text, thinking, model: cur.model, provider: cur.provider },
+        { sessionId: cur.id, input: text, thinking: effort !== 'off', model: cur.model, provider: cur.provider },
         (ev: AgentEvent) => {
           if (ev.type === 'session_renamed') setSessions((prev) => prev.map((s) => (s.id === ev.sessionId ? { ...s, name: ev.name } : s)));
           else if (ev.type === 'turn_started') setLive((l) => (l ? { ...l, startedAt: Date.now() } : l));
@@ -426,6 +428,18 @@ export default function App() {
     }
   };
 
+  const changeEffort = async (level: string) => {
+    if (!current) return;
+    const on = level !== 'off';
+    try {
+      const meta = await patchSession(current.id, { thinking: on });
+      setSessions((prev) => prev.map((s) => (s.id === meta.id ? meta : s)));
+      setEffort(level);
+    } catch (e) {
+      toast.error('切换思考强度失败', { description: e instanceof Error ? e.message : String(e) });
+    }
+  };
+
   const changePlan = async (on: boolean) => {
     if (!current) return;
     try {
@@ -557,9 +571,8 @@ export default function App() {
           onDecidePlan={decidePlan}
           onPick={send}
           todos={todos}
-          goal={goal}
-          onGoalAction={decideGoal}
         />
+        {goal ? <GoalBar goal={goal} onAction={decideGoal} /> : null}
         <Composer
           busy={busy}
           onSend={send}
@@ -571,8 +584,8 @@ export default function App() {
           model={current?.model || ''}
           onModel={changeModel}
           providers={providers}
-          thinking={thinking}
-          onThinking={setThinking}
+          effort={effort}
+          onEffort={changeEffort}
           harnesses={harnesses}
           harness={current?.harness || 'standard'}
           onHarness={changeHarness}

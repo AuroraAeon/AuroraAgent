@@ -26,7 +26,7 @@ export class SessionStore {
   }
 
   /** 新建会话；workspace 缺省为 <数据目录>/workspace，允许指定其他绝对路径 */
-  create({ name = '', model = '', provider = '', harness = DEFAULT_HARNESS, workspace = '', permissionMode = '', planMode = false, titleMode = '' } = {}) {
+  create({ name = '', model = '', provider = '', harness = DEFAULT_HARNESS, workspace = '', permissionMode = '', planMode = false, titleMode = '', thinking = true } = {}) {
     const id = randomUUID();
     const now = new Date().toISOString();
     const meta = {
@@ -43,6 +43,7 @@ export class SessionStore {
       permissionMode: PERMISSION_MODES.includes(permissionMode) ? permissionMode : DEFAULT_PERMISSION_MODE,
       planMode: planMode === true,
       titleMode: TITLE_MODES.includes(titleMode) ? titleMode : DEFAULT_TITLE_MODE,
+      thinking: thinking !== false,
       inputTokens: 0,
       outputTokens: 0,
       cost: 0,

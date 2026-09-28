@@ -70,6 +70,7 @@ export type SessionMeta = {
   permissionMode?: string;
   planMode?: boolean;
   titleMode?: 'local' | 'model';
+  thinking?: boolean;
   inputTokens: number; outputTokens: number; cost: number; preview?: string;
 };
 
