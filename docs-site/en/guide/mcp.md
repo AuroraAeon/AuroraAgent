@@ -12,7 +12,7 @@ Experimental flags: `AURORAAGENT_EXPERIMENTAL_<NAME>` for one, `AURORAAGENT_EXPE
 
 ## Management
 
-- **Web**: Settings → MCP servers — add (stdio command + args, or HTTP + SSE endpoint), test connection, see tool counts and status, delete
+- **Web**: Settings → MCP servers — add (stdio command + args, or HTTP + SSE endpoint), test connection, see tool counts and status, toggle a server on or off (disabling drops its tools from the agent toolbox while keeping its config), delete
 - **Terminal**: `/mcp` status command
 - Config lands in `<dataDir>/mcp.json` (atomic write, never committed)
 

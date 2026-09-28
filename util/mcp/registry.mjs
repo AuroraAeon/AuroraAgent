@@ -91,6 +91,15 @@ export class McpRegistry {
     return { ok: true, server };
   }
 
+  /** 显示开关：停用后 refresh 直接跳过（工具不进 Agent 工具箱），配置保留、可随时再开 */
+  setEnabled(id, enabled) {
+    const target = this.servers.find((s) => s.id === String(id || ''));
+    if (!target) return { ok: false, error: '服务器不存在' };
+    target.enabled = enabled !== false;
+    saveMcpServers(this.dataDir, this.servers);
+    return { ok: true, server: target };
+  }
+
   remove(id) {
     const before = this.servers.length;
     this.servers = this.servers.filter((s) => s.id !== String(id || ''));

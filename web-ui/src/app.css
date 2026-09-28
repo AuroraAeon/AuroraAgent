@@ -645,6 +645,15 @@
 }
 .mcp-form-row input:focus, .mcp-form-row select:focus { border-color:var(--accent-line); box-shadow:0 0 0 3px var(--accent-glow); outline:none; }
 .mcp-err { color:var(--danger-ink, #c0392b); word-break:break-all; }
+/* MCP 行尾显示开关：停用即从工具箱摘掉工具（配置保留），与 tui-chip 同一套开 / 关语义 */
+.mcp-toggle {
+  padding:4px 11px; border-radius:99px; border:1px solid var(--line); background:var(--surface);
+  color:var(--dim); font:inherit; font-size:12.5px; cursor:pointer; flex:none;
+  transition:color .12s var(--ease), background .12s var(--ease), border-color .12s var(--ease);
+}
+.mcp-toggle:hover { color:var(--text); border-color:var(--line-strong); }
+.mcp-toggle.on { background:var(--accent-soft); border-color:var(--accent-line); color:var(--accent-hi); }
+.mcp-toggle:disabled { opacity:.55; cursor:default; }
 .pv-card {
   border:1px solid var(--accent-line); background:var(--accent-glow); border-radius:12px;
   padding:14px; display:flex; flex-direction:column; gap:11px;

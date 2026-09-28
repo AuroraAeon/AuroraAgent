@@ -62,6 +62,8 @@ export const createMcpServer = (draft: { id: string; name?: string; transport: s
   api<{ ok: boolean; server: McpServerRow; servers: McpServerRow[] }>('/api/mcp/servers', { method: 'POST', body: JSON.stringify(draft) });
 export const deleteMcpServer = (id: string) => api<{ ok: boolean; removed: number; servers: McpServerRow[] }>(`/api/mcp/servers/${id}`, { method: 'DELETE' });
 export const probeMcpServer = (id: string) => api<{ ok: boolean; serverInfo?: unknown; tools?: string[]; error?: string }>(`/api/mcp/servers/${id}/probe`, { method: 'POST' });
+export const setMcpServerEnabled = (id: string, enabled: boolean) =>
+  api<{ ok: boolean; server: McpServerRow; servers: McpServerRow[] }>(`/api/mcp/servers/${id}/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) });
 export const respondPermission = (requestId: string, decision: 'allow' | 'deny' | 'always') =>
   api<{ ok: boolean }>('/api/agent/permission', { method: 'POST', body: JSON.stringify({ requestId, decision }) });
 export const respondPlan = (sessionId: string, decision: 'approve' | 'reject') =>

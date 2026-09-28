@@ -230,17 +230,28 @@ export function createAgentApi(deps) {
       log('info', 'MCP 服务器已保存', { id: r.server.id });
       return json(res, 200, { ok: true, server: r.server, servers: mcp.status() });
     }
-    const mcpMatch = /^\/api\/mcp\/servers\/([A-Za-z0-9._-]{1,48})(\/probe)?$/.exec(url);
+    const mcpMatch = /^\/api\/mcp\/servers\/([A-Za-z0-9._-]{1,48})(\/probe|\/enabled)?$/.exec(url);
     if (mcpMatch && req.method === 'DELETE') {
       if (!mcp) return json(res, 404, { error: { message: 'MCP 为实验特性：设置 AURORAAGENT_EXPERIMENTAL_MCP=1 开启' } });
       const r = mcp.remove(mcpMatch[1]);
       await mcp.refresh();
       return json(res, 200, { ok: true, removed: r.removed, servers: mcp.status() });
     }
-    if (mcpMatch && mcpMatch[2] && req.method === 'POST') {
+    if (mcpMatch && mcpMatch[2] === '/probe' && req.method === 'POST') {
       if (!mcp) return json(res, 404, { error: { message: 'MCP 为实验特性：设置 AURORAAGENT_EXPERIMENTAL_MCP=1 开启' } });
       const r = await mcp.probe(mcpMatch[1]);
       return json(res, 200, r);
+    }
+    // 显示开关：停用即从工具箱摘掉（refresh 跳过连接），配置不动
+    if (mcpMatch && mcpMatch[2] === '/enabled' && req.method === 'POST') {
+      if (!mcp) return json(res, 404, { error: { message: 'MCP 为实验特性：设置 AURORAAGENT_EXPERIMENTAL_MCP=1 开启' } });
+      const body = await readBody(req, 1024);
+      if (typeof body.enabled !== 'boolean') return json(res, 400, { error: { message: 'enabled 必须是布尔值' } });
+      const r = mcp.setEnabled(mcpMatch[1], body.enabled);
+      if (!r.ok) return json(res, 404, { error: { message: r.error } });
+      await mcp.refresh();
+      log('info', body.enabled ? 'MCP 服务器已启用' : 'MCP 服务器已停用', { id: r.server.id });
+      return json(res, 200, { ok: true, server: r.server, servers: mcp.status() });
     }    // ---------- Goal REST 面：一会话一目标；用户操作的优先级永远高于模型提案 ----------
     // GET 走路径带 sessionId（web.mjs 委派时已剥掉 query）；POST 与 turn 一致从 body 取
     // 输入区 @ 提及：只读工作目录内文件名搜索（web.mjs 委派时已剥 query，这里从 req.url 解析）

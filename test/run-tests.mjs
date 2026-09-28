@@ -2096,6 +2096,23 @@ await test('代码高亮源码契约：Markdown 代码块接入零依赖高亮�
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
     assert(css.includes('.mcp-form') && css.includes('.mcp-form-row'), 'app.css 应有 MCP 表单样式');
   });
+  await test('MCP 显示开关源码契约：行尾开关、停用禁探测、后端 enabled 路由', () => {
+    const panel = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'McpPanel.tsx'), 'utf8');
+    assert(panel.includes('mcp-toggle') && panel.includes('aria-pressed={s.enabled}'), 'MCP 行应有显示开关并标记 aria-pressed');
+    assert(panel.includes('setMcpServerEnabled(s.id, !s.enabled)'), '开关应走后端 enabled 路由');
+    assert(/disabled=\{busy === `probe:\$\{s\.id\}` \|\| !s\.enabled\}/.test(panel), '停用的服务器不应再允许测试连接');
+    assert(panel.includes('已停用') && panel.includes('已启用'), '开关与徽标应说清当前开关状态');
+    const api = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'api.ts'), 'utf8');
+    assert(api.includes('/api/mcp/servers/${id}/enabled'), 'api 客户端应覆盖显示开关路由');
+    const http = readFileSync(join(__dirname, '..', 'util', 'agent', 'http.mjs'), 'utf8');
+    assert(http.includes("mcpMatch[2] === '/enabled'") && http.includes('mcp.setEnabled(mcpMatch[1], body.enabled)'), '后端应接 enabled 路由并落盘');
+    assert(http.includes("mcpMatch[2] === '/probe'"), 'probe 分支应精确匹配，不能被 /enabled 抢走');
+    assert(http.includes("typeof body.enabled !== 'boolean'"), 'enabled 必须做布尔校验');
+    const reg = readFileSync(join(__dirname, '..', 'util', 'mcp', 'registry.mjs'), 'utf8');
+    assert(reg.includes('setEnabled(id, enabled)') && reg.includes('target.enabled = enabled !== false'), '注册表应提供显示开关并原子落盘');
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    assert(css.includes('.mcp-toggle') && css.includes('.mcp-toggle.on'), 'app.css 应有开关两态样式');
+  });
   await test('旧 UI 已退役：提供方模块与样式不再服务', async () => {
     eq((await fetch(`${BASE}/providers.mjs`)).status, 404);
     eq((await fetch(`${BASE}/providers.css`)).status, 404);
@@ -3650,6 +3667,56 @@ await test('MCP：注册 mock 服务器并经 Agent turn 调用其工具（实�
   eq((await del.json()).removed, 1, '删除应生效');
   const after = await (await fetch(`${BASE}/api/mcp/servers`)).json();
   eq(after.servers.find((s2) => s2.id === 'mock'), undefined, '删除后不应再列出');
+});
+
+await test('MCP 显示开关：停用后工具不进请求，再开即恢复；非法载荷 400、未知服务器 404', async () => {
+  const created = await fetch(`${BASE}/api/mcp/servers`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: 'mock', name: 'Mock MCP', transport: 'stdio', command: process.execPath, args: [join(__dirname, 'mock-mcp-server.mjs')] }),
+  });
+  eq(created.status, 200, '注册应成功');
+  const off = await fetch(`${BASE}/api/mcp/servers/mock/enabled`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: false }),
+  });
+  eq(off.status, 200, '停用应成功');
+  eq((await off.json()).servers.find((x) => x.id === 'mock').enabled, false, '快照应反映已停用');
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_MCP 调用 MCP 工具' }),
+  });
+  const stream = openAgentStream(resp);
+  const evs = await drainAgentStream(stream);
+  const sentNames = (mock.state.lastChatBody?.tools || []).map((t) => t.function?.name || t.name);
+  assert(!sentNames.some((n) => String(n).startsWith('mcp__mock__')), '停用后 MCP 工具不应再进入请求顶层 tools[]');
+  const rec = evs.find((e) => e.type === 'tool_event' && e.toolName === 'mcp__mock__echo' && String(e.output || '').includes('未知工具'));
+  assert(rec && rec.phase === 'failed', '模型仍调用已停用服务器的工具时应得到未知工具回执');
+  assert(evs.at(-1).type === 'turn_completed', '应以 turn_completed 收尾');
+  const bad = await fetch(`${BASE}/api/mcp/servers/mock/enabled`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: 'no' }),
+  });
+  eq(bad.status, 400, 'enabled 非布尔应 400');
+  const missing = await fetch(`${BASE}/api/mcp/servers/nope/enabled`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: true }),
+  });
+  eq(missing.status, 404, '未知服务器应 404');
+  const on = await fetch(`${BASE}/api/mcp/servers/mock/enabled`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: true }),
+  });
+  eq(on.status, 200, '再启用应成功');
+  const s2 = await createAgentSession();
+  const resp2 = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s2.id, input: 'USE_MCP 调用 MCP 工具' }),
+  });
+  const stream2 = openAgentStream(resp2);
+  await drainAgentStream(stream2, { until: (ev) => ev.type === 'tool_event' && ev.phase === 'confirmation_needed' });
+  const sent2 = (mock.state.lastChatBody?.tools || []).map((t) => t.function?.name || t.name);
+  assert(sent2.includes('mcp__mock__echo'), '再启用后工具应回到请求顶层 tools[]');
+  await fetch(`${AGENT}/abort`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: s2.id }) });
+  await drainAgentStream(stream2);
+  const del = await fetch(`${BASE}/api/mcp/servers/mock`, { method: 'DELETE' });
+  eq((await del.json()).removed, 1, '删除应生效');
 });
 
 await test('Agent turn：空输入 400、未知会话 404', async () => {

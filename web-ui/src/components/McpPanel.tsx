@@ -2,7 +2,7 @@
  *  后端 util/mcp/registry.mjs；未开启实验时后端 404，本面板展示开启指引。 */
 import { useCallback, useEffect, useState } from 'react';
 import { IconAlert, IconCheck, IconGlobe, IconPlus, IconRefresh, IconTerminal, IconTrash } from '../icons';
-import { createMcpServer, deleteMcpServer, listMcpServers, probeMcpServer } from '../api';
+import { createMcpServer, deleteMcpServer, listMcpServers, probeMcpServer, setMcpServerEnabled } from '../api';
 import type { McpServerRow } from '../types';
 
 type Draft = { id: string; name: string; transport: 'stdio' | 'http'; command: string; args: string; url: string };
@@ -66,6 +66,19 @@ export function McpPanel() {
     }
   };
 
+  /** 显示开关：停用即把该服务器的工具从 Agent 工具箱摘掉，配置保留可随时再开 */
+  const toggle = async (s: McpServerRow) => {
+    setBusy(`toggle:${s.id}`);
+    try {
+      await setMcpServerEnabled(s.id, !s.enabled);
+      await reload();
+    } catch (e) {
+      setProbeMsg((m) => ({ ...m, [s.id]: e instanceof Error ? e.message : String(e) }));
+    } finally {
+      setBusy('');
+    }
+  };
+
   const remove = async (id: string) => {
     setBusy(`del:${id}`);
     try {
@@ -110,7 +123,16 @@ export function McpPanel() {
               </span>
             </div>
             <div className="pv-row-acts">
-              <button type="button" className="btn btn-link" disabled={busy === `probe:${s.id}`} onClick={() => probe(s.id)}>
+              <button
+                type="button"
+                className={`mcp-toggle ${s.enabled ? 'on' : ''}`}
+                aria-pressed={s.enabled}
+                disabled={busy === `toggle:${s.id}`}
+                onClick={() => toggle(s)}
+              >
+                {s.enabled ? '已启用' : '已停用'}
+              </button>
+              <button type="button" className="btn btn-link" disabled={busy === `probe:${s.id}` || !s.enabled} onClick={() => probe(s.id)}>
                 <IconRefresh size={12} /> 测试连接
               </button>
               <button type="button" className="btn btn-link danger" disabled={busy === `del:${s.id}`} onClick={() => remove(s.id)}>
