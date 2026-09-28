@@ -1703,6 +1703,21 @@ try {
     assert(css.includes('.set-rail {') && css.includes('.set-row {') && css.includes('.set-group-t {'), 'app.css 应有分级导航与行式条目样式');
     assert(css.includes('.set-page[hidden] { display:none; }'), '缓存的非当前 section 应真正隐藏');
     assert(!css.includes('.pv-sec {'), 'section 标题已由壳 header 承担，旧包裹样式应退役');
+    // 弹层几何：显式居中 + 遮罩模糊 + 固定高度（对齐 dsh web，修「不居中 / 无模糊 / 高度乱抖」）
+    assert(/\.dlg \{[^}]*position:fixed;[^}]*inset:0;[^}]*margin:auto/.test(css), 'dialog 应显式四边为 0 + margin:auto 居中（UA 对 :modal 的 inset 处理不一致）');
+    assert((css.match(/backdrop-filter:blur\(6px\)/g) || []).length >= 2, '遮罩应在深色与浅色主题下都模糊');
+    assert(/\.dlg-settings \{ width:min\(860px[^}]*height:min\(800px/.test(css), '设置弹层应固定宽高（不再 fit-content 随内容抖）');
+    assert(css.includes('.dlg-settings .dlg-panel { flex-direction:row; height:100%; max-height:100%; }'), '设置面板应撑满固定高度，滚动交给内容区');
+    assert(!css.includes('max-height:inherit'), '面板不得再 inherit max-height（inherit 取不到弹层 used 值，等于没限高）');
+  });
+  await test('停止按钮方块源码契约：Composer 与 GoalBar 共用同一图标，方块按 dsh 比例放大', () => {
+    const icons = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'icons.tsx'), 'utf8');
+    const stop = /export const IconStop[\s\S]*?<rect x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)" rx="([\d.]+)"/.exec(icons);
+    assert(stop, '应有 IconStop 方块图标');
+    const w = Number(stop[3]);
+    assert(w >= 14, `停止方块应占满图标可视区（当前 ${w}/24，dsh 为 15/24）`);
+    assert(Number(stop[1]) === (24 - w) / 2 && Number(stop[2]) === (24 - w) / 2, '停止方块应居中');
+    assert(icons.split('export const IconStop').length - 1 === 1, '停止按钮应只有一份图标定义（Composer / GoalBar 共用，改一处两处生效）');
   });
   await test('侧边对话界面源码契约：turn 事件处理器主 / 侧同源、横幅与 Ctrl+/ 切换在场', () => {
     const te = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'turn-events.ts'), 'utf8');
