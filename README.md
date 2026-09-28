@@ -70,8 +70,9 @@ npm run web       # 网页工作台 http://localhost:8787
 - **目标横幅**：有 Goal 时显示在对话区顶部——状态芯片、目标内容、tokens / 轮次 / live 时长、预算上限、最近验证结论、随状态裁剪的动作提示，暂停 / 恢复 / 停止一键操作，等待授权 / 验证时显示「等待中」，目标完成贴同源回执；另一客户端（终端 / 另一标签页）的改动经 SSE 事件流实时同步到横幅
 - **`/goal` 命令**：聊天框直接输入即走目标命令（整段 `/goal` 开头不当作普通消息）——`/goal <目标内容>` 设立或改写、`budget=50K` 一并设预算、`/goal edit` 回填续编、`/goal clear` 移除（`cancel` / `delete` 同义）、`pause/resume/stop`，与终端同一份解析器
 - **会话派生**：侧栏每会话可复制历史到新会话（新 id，原会话不动）
-- **设置弹层**：提供方管理（自定义上游）、开机自启开关、终端偏好（OSC 标题项序、系统通知时机 / 通道 / 事件；浏览器通知 opt-in 开关，默认关）、网络（Agent 沙箱出站代理：本机直连被重置的站点（如维基百科）可经 `http://127.0.0.1:7890` 这类本机 HTTP 代理抓取，留空直连，保存即时生效）、数据目录与版本
-- 设计令牌自原版迁移（暗色、强调蓝 `#4d8df6`）；零 emoji，图标一律内联 SVG；Markdown 为手写子集渲染器（标题 / 列表 / 代码高亮 / 表格 / 公式），不引第三方库
+- **设置弹层**：提供方管理（自定义上游）、用量统计（近 30 天逐日 token 走势 + 按模型 / 提供方 / 用途 / 会话构成 + 最近请求明细）、错误日志（界面崩溃与未捕获错误的落盘查看与清空）、开机自启开关、终端偏好（OSC 标题项序、系统通知时机 / 通道 / 事件；浏览器通知 opt-in 开关，默认关）、网络（Agent 沙箱出站代理：本机直连被重置的站点（如维基百科）可经 `http://127.0.0.1:7890` 这类本机 HTTP 代理抓取，留空直连，保存即时生效）、外观（跟随系统 / 浅色 / 深色，只影响本机浏览器）、数据目录与版本
+- **通知与容错**：右下角通知（保存成功 / 切换失败等一次性反馈，悬停暂停计时，同一提示不重复刷屏）；未捕获异常与 Promise 拒绝统一上报错误日志；渲染期崩溃显示可重载 / 可复制详情的兜底页而非白屏
+- 设计令牌自原版迁移（深色为默认，另有浅色主题整套同名变量覆盖，`data-theme` 首帧预置防闪；强调蓝 `#4d8df6`）；零 emoji，图标一律内联 SVG；Markdown 为手写子集渲染器（标题 / 列表 / 代码高亮 / 表格 / 公式），不引第三方库
 
 开发态前端：`npm run dev:web`（vite 监听 5173，`/api` 代理到 8787）；改完前端 `npm run build:web` 产出即被 `web.mjs` 以 `/app/` 服务（哈希资产长缓存 + SPA 回退 + 防目录穿越）。
 
@@ -145,7 +146,7 @@ Agent 运行时（`/api/agent/*`，单活跃 turn：已有 turn 在跑时返回 
 
 MCP 实验面（`AURORAAGENT_EXPERIMENTAL_MCP=1` 门控，未开启 404 并附开启指引）：`GET /api/mcp/servers`、`POST /api/mcp/servers`、`DELETE /api/mcp/servers/:id`、`POST /api/mcp/servers/:id/probe`（测试连接并列举工具）。
 
-模型速测底座（全部保持原样）：`POST /api/chat`（SSE 流式对话，`provider` 路由自定义上游）、`POST /api/abort`、`GET /api/models`（60s 缓存）、`GET/POST/PUT/DELETE /api/providers*`、`POST /api/providers/discover`、`GET /api/status` `/api/health`、`GET /api/usage`、`GET/POST /api/settings`、`POST/GET/DELETE /api/logs/errors`（前端崩溃与未捕获错误的落盘与查看）、`GET /vendor/<name>.svg`。
+模型速测底座（全部保持原样）：`POST /api/chat`（SSE 流式对话，`provider` 路由自定义上游）、`POST /api/abort`、`GET /api/models`（60s 缓存）、`GET/POST/PUT/DELETE /api/providers*`、`POST /api/providers/discover`、`GET /api/status` `/api/health`、`GET /api/usage`（`?lite=1` 只取汇总；默认另带近 30 天 `stats` 统计视图）、`GET/POST /api/settings`、`POST/GET/DELETE /api/logs/errors`（前端崩溃与未捕获错误的落盘与查看）、`GET /vendor/<name>.svg`。
 
 ## 数据与日志（与 App 解耦）
 

@@ -131,3 +131,16 @@ export type LiveTurn = {
   plan: PlanView | null;
   round: number; startedAt: number;
 };
+
+/** 用量账本统计（GET /api/usage；stats 段由 util/usage.mjs 聚合） */
+export interface UsageBucket { key: string; requests: number; inputTokens: number; outputTokens: number; cost: number }
+export interface UsageDay { day: string; requests: number; inputTokens: number; outputTokens: number; cost: number }
+export interface UsageStats { days: number; byDay: UsageDay[]; byModel: UsageBucket[]; byProvider: UsageBucket[]; byPurpose: UsageBucket[]; bySession: UsageBucket[] }
+export interface UsageSummary {
+  totals: { requests: number; inputTokens: number; outputTokens: number; cost: number };
+  recent: { ts: string; kind: string; model?: string; provider?: string; sessionId?: string; inputTokens: number; outputTokens: number; cost: number; purpose?: string }[];
+  stats?: UsageStats;
+}
+
+/** 错误日志条目（<数据目录>/logs/errors.log，JSON Lines） */
+export interface ErrorLogEntry { ts: string; kind: string; message: string; detail: string; version: string }

@@ -236,8 +236,13 @@ const server = createServer(async (req, res) => {
     return res.end(JSON.stringify({ ok: true, model: cfg.model, hasKey: Boolean(cfg.apiKey), ts: Date.now() }));
   }
   if (req.method === 'GET' && url === '/api/usage') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify(usage.summary()));
+    // 面板默认要统计视图（近 30 天走势 + 构成）；?lite=1 只取汇总与最近记录（省一次全文扫描）
+    const body = usage.summary();
+    if (!new URL(req.url, 'http://localhost').searchParams.has('lite')) {
+      body.stats = usage.stats({ days: 30 });
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    return res.end(JSON.stringify(body));
   }
 
   // 错误日志（/api/logs/errors，实现见 util/errorlog.mjs）：前端全局捕获上报 + 设置页查看 / 清空

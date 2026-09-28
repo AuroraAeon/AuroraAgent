@@ -1498,6 +1498,35 @@ await test('错误日志去重器：同 key 窗口内只放行一次，过期后
   assert(dd.allow('a|b', Date.now() + 1500), '过期后重新放行');
 });
 
+// ---------- 单元测试: 用量统计视图 ----------
+console.log('\n用量统计单元测试');
+await test('账本 stats：近 N 天逐日补零、按模型 / 提供方 / 用途 / 会话构成并按费用排序', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-usage-stats-'));
+  const u = new UsageLedger(dir);
+  u.record({ kind: 'agent', requestId: 'r1', sessionId: 's1', model: 'LongCat-2.5-Preview', provider: 'builtin', inputTokens: 100, outputTokens: 20, cost: 0.01, purpose: 'turn' });
+  u.record({ kind: 'agent', requestId: 'r2', sessionId: 's1', model: 'LongCat-2.5-Preview', provider: 'builtin', inputTokens: 200, outputTokens: 30, cost: 0.02, purpose: 'turn' });
+  u.record({ kind: 'chat', requestId: 'r3', model: 'other-model', provider: 'p2', inputTokens: 10, outputTokens: 5, cost: 0.05 });
+  const st = u.stats({ days: 7, top: 3 });
+  eq(st.byDay.length, 7, '应按天补零，柱状图不断档');
+  eq(st.byDay[6].requests, 3, '今天的请求应落在最后一天');
+  eq(st.byDay[0].requests, 0, '无记录的日期补零');
+  eq(st.byModel.length, 2, '按模型聚合');
+  eq(st.byModel[0].key, 'other-model', '费用高的排前面');
+  eq(st.byModel[0].cost, 0.05);
+  eq(st.byProvider[0].key, 'p2', '按提供方聚合');
+  const turnPurpose = st.byPurpose.find((x) => x.key === 'turn');
+  eq(turnPurpose?.requests, 2, 'turn 用途应聚两条');
+  assert(st.byPurpose.some((x) => x.key === 'chat'), '无 purpose 的速测请求回退 kind=chat');
+  eq(st.bySession.length, 1, '会话构成只算 agent 请求');
+  eq(st.bySession[0].key, 's1');
+  const emptyDir = mkdtempSync(join(tmpdir(), 'lc-usage-empty-'));
+  const empty = new UsageLedger(emptyDir).stats({ days: 2, top: 2 });
+  eq(empty.byDay.length, 2, '空账本也应给足天数');
+  eq(empty.byModel.length, 0, '空账本无构成');
+  rmSync(dir, { recursive: true, force: true });
+  rmSync(emptyDir, { recursive: true, force: true });
+});
+
 // ---------- e2e ----------
 console.log('\n端到端测试（mock 上游 + 真实 socket）');
 const mock = await startMock(MOCK_PORT);
@@ -1594,6 +1623,41 @@ try {
     assert(main.includes('<AppErrorBoundary>') && main.includes('installGlobalErrorHandlers()'), '入口应包错误边界并装全局捕获');
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
     assert(css.includes('.toast-viewport') && css.includes('.crash-card'), '应有通知视口与崩溃页样式');
+  });
+  await test('用量与错误日志面板源码契约：设置弹层两块新面板在场', () => {
+    const settings = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SettingsDialog.tsx'), 'utf8');
+    assert(settings.includes('<UsagePanel />') && settings.includes('<ErrorLogPanel />'), '设置弹层应接入用量与错误日志面板');
+    const usage = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'UsagePanel.tsx'), 'utf8');
+    assert(usage.includes('DayBars') && usage.includes('usage-stack'), '用量面板应有逐日柱状与构成占比条');
+    assert(usage.includes('getUsage'), '用量面板应走 /api/usage');
+    assert(!hasEmoji(usage), '用量面板零 emoji 铁律');
+    const errlog = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ErrorLogPanel.tsx'), 'utf8');
+    assert(errlog.includes('listErrorLogs') && errlog.includes('clearErrorLogs'), '错误日志面板应支持查看与清空');
+    assert(!hasEmoji(errlog), '错误日志面板零 emoji 铁律');
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    assert(css.includes('.usage-chart') && css.includes('.errlog-head'), '应有面板样式');
+    const agg = readFileSync(join(__dirname, '..', 'util', 'usage.mjs'), 'utf8');
+    assert(agg.includes('stats({ days = 30'), '账本应提供统计聚合入口');
+  });
+  await test('双主题源码契约：浅色令牌整套覆盖、首帧防闪、设置页切换', () => {
+    const tokens = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'tokens.css'), 'utf8');
+    assert(tokens.includes(':root[data-theme="light"]'), 'tokens.css 应有浅色主题变量块');
+    for (const v of ['--bg:', '--panel:', '--text:', '--dim:', '--accent:', '--ok-ink:', '--danger-ink:', '--diff-add:', '--shadow-pop:']) {
+      assert(tokens.includes(v), `令牌 ${v} 应在场（双主题同名覆盖）`);
+    }
+    // 浅色块必须真的改掉中性色，而不是把深色值抄一遍
+    const lightBlock = tokens.slice(tokens.indexOf(':root[data-theme="light"]'));
+    assert(/--bg:\s*#f[0-9a-f]{5}/i.test(lightBlock), '浅色背景应为亮色');
+    assert(/--text:\s*#1[0-9a-f]{5}/i.test(lightBlock), '浅色文字应为暗色');
+    assert(lightBlock.includes('color-scheme:light'), '浅色块应声明 color-scheme');
+    const html = readFileSync(join(__dirname, '..', 'web-ui', 'index.html'), 'utf8');
+    assert(html.includes("localStorage.getItem('auroraagent.theme')") && html.includes('dataset.theme'), 'index.html 应首帧预置 data-theme 防闪');
+    const theme = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'theme.ts'), 'utf8');
+    assert(theme.includes('watchSystemTheme') && theme.includes("matchMedia('(prefers-color-scheme: dark)')"), 'theme.ts 应跟随系统主题');
+    const settings = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SettingsDialog.tsx'), 'utf8');
+    assert(settings.includes('useThemePreference') && settings.includes('THEME_OPTIONS'), '设置页应有主题切换');
+    const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    assert(!/box-shadow:0 14px 44px rgb\(0 0 0/.test(app), '浮层阴影应走令牌，浅色下自动变淡');
   });
   await test('输入区窄屏布局源码契约：工具栏可换行、芯片不收缩不折行、尾部右对齐', () => {
     const com = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Composer.tsx'), 'utf8');
@@ -1952,6 +2016,14 @@ await test('代码高亮源码契约：Markdown 代码块接入零依赖高亮�
       body: JSON.stringify({ requestId: 'no-such-request-id' }),
     })).json();
     eq(j.aborted, false);
+  });
+  await test('用量汇总带统计视图：逐日补零与四类构成', async () => {
+    const j = await (await fetch(`${BASE}/api/usage`)).json();
+    assert(j.totals && j.stats, '应同时返回汇总与统计视图');
+    eq(j.stats.byDay.length, 30, '近 30 天逐日数据');
+    assert(Array.isArray(j.stats.byModel) && Array.isArray(j.stats.byProvider) && Array.isArray(j.stats.bySession), '应有构成分组');
+    const lite = await (await fetch(`${BASE}/api/usage?lite=1`)).json();
+    assert(lite.totals && !lite.stats, 'lite 模式只取汇总与最近记录');
   });
   await test('错误日志：前端上报落盘、30 秒去重、查看与清空', async () => {
     const post = (body) => fetch(`${BASE}/api/logs/errors`, {

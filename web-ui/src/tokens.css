@@ -1,5 +1,7 @@
 /* 设计令牌：自 public/index.html 原样迁移（暗色 / 强调蓝 #4d8df6 / 零 emoji）。
-   组件内禁止硬编码语义色，一律引用本表变量。 */
+   组件内禁止硬编码语义色，一律引用本表变量。
+   双主题：:root 为深色（默认），:root[data-theme="light"] 覆盖同一组变量为浅色；
+   data-theme 由 index.html 的首帧脚本与 src/theme.ts 维护（跟随系统 / 浅色 / 深色）。 */
 :root {
   /* 中性色：背景 / 面板 / 表面 / 线条 / 文字 */
   --bg:#0e1014; --panel:#151820; --surface:#1b1f2a; --surface-hover:#232936;
@@ -16,9 +18,30 @@
   --diff-add:#4ec97f; --diff-add-bg:rgb(78 201 127 / 10%); --diff-add-ink:#8fe3b4;
   --diff-del:#ff6b6b; --diff-del-bg:rgb(255 107 107 / 10%); --diff-del-ink:#ff9a9a;
   --diff-meta:#8b93a7;
+  /* 投影：浮层与卡片阴影（浅色下更淡，避免糊成一片） */
+  --shadow-pop:0 14px 44px rgb(0 0 0 / 46%);
+  --shadow-card:0 10px 30px rgb(0 0 0 / 32%);
   --radius:14px;
   --ease:cubic-bezier(.22,.9,.28,1);
   color-scheme:dark;
+}
+
+/* 浅色主题：同名变量整套覆盖，组件代码零改动。强调色加深以保证在白底上的对比度。 */
+:root[data-theme="light"] {
+  --bg:#f5f7fb; --panel:#ffffff; --surface:#eef1f7; --surface-hover:#e3e8f2;
+  --line:#dde2ec; --line-strong:#c2cadb; --panel-line:#d5dbe8;
+  --text:#171c27; --dim:#586175; --faint:#8a92a6; --code-bg:#f1f4f9;
+  --accent:#2f6fe0; --accent-hi:#1f5ccc; --accent-soft:rgb(47 111 224 / 10%); --accent-line:rgb(47 111 224 / 32%); --accent-ink:#ffffff;
+  --accent-glow:rgb(47 111 224 / 5%); --accent-shadow:rgb(47 111 224 / 22%);
+  --ok:#1f9d55; --ok-ink:#166b3c; --ok-bg:rgb(31 157 85 / 10%); --ok-line:rgb(31 157 85 / 30%);
+  --danger:#d64545; --danger-ink:#a92c2c; --danger-bg:rgb(214 69 69 / 8%); --danger-bg-hi:rgb(214 69 69 / 16%); --danger-line:rgb(214 69 69 / 30%); --danger-line-hi:rgb(214 69 69 / 50%);
+  --think:#0d8798; --think-soft:rgb(13 135 152 / 7%);
+  --diff-add:#1f9d55; --diff-add-bg:rgb(31 157 85 / 10%); --diff-add-ink:#166b3c;
+  --diff-del:#d64545; --diff-del-bg:rgb(214 69 69 / 8%); --diff-del-ink:#a92c2c;
+  --diff-meta:#586175;
+  --shadow-pop:0 14px 40px rgb(23 32 56 / 14%);
+  --shadow-card:0 10px 30px rgb(23 32 56 / 12%);
+  color-scheme:light;
 }
 
 * { box-sizing:border-box; margin:0; padding:0; }

@@ -12,7 +12,10 @@ import { McpPanel } from './McpPanel';
 import { SkillsPanel } from './SkillsPanel';
 import { TuiPanel } from './TuiPanel';
 import { ProxyPanel } from './ProxyPanel';
+import { UsagePanel } from './UsagePanel';
+import { ErrorLogPanel } from './ErrorLogPanel';
 import { toast } from '../toast';
+import { THEME_OPTIONS, useThemePreference } from '../theme';
 
 const emptyDraft = (protocol = 'openai'): Draft => ({
   id: '', name: '', protocol, baseUrl: '', pathPrefix: '', apiKey: '',
@@ -55,6 +58,7 @@ export function SettingsDialog({ open, onClose, onProvidersChanged }: Props) {
   const [autostartBusy, setAutostartBusy] = useState(false);
   const [picker, setPicker] = useState<{ models: Candidate[]; picked: Set<string>; q: string } | null>(null);
   const [delTarget, setDelTarget] = useState<{ id: string; name: string } | null>(null);
+  const [themePref, chooseTheme] = useThemePreference();
 
   const reload = useCallback(async () => {
     const [pv, st] = await Promise.all([listProviders(), getSettings()]);
@@ -243,6 +247,10 @@ export function SettingsDialog({ open, onClose, onProvidersChanged }: Props) {
               ) : null}
             </section>
 
+            <UsagePanel />
+
+            <ErrorLogPanel />
+
             <McpPanel />
 
             <SkillsPanel />
@@ -250,6 +258,24 @@ export function SettingsDialog({ open, onClose, onProvidersChanged }: Props) {
             <TuiPanel />
 
             <ProxyPanel />
+
+            <section className="pv-sec">
+              <h3 className="pv-sec-t">外观</h3>
+              <p className="pv-intro">界面配色跟随系统或固定为浅色 / 深色，选择只影响本机浏览器。</p>
+              <div className="mode-seg" role="group" aria-label="界面主题">
+                {THEME_OPTIONS.map((o) => (
+                  <button
+                    key={o.id}
+                    type="button"
+                    className={`mode-btn ${themePref === o.id ? 'on' : ''}`}
+                    aria-pressed={themePref === o.id}
+                    onClick={() => chooseTheme(o.id)}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            </section>
 
             <section className="pv-sec">
               <h3 className="pv-sec-t">服务</h3>
