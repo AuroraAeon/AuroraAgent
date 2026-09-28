@@ -98,7 +98,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 
 调试：`LOG_LEVEL=debug npm run web`；常驻服务日志在 `~/Library/Logs/com.auroraagent.app.log`。
 
-发布：push 到 `master` 触发 `.github/workflows/release.yml`——先跑 `npm test`，全绿后 release-please 按常规提交（`feat` → 次版本、`fix` → 修订号，`docs` / `chore` 等不触发）开或更新「发布 PR」；合并发布 PR 即打 tag 并创建 GitHub Release，版本号只动 `package.json` 一处。文档站发布笔记仍走本地 `npm run docs:notes`。
+发布：push 到 `master` 触发 `.github/workflows/release.yml`——先跑 `npm test`（Linux runner 需补装 `zsh`，Node 固定 24），全绿后 release-please 按常规提交（`feat` → 次版本、`fix` → 修订号，`docs` / `chore` 等不触发）开或更新「发布 PR」（版本号只动 `package.json` 一处 + 生成 `CHANGELOG.md`）；合并发布 PR 即打 tag 并创建 GitHub Release。版本基线锚点为 tag `v7.0.0`（commit `86e2276`）；仓库须开启 「Allow GitHub Actions to create and approve pull requests」且 workflow 默认权限为 write，否则 release-please 建不了 PR。文档站发布笔记仍走本地 `npm run docs:notes`。
 
 ## 3. 数据目录与配置
 
