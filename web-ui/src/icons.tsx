@@ -188,6 +188,12 @@ export const IconCopy = (p: IconProps) => (
     <path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" />
   </Svg>
 );
+export const IconArrowLeft = (p: IconProps) => (
+  <Svg {...p}><line x1="20" y1="12" x2="4.5" y2="12" /><polyline points="10.5 5.5 4.5 12 10.5 18.5" /></Svg>
+);
+export const IconArrowRight = (p: IconProps) => (
+  <Svg {...p}><line x1="4" y1="12" x2="19.5" y2="12" /><polyline points="13.5 5.5 19.5 12 13.5 18.5" /></Svg>
+);
 export const IconGitBranch = (p: IconProps) => (
   <Svg {...p}>
     <line x1="6" y1="3" x2="6" y2="15" />

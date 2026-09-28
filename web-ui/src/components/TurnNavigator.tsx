@@ -43,9 +43,11 @@ type Props = {
   views: MsgView[];
   live: LiveTurn | null;
   scrollRef: RefObject<HTMLDivElement | null>;
+  /** 顶部浮层上一个 / 下一个提问请求（ZCode DesktopTopOverlay 任务导航的会话内对应物） */
+  navRequest?: { dir: 'prev' | 'next'; nonce: number } | null;
 };
 
-export function TurnNavigator({ views, live, scrollRef }: Props) {
+export function TurnNavigator({ views, live, scrollRef, navRequest }: Props) {
   const reduced = usePrefersReducedMotion();
   const items = useMemo(() => buildTurnNavItems(views, { running: Boolean(live), liveParts: live?.parts ?? null }), [views, live]);
   const [wide, setWide] = useState(false);
@@ -126,6 +128,16 @@ export function TurnNavigator({ views, live, scrollRef }: Props) {
     const top = row.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop - 12;
     el.scrollTo({ top: Math.max(0, top), behavior: reduced ? 'auto' : 'smooth' });
   }, [reduced, scrollRef]);
+
+  /** 浮层导航请求：相对当前活动项上 / 下移一项；无活动项（贴底或未测量）时上一个回落到最后一项 */
+  useEffect(() => {
+    if (!navRequest || items.length < 2) return;
+    const last = items.length - 1;
+    const from = activeIndex < 0 ? last : activeIndex;
+    const target = navRequest.dir === 'prev' ? Math.max(0, from - 1) : Math.min(last, from + 1);
+    if (target !== from) jump(items[target].key);
+    // 只按 nonce 变化响应：活动项随滚动自校正，不进来重跑
+  }, [navRequest]);
 
   /** 悬浮 / 焦点：视觉焦点即时（梯状即时反应），预览卡延迟 120ms 开、80ms 关（对齐 ZCode HoverCard） */
   const clearTimers = useCallback(() => {

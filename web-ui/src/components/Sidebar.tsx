@@ -6,13 +6,12 @@
  *  会话区：36px 区头（「会话」标签 + 可展开搜索）+ 32px 行（圆角 8px、悬停底色、14px 标题、
  *  12px 相对时间悬停隐去、16px 操作钮悬停现形）；栏脚是 panelRow 形态的设置入口。
  *
- *  折叠后侧栏整块消失（ZCode 语义：不存在左侧边，只剩 WorkspaceHeader 承载入口），
- *  品牌行这枚 28px 圆钮即展开态唯一的切换入口，图标取「关闭面板」语义的 IconPanelLeftClose，
- *  气泡挂 ControlTooltip 显示「切换侧边栏 + ⌘B/Ctrl+B」（Cmd/Ctrl+B 快捷键在 App 绑定）。 */
+ *  折叠后侧栏整块消失（ZCode 语义：不存在左侧边，只剩顶部浮层与 WorkspaceHeader 承载入口）。
+ *  切换入口统一在 WorkspaceTopOverlay 那枚「静止显品牌砖、hover 显面板图标」的 28px 幽灵钮上
+ *  （复刻 ZCode DesktopTopOverlay），品牌行只保留「点按即新建会话」的品牌本体；
+ *  侧栏顶部留出 48px 浮层带（.sidebar 的 padding-top），展开态浮层正好盖住这条带。 */
 import { useRef, useState } from 'react';
-import { IconClose, IconCopy, IconGear, IconPanelLeftClose, IconPlus, IconSearch, IconSpark, IconTrash } from '../icons';
-import { ControlTooltip } from '../ControlTooltip';
-import { sidebarToggleLabel } from '../shortcut';
+import { IconClose, IconCopy, IconGear, IconPlus, IconSearch, IconSpark, IconTrash } from '../icons';
 import { fmtRel } from '../projection';
 import type { SessionMeta } from '../types';
 
@@ -27,13 +26,10 @@ type Props = {
   /** 首屏会话列表未回：显示骨架行，别把「加载中」显示成「还没有会话」 */
   loading?: boolean;
   version: string;
-  /** 收回侧栏（受控：偏好持久化与 Ctrl/Cmd+B 快捷键都在 App 侧）；
-   *  收回态由 App 把本组件连同裁剪容器一起淡出，这里不再有图标态变体。 */
-  onToggleRail: () => void;
 };
 
 export function Sidebar({
-  sessions, currentId, onSelect, onNew, onDelete, onFork, onOpenSettings, loading, version, onToggleRail,
+  sessions, currentId, onSelect, onNew, onDelete, onFork, onOpenSettings, loading, version,
 }: Props) {
   const [q, setQ] = useState('');
   const [searchOn, setSearchOn] = useState(false);
@@ -52,16 +48,6 @@ export function Sidebar({
           <span className="sb-brand-mark" aria-hidden="true"><IconSpark size={15} /></span>
           <span className="sb-brand-name">AuroraAgent</span>
         </button>
-        <ControlTooltip title="切换侧边栏" shortcut={sidebarToggleLabel()} side="bottom">
-          <button
-            type="button"
-            className="sb-iconbtn sb-toggle"
-            aria-label="切换侧边栏"
-            onClick={onToggleRail}
-          >
-            <IconPanelLeftClose size={16} />
-          </button>
-        </ControlTooltip>
       </div>
       <button type="button" className="sb-new" onClick={onNew} title="新会话">
         <IconPlus size={14} />

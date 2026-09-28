@@ -1773,9 +1773,9 @@ try {
     const sidebar = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Sidebar.tsx'), 'utf8');
     const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
-    // 栏体：280px 宽 / 6px 12px 内边距 / 14px 基准字号 / 专用填充 / 56px 导轨
+    // 栏体：280px 宽 / 48px 顶部浮层带 + 12px 6px 内边距 / 14px 基准字号 / 专用填充
     assert(css.includes('width:280px'), '侧栏宽应为 dsh 的 280px');
-    assert(css.includes('padding:6px 12px; font-size:14px;'), '侧栏内边距与基准字号应对齐 dsh');
+    assert(css.includes('padding:48px 12px 6px; font-size:14px;'), '侧栏应留 48px 顶部浮层带并保持 dsh 基准字号');
     assert(css.includes('background:var(--sidebar-fill)'), '侧栏应用专用填充色而非面板色');
     assert(!css.includes('.sidebar.rail'), '收回态不应再是 56px 图标导轨（ZCode 语义：左边整体消失，只留 Header）');
     // 侧栏填充必须拉满整列高：块容器里 .sidebar 的 height:auto 会塌成内容高，展开态下面留一大块空白
@@ -1788,11 +1788,9 @@ try {
       assert(logo.includes(decl), `品牌行应按 dsh 数值声明 ${decl}`);
     }
     assert(css.includes('.sb-brand-name { font-size:18px; font-weight:600; line-height:24px; letter-spacing:.04em;'), '品牌名应按 dsh 18px/600/24px');
-    const iconbtn = /\.sb-iconbtn \{[^}]*\}/.exec(css)?.[0] || '';
-    for (const decl of ['width:28px', 'height:28px', 'border-radius:50%']) {
-      assert(iconbtn.includes(decl), `折叠钮应按 dsh 数值声明 ${decl}`);
-    }
-    assert(sidebar.includes('IconPanelLeftClose') && !sidebar.includes('sb-rail'), '折叠钮应取「关闭面板」语义图标，且 56px 导轨分支应整体退役');
+    // 切换入口已整体迁到 WorkspaceTopOverlay（ZCode DesktopTopOverlay）：品牌行只留品牌本体
+    assert(!css.includes('.sb-iconbtn'), '侧栏图标钮样式应随切换钮迁出而退役');
+    assert(!sidebar.includes('IconPanelLeftClose') && !sidebar.includes('sb-rail') && !sidebar.includes('onToggleRail'), 'Sidebar 不应再有切换钮 / 56px 导轨分支 / onToggleRail prop');
     assert(sidebar.includes('className="sb-brand"') && sidebar.includes('onClick={onNew}'), '点品牌即新建会话（同 dsh 行为）');
     // 新建会话钮：38px / 圆角 12px / 14px/500
     const newBtn = /\.sb-new \{[^}]*\}/.exec(css)?.[0] || '';
@@ -1834,53 +1832,83 @@ try {
     eq(isAppleKeyboardPlatform({ platform: 'MacIntel' }), true, 'platform 命中 mac 应为 Apple 键盘平台');
     eq(isAppleKeyboardPlatform({ platform: 'Win32', userAgent: 'Mozilla/5.0 (Windows NT 10.0)' }), false, 'Windows 不应判为 Apple');
   });
-  await test('侧栏收回源码契约：ZCode 语义——左边整体消失只留 Header，200ms 擦除动画', () => {
+  await test('侧栏收回源码契约：ZCode 语义——左边整体消失只留 Header 与顶部浮层，200ms 擦除动画', () => {
     const header = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'WorkspaceHeader.tsx'), 'utf8');
+    const overlay = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'WorkspaceTopOverlay.tsx'), 'utf8');
     const sidebar = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Sidebar.tsx'), 'utf8');
     const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
     const tip = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'ControlTooltip.tsx'), 'utf8');
-    // 结构：侧栏不卸载但宽高归零 + 淡出（ZCode data-workspace-sidebar-panel），Header 常驻并承载全部入口
-    assert(app.includes('sb-panel') && app.includes('<WorkspaceHeader'), 'App 应把侧栏包进裁剪容器并渲染 WorkspaceHeader');
+    // 结构：侧栏不卸载但宽高归零 + 淡出（ZCode data-workspace-sidebar-panel）；
+    // Header 常驻承载工作区上下文 / 标题 / 菜单，切换与新建等全局入口迁到常驻顶部浮层
+    assert(app.includes('sb-panel') && app.includes('<WorkspaceHeader') && app.includes('<WorkspaceTopOverlay'), 'App 应把侧栏包进裁剪容器并渲染 WorkspaceHeader 与 WorkspaceTopOverlay');
     assert(app.includes('aria-hidden={rail || undefined}') && app.includes('inert={rail}'), '收回态侧栏应 aria-hidden + inert（不可见也不可聚焦）');
     assert(app.includes('collapsed={rail}'), 'Header 应收住态受控（collapsed 由 rail 驱动）');
     assert(app.includes('scope="header"') && app.includes('resetKeys={[currentId, rail]}'), 'Header 应自带分区错误边界（ZCode scope=workspace-header 同款，崩了不拖垮整列对话）');
-    assert(header.includes('ws-head') && header.includes('ws-toggle') && header.includes('ws-act') && header.includes('onOpenSettings'), 'Header 应自带切换钮 / 新建会话 / 设置入口（侧栏不可见时功能不丢）');
+    assert(app.includes('scope="top-overlay"'), '顶部浮层应自带分区错误边界');
+    assert(header.includes('ws-head') && header.includes('ws-act') && header.includes('onOpenSettings'), 'Header 应自带工作区卡 / 标题 / 更多菜单 / 帮助 / 设置入口');
     assert(!sidebar.includes('sb-rail') && !sidebar.includes('rail ?'), 'Sidebar 不应再有 56px 导轨分支');
-    // 动画规格：侧栏过渡 width / opacity、Header 过渡 height / opacity / box-shadow（分隔线走 inset 阴影，border 在 height:0 时仍占位），均 200ms ease-out，且都不许退回 all
+    // 动画规格：侧栏过渡 width / opacity 200ms ease-out，不许退回 all
     const panel = /\.sb-panel \{[^}]*\}/.exec(css)?.[0] || '';
     for (const decl of ['width:280px', 'overflow:hidden', 'transition:width 200ms var(--ease), opacity 200ms var(--ease)']) {
       assert(panel.includes(decl), `侧栏裁剪容器应按 ZCode transition-[width,opacity] 声明 ${decl}`);
     }
     assert(css.includes('.sb-panel.off { width:0; opacity:0; pointer-events:none; }'), '收回态应宽高归零 + 淡出 + 断指针（ZCode collapsedSidebarWidthPx=0）');
+    // Header 常驻 48px（ZCode h-12）：分隔线走 inset 阴影，不参与布局，与主区顶部严格对齐
     const head = /\.ws-head \{[^}]*\}/.exec(css)?.[0] || '';
-    for (const decl of ['height:0', 'opacity:0', 'transition:height 200ms var(--ease), opacity 200ms var(--ease), box-shadow 200ms var(--ease)']) {
-      assert(head.includes(decl), `Header 常驻态应按同拍动画声明 ${decl}`);
+    for (const decl of ['height:48px', 'overflow:hidden', 'box-shadow:inset 0 -1px 0 var(--line)']) {
+      assert(head.includes(decl), `Header 常驻态应按 ZCode h-12 + border-b 声明 ${decl}`);
     }
-    assert(css.includes('.ws-head.on { height:48px; opacity:1; box-shadow:inset 0 -1px 0 var(--line); }'), 'Header 展开应为 ZCode h-12 + border-b');
-    assert(css.includes('box-shadow:inset 0 -1px 0 transparent;') && !css.includes('.ws-head {\n  box-sizing'), '折叠态分隔线应走 inset 阴影：border 的 1px 在 height:0 时仍占位，会在主区顶部留 1px 透明缝');
+    assert(!css.includes('.ws-head.on'), 'Header 常驻后不应再有展开态类（不存在塌缩动画）');
     // ZCode WorkspaceHeader 内行：h-12 / p-2 / items-center / justify-between / gap-2 / overflow-hidden
     const row = /\.ws-head-row \{[^}]*\}/.exec(css)?.[0] || '';
-    for (const decl of ['display:flex', 'align-items:center', 'justify-content:space-between', 'gap:8px', 'height:48px', 'padding:8px', 'overflow:hidden']) {
+    for (const decl of ['display:flex', 'align-items:center', 'justify-content:space-between', 'gap:8px', 'height:48px', 'padding:8px', 'overflow:hidden', 'container-type:inline-size']) {
       assert(row.includes(decl), `Header 内行应按 ZCode h-12 + p-2 + gap-2 规格声明 ${decl}`);
     }
-    // 左组 gap-1 / 右组 gap-0.5（DesktopTopOverlay 交互容器与 WorkspaceHeaderActionSection）
-    assert(css.includes('.ws-head-left { display:flex; align-items:center; gap:4px;'), 'Header 左组应按 ZCode gap-1 排布切换钮与新建钮');
+    // 左组 gap-1 / 右组 gap-0.5（WorkspaceHeaderTitleSection 与 WorkspaceHeaderActionSection）
+    assert(css.includes('.ws-head-left { display:flex; align-items:center; gap:4px;'), 'Header 左组应按 ZCode gap-1 排布工作区卡与标题');
     assert(css.includes('.ws-head-right { display:flex; align-items:center; gap:2px;'), 'Header 右组应按 ZCode gap-0.5 排布');
+    // 标题（ZCode TID_WORKSPACE_TITLE）：14px/600 + max-w 400 + 容器查询窄档 30vw/22vw + 双击重命名
+    const title = /\.ws-title \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['max-width:400px', 'font-size:14px', 'font-weight:600']) {
+      assert(title.includes(decl), `会话标题应按 ZCode max-w-100 + text-ui-base 规格声明 ${decl}`);
+    }
+    assert(css.includes('@container (max-width:560px) { .ws-title { max-width:30vw; } }'), '标题窄档应按 ZCode @max-[560px] 收 30vw');
+    assert(css.includes('@container (max-width:420px) { .ws-title { max-width:22vw; } }'), '标题更窄档应按 ZCode @max-[420px] 收 22vw');
+    assert(header.includes('ws-title-input') && header.includes('onDoubleClick'), '标题应支持双击原位重命名（ZCode TaskRenameDialog 轻量替代）');
+    // 工作区上下文卡：hover 即显 + 点击 pin，路径 home 缩写 + 最近活动 + git 分支（懒拉取按工作目录缓存）
+    assert(header.includes('abbreviateHome') && header.includes('getWorkspace('), '工作区卡应经 abbreviateHome 缩写路径并按工作目录懒拉取 GET /api/workspace');
+    assert(header.includes('ct-rich-rows') && header.includes('ctxHover') && header.includes('ctxPinned'), '工作区卡应支持 hover 即显 + 点击 pin（ZCode workspaceContextOpen 受控模式）');
     // 入口钮统一 Button ghost icon-md：28px + rounded-lg + 只过渡颜色，图标 size-4
     const act = /\.ws-act \{[^}]*\}/.exec(css)?.[0] || '';
     for (const decl of ['width:28px', 'height:28px', 'border-radius:8px', 'transition:background-color 150ms var(--ease), color 150ms var(--ease)']) {
       assert(act.includes(decl), `入口钮应按 ZCode ghost icon-md 规格声明 ${decl}`);
     }
-    assert(header.includes('<IconPlus size={16} />') && header.includes('<IconGear size={16} />'), '新建与设置入口应按 ZCode size-4 图标规格');
-    assert(header.includes('newSessionLabel()') && header.includes('title="新会话"'), '新建钮应带 ⌘K/Ctrl+K 快捷键提示（对齐 ZCode newTaskShortcutLabel）');
-    assert(!header.includes('ws-new') && !header.includes('ws-ver'), 'Header 不应再放带标签的大钮与版本号芯片（ZCode 顶部浮层只有图标钮）');
-    assert(!/\.ws-head[^{]*\{[^}]*transition:all/.test(css) && !/\.sb-panel[^{]*\{[^}]*transition:all/.test(css), '过渡必须显式枚举属性，不许 transition:all（ZCode 同款教训）');
-    assert(css.includes('prefers-reduced-motion: reduce) { .sb-panel, .ws-head'), '减弱动效下侧栏擦除与 Header 生长应直接跳终态');
-    // Header 切换钮：ZCode DesktopTopOverlay 那枚 ghost 方钮（logo / 图标两层叠加 + 「打开面板」语义）
-    assert(header.includes('IconPanelLeftOpen') && sidebar.includes('IconPanelLeftClose'), '收回态取「打开面板」图标、展开态取「关闭面板」图标（ZCode SidebarToggleIcon 语义）');
-    assert(header.includes('ControlTooltip') && header.includes('title="切换侧边栏"') && header.includes('sidebarToggleLabel()'), 'Header 切换钮应挂 ControlTooltip 并带快捷键标签');
+    assert(header.includes('<IconGear size={16} />'), '设置入口应按 ZCode size-4 图标规格');
+    assert(header.includes('<IconFolder size={16} />') && header.includes('<IconEllipsis size={16} />') && header.includes('<IconCircleHelp size={16} />'), '工作区卡 / 更多菜单 / 帮助菜单触发器应按 size-4 图标规格');
     assert(header.includes('side="bottom"'), 'Header 气泡应在按钮下方（ZCode side=bottom）');
+    // 顶部浮层（ZCode DesktopTopOverlay）：切换 / 上一个 / 下一个 / 新建 / 更新全在这
+    assert(overlay.includes('ws-overlay') && overlay.includes('ws-overlay-group') && overlay.includes('ws-overlay-new'), '浮层应按 ZCode DesktopTopOverlay 结构组织');
+    assert(overlay.includes('<IconPlus size={16} />') && overlay.includes('newSessionLabel()'), '新建会话钮应带 ⌘K/Ctrl+K 快捷键提示（对齐 ZCode newTaskShortcutLabel）');
+    assert(overlay.includes('IconArrowLeft') && overlay.includes('IconArrowRight') && overlay.includes('canNav'), '浮层应承载上一个 / 下一个提问导航（会话不足两轮禁用）');
+    assert(overlay.includes('IconPanelLeftOpen') && overlay.includes('IconPanelLeftClose'), '切换钮应按 ZCode SidebarToggleIcon 语义取「打开 / 关闭面板」双图标');
+    assert(overlay.includes('ControlTooltip') && overlay.includes('title="切换侧边栏"') && overlay.includes('sidebarToggleLabel()'), '浮层切换钮应挂 ControlTooltip 并带快捷键标签');
+    assert(overlay.includes('updateUrl') && overlay.includes('ws-upd'), '发现新版本时浮层应出现更新入口（ZCode 教训：收回态不能按宽度阈值隐藏全局更新入口）');
+    assert(css.includes('.ws-overlay { position:absolute; left:0; top:0; height:48px; z-index:20; pointer-events:none;'), '浮层应常驻 absolute 定位且外层不吃事件（空白处点击归侧栏）');
+    assert(css.includes('.ws-overlay-new.on { width:28px; opacity:1; }') && css.includes('transition:opacity 300ms var(--ease), width 300ms var(--ease)'), '新建钮应按 ZCode isNewTaskButtonVisible 语义做 opacity/width 300ms 过渡');
+    assert(app.includes('overlayInset={overlayW}'), 'Header 收回态应按实测浮层宽让位（ZCode shouldOffsetHeaderForWindowControls 同思路）');
+    // 侧栏顶部留出 48px 浮层带（ZCode overlay h-14 盖住侧栏顶部同款）
+    assert(css.includes('padding:48px 12px 6px; font-size:14px;'), '侧栏应留 48px 顶部浮层带');
+    assert(css.includes('.app { position:relative;'), '布局根应 relative 让浮层绝对定位有锚点');
+    // App 侧接线：浮层宽实测 / 窄窗自动收起 / 更新检查 / 导航请求 / 重命名
+    assert(app.includes('overlayW') && app.includes('ResizeObserver'), 'App 应实测浮层宽度供 Header 让位');
+    assert(app.includes('mainRef') && app.includes('360'), '主列过窄时应自动收回侧栏（ZCode AUTO_COLLAPSE 阈值 360px 同款）');
+    assert(app.includes('checkUpdate') && app.includes('UpdateInfo'), 'App 进页面应拉一次版本更新状态');
+    assert(app.includes('requestNav') && app.includes('navRequest={sideActive ? null : navReq}'), '浮层导航请求应经 ChatView 透传给 TurnNavigator');
+    assert(app.includes('renameCurrent') && app.includes('patchSession(current.id, { name })'), 'Header 重命名应走 PATCH 落 meta');
+    assert(!/\.ws-head[^{]*\{[^}]*transition:all/.test(css) && !/\.sb-panel[^{]*\{[^}]*transition:all/.test(css), '过渡必须显式枚举属性，不许 transition:all（ZCode 同款教训）');
+    assert(css.includes('prefers-reduced-motion: reduce) { .sb-panel, .ws-overlay-new'), '减弱动效下侧栏擦除与浮层过渡应直接跳终态');
+    // 浮层切换钮：ZCode DesktopTopOverlay 那枚 ghost 方钮（logo / 图标两层叠加 + 「打开 / 关闭面板」语义）
     const btn = /\.ws-toggle \{[^}]*\}/.exec(css)?.[0] || '';
     for (const decl of ['width:28px', 'height:28px', 'border-radius:8px', 'position:relative', 'overflow:hidden']) {
       assert(btn.includes(decl), `切换钮应按 ZCode rounded-lg 规格声明 ${decl}`);
@@ -1919,7 +1947,7 @@ try {
     }
     // 快捷键绑定与持久化：Cmd/Ctrl+B 切换收回态，偏好随受控状态落 App
     assert(app.includes("e.key.toLowerCase() === 'b'") && app.includes('setRail((v) => !v)'), 'App 应绑 Cmd/Ctrl+B 切换收回态');
-    assert(app.includes('toggleRail') && app.includes('onToggleRail={toggleRail}'), 'App 应持有收回态并把切换回调注入侧栏与 Header');
+    assert(app.includes('toggleRail') && app.includes('onToggle={toggleRail}'), 'App 应持有收回态并把切换回调注入顶部浮层');
     const tokens = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'tokens.css'), 'utf8');
     assert(tokens.includes('--tooltip-bg:') && tokens.includes('--kbd-bg:') && tokens.includes('--tooltip-ink:') && tokens.includes('--kbd-ink:'), 'tokens.css 双主题应提供 tooltip / kbd 令牌');
     assert((tokens.match(/--tooltip-bg:/g) || []).length === 2 && (tokens.match(/--kbd-bg:/g) || []).length === 2, 'tooltip / kbd 令牌应深浅双主题各一份');

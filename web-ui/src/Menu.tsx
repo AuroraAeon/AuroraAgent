@@ -9,7 +9,7 @@
  *    别按实例建上下文；portal 同时绕开 Header 的 overflow:hidden 裁剪），
  *    打开时按触发器实测位置定位并做视口钳制（下方空间不足时上翻），滚动 / resize 重定位。
  */
-import { cloneElement, isValidElement, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
+import { cloneElement, createContext, isValidElement, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 export interface MenuProps {
@@ -37,6 +37,9 @@ export interface MenuItemProps {
 
 const EDGE = 8;
 const FADE_MS = 120;
+
+/** 菜单内上下文：菜单项选中后关菜单（ZCode DropdownMenuItem onSelect 语义） */
+const MenuCtx = createContext<{ close: () => void } | null>(null);
 
 let root: HTMLDivElement | null = null;
 function ensureRoot(): HTMLDivElement {
@@ -156,7 +159,7 @@ export function Menu({ label, trigger, align = 'end', open: controlledOpen, onCl
         maxHeight: pos?.maxHeight,
       }}
     >
-      {children}
+      <MenuCtx.Provider value={{ close: () => setOpen(false) }}>{children}</MenuCtx.Provider>
     </div>,
     ensureRoot(),
   ) : null;
@@ -165,13 +168,14 @@ export function Menu({ label, trigger, align = 'end', open: controlledOpen, onCl
 }
 
 export function MenuItem({ icon, shortcut, danger, disabled, onSelect, children }: MenuItemProps) {
+  const menu = useContext(MenuCtx);
   return (
     <button
       type="button"
       role="menuitem"
       className={`menu-item${danger ? ' danger' : ''}`}
       disabled={disabled}
-      onClick={(e) => { e.stopPropagation(); onSelect?.(); }}
+      onClick={(e) => { e.stopPropagation(); onSelect?.(); menu?.close(); }}
     >
       {icon ? <span className="menu-item-icon" aria-hidden="true">{icon}</span> : null}
       <span className="menu-item-label">{children}</span>

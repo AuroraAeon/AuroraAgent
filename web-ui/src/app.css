@@ -1,13 +1,15 @@
 /* AuroraAgent 工作台样式：布局 + 组件，语义色一律引用 tokens.css 变量（零 emoji） */
 @import './tokens.css';
 
-.app { display:flex; height:100%; min-height:0; }
+.app { position:relative; display:flex; height:100%; min-height:0; }
 
 /* ---------- 侧栏（像素级对齐 dsh web：SidebarRoot + WorkspaceBrowser） ---------- */
 .sidebar {
   width:280px; flex:none; display:flex; flex-direction:column; min-height:0;
   background:var(--sidebar-fill); border-right:1px solid var(--line);
-  padding:6px 12px; font-size:14px;
+  /* 顶部 48px 是 DesktopTopOverlay 浮层带：切换 / 上一个 / 下一个 / 更新钮浮在这条带上，
+     侧栏内容从带下开始（ZCode 同款：overlay h-14 盖住侧栏顶部，sidebar 首段自其下起排） */
+  padding:48px 12px 6px; font-size:14px;
 }
 /* 侧栏裁剪容器（ZCode data-workspace-sidebar-panel）：收回时宽高归零 + 淡出，
    200ms ease-out 只过渡 width / opacity。两个容易踩的点：
@@ -30,13 +32,6 @@
   background:linear-gradient(135deg, var(--accent), #7cc4f6); color:var(--accent-ink);
 }
 .sb-brand-name { font-size:18px; font-weight:600; line-height:24px; letter-spacing:.04em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.sb-iconbtn {
-  width:28px; height:28px; border-radius:50%; border:0; background:none; color:var(--dim);
-  display:inline-grid; place-items:center; cursor:pointer; flex:none;
-  transition:background .15s var(--ease), color .15s var(--ease);
-}
-.sb-iconbtn:hover { background:var(--sidebar-hover); color:var(--text); }
-
 /* 提示气泡（复刻 ZCode ControlHintTooltip 规格，挂载于 body 下的 #tooltip-root） */
 #tooltip-root { position:fixed; left:0; top:0; z-index:120; pointer-events:none; }
 .ct-tip {
@@ -170,28 +165,68 @@
 }
 .sb-foot-row:hover { background:var(--sidebar-hover); color:var(--text); }
 .sb-ver { margin-left:auto; color:var(--faint); font-size:11px; }
-/* ---------- 工作台 Header（逐像素复刻 ZCode WorkspaceHeader + DesktopTopOverlay） ---------- */
+/* ---------- 工作台 Header（像素级复刻 ZCode WorkspaceHeader + Sections） ---------- */
 /* ZCode 规格原文：header = relative w-full shrink-0 h-12 border-b；
    内行 = flex h-12 flex-1 min-w-0 items-center justify-between gap-2 overflow-hidden p-2；
-   左组 = flex items-center gap-1（DesktopTopOverlay 的 pointer-events-auto 交互容器）；
-   右组 = flex shrink-0 items-center gap-0.5（WorkspaceHeaderActionSection）。
-   按钮统一 Button ghost icon-md：size-7（28px）+ rounded-lg（8px）+ 只过渡颜色
+   标题区按内容占宽不铺满（父级是拖拽区，铺满会让空白处无法拖动）；操作区 gap-0.5。
+   入口钮统一 Button ghost icon-md：28px + rounded-lg + 只过渡颜色
    （ZCode 注释：基础钮的 transition-all 会在缩放窗口时把尺寸变化也动画化，这里只要色彩过渡）。
-   常驻不卸载，展开态高 0 + 淡出 + inert；height / opacity / border-color 同拍 200ms ease-out，
-   与侧栏「擦除」合成一段动画——transition-property 显式枚举，不退回 all（ZCode 同款教训）。 */
+   Header 常驻不卸载：侧栏收回时左边整体消失只留顶部浮层与这条 header，
+   内行加左侧内距给浮层让位（ZCode shouldOffsetHeaderForWindowControls 同思路）。 */
 .ws-head {
-  position:relative; width:100%; flex:none; height:0; opacity:0; overflow:hidden;
-  /* 分隔线用 inset 阴影而不是 border：border 的 1px 在 height:0 的折叠态依然占位，
-     会在主区顶部留一道 1px 透明缝；inset 阴影不参与布局，折叠态高度严格为 0 */
-  box-shadow:inset 0 -1px 0 transparent;
-  transition:height 200ms var(--ease), opacity 200ms var(--ease), box-shadow 200ms var(--ease);
+  position:relative; width:100%; flex:none; height:48px; overflow:hidden;
+  /* 分隔线用 inset 阴影而非 border：不参与布局，与主区顶部严格对齐 */
+  box-shadow:inset 0 -1px 0 var(--line);
 }
-.ws-head.on { height:48px; opacity:1; box-shadow:inset 0 -1px 0 var(--line); }
-.ws-head-row { display:flex; flex:1; min-width:0; align-items:center; justify-content:space-between; gap:8px; height:48px; padding:8px; overflow:hidden; }
+.ws-head-row {
+  display:flex; flex:1; min-width:0; width:100%; align-items:center; justify-content:space-between;
+  gap:8px; height:48px; padding:8px; overflow:hidden;
+  /* 标题窄档容器查询（ZCode @max-[560px]/workspace-header：max-w 30vw / 22vw） */
+  container-type:inline-size;
+}
 .ws-head-left { display:flex; align-items:center; gap:4px; min-width:0; }
 .ws-head-right { display:flex; align-items:center; gap:2px; flex:none; }
 
-/* 切换钮：ZCode DesktopTopOverlay 同款「group relative overflow-hidden rounded-lg」ghost 方钮，
+/* 会话标题（ZCode TID_WORKSPACE_TITLE：h1 + text-ui-base + font-semibold + max-w-100 + truncate） */
+.ws-title {
+  margin:0; min-width:48px; max-width:400px; flex:none;
+  font-size:14px; font-weight:600; line-height:20px; color:var(--text);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.ws-title-text { display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+@container (max-width:560px) { .ws-title { max-width:30vw; } }
+@container (max-width:420px) { .ws-title { max-width:22vw; } }
+/* 原位重命名输入框（ZCode TaskRenameDialog 的轻量替代） */
+.ws-title-input {
+  min-width:48px; max-width:400px; height:28px; padding:0 8px; flex:none;
+  border:1px solid var(--accent-line); border-radius:8px; background:var(--surface);
+  color:var(--text); font-size:14px; font-weight:600; outline:none;
+}
+
+/* 入口钮统一规格（ghost icon-md）：28px + rounded-lg + 只过渡颜色 */
+.ws-act {
+  width:28px; height:28px; border:0; border-radius:8px; background:none; color:var(--text);
+  display:inline-grid; place-items:center; cursor:pointer; flex:none;
+  transition:background-color 150ms var(--ease), color 150ms var(--ease);
+}
+.ws-act:hover:not(:disabled) { background:var(--sidebar-hover); }
+.ws-act:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.ws-act:disabled { color:var(--faint); cursor:default; }
+.ws-act-dim { color:var(--dim); }
+.ws-act-dim:hover:not(:disabled) { color:var(--text); }
+
+/* ---------- 顶部浮层（复刻 ZCode DesktopTopOverlay） ---------- */
+/* 常驻不卸载：absolute left-0 top-0，盖在侧栏面板上方（宽随动），收回态浮到屏幕最左。
+   外层 pointer-events:none、交互容器 auto——空白处的点击仍归下面的侧栏品牌行
+   （ZCode：只有按钮吃事件，别让整块浮层把侧栏顶部的点击吞了）。 */
+.ws-overlay { position:absolute; left:0; top:0; height:48px; z-index:20; pointer-events:none; width:fit-content; }
+.ws-overlay-group { display:flex; align-items:center; gap:4px; height:48px; padding:8px; width:fit-content; pointer-events:auto; }
+/* 新建会话钮随 isNewTaskButtonVisible = showNewTaskButton ?? !isSidebarVisible 语义：
+   展开态收起（侧栏里有新会话钮）、收回态展开；transition-[opacity,width] 300ms ease-out */
+.ws-overlay-new { display:inline-flex; overflow:hidden; transition:opacity 300ms var(--ease), width 300ms var(--ease); }
+.ws-overlay-new.on { width:28px; opacity:1; }
+.ws-overlay-new.off { width:0; opacity:0; pointer-events:none; }
+/* 切换钮：ZCode 那枚「group relative overflow-hidden rounded-lg」ghost 方钮，
    静止显 size-5 品牌砖，hover 淡出并淡入 size-4 面板图标（absolute inset-0 m-auto 绝对居中），
    品牌砖与图标各只过渡透明度 150ms，钮本身只过渡背景色 */
 .ws-toggle {
@@ -209,18 +244,12 @@
 .ws-toggle:hover .ws-toggle-logo { opacity:0; }
 .ws-toggle-icon { position:absolute; inset:0; margin:auto; width:16px; height:16px; opacity:0; transition:opacity 150ms var(--ease); }
 .ws-toggle:hover .ws-toggle-icon { opacity:1; }
-
-/* 收回态入口：新建会话随 ZCode isNewTaskButtonVisible 语义进 header——不是带标签的大钮，
-   而是与切换钮同规格的 28px ghost 图标钮（size-4 图标 + 快捷键提示） */
-.ws-act {
-  width:28px; height:28px; border:0; border-radius:8px; background:none; color:var(--text);
-  display:inline-grid; place-items:center; cursor:pointer; flex:none;
-  transition:background-color 150ms var(--ease), color 150ms var(--ease);
+/* 更新钮：仅发现有新版时出现（ZCode 教训：收起态不能按侧栏宽度阈值隐藏全局更新入口） */
+.ws-upd { color:var(--ok-ink); }
+.ws-upd::after {
+  content:''; position:absolute; top:5px; right:4px; width:6px; height:6px;
+  border-radius:50%; background:var(--ok);
 }
-.ws-act:hover { background:var(--sidebar-hover); }
-.ws-act:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-.ws-act-dim { color:var(--dim); }
-.ws-act-dim:hover { color:var(--text); }
 
 /* ---------- 主区 ---------- */
 .main { flex:1; display:flex; flex-direction:column; min-width:0; min-height:0; position:relative; }
@@ -1066,4 +1095,4 @@
 .tn-tip-ai-empty, .tn-tip-ai-running { color:var(--faint); }
 @media (prefers-reduced-motion: reduce) { .tn-bar, .turn-nav, .tn-tip { transition:none; } }
 /* 侧栏擦除与 header 生长同受减弱动效约束：直接跳到终态，不跑过渡 */
-@media (prefers-reduced-motion: reduce) { .sb-panel, .ws-head, .ws-toggle, .ws-toggle-logo, .ws-toggle-icon, .ws-act { transition:none; } }
+@media (prefers-reduced-motion: reduce) { .sb-panel, .ws-overlay-new, .ws-toggle, .ws-toggle-logo, .ws-toggle-icon, .ws-act { transition:none; } }

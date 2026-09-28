@@ -5,13 +5,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { WorkspaceHeader } from './components/WorkspaceHeader';
+import { WorkspaceTopOverlay } from './components/WorkspaceTopOverlay';
 import { ScopedErrorBoundary } from './ScopedErrorBoundary';
 import { ChatView } from './components/ChatView';
 import { Composer } from './components/Composer';
 import { SettingsDialog } from './components/SettingsDialog';
 import { projectRecords } from './projection';
 import {
-  abortTurn, clearGoal, createGoal, createSession, deleteSession, editGoal, forkSession, getGoal, getSession, getSettings, goalAction,
+  abortTurn, checkUpdate, clearGoal, createGoal, createSession, deleteSession, editGoal, forkSession, getGoal, getSession, getSettings, goalAction,
   listHarnesses, listMcpServers, listModels, listSkills, listProviders, listSessions, patchSession, respondPermission, respondPlan, runTurn,
   saveApiKey, saveGeneration,
 } from './api';
@@ -22,7 +23,7 @@ import { GOAL_STATUS_LABELS } from './types';
 import { BASE_COMMANDS } from './slash-commands';
 import { setThemePreference } from './theme';
 import type { ThemePreference } from './theme';
-import type { GoalState, Harness, LiveTurn, ModelInfo, MsgView, ProviderRow, SessionMeta, SettingsInfo, TodoItem, SkillRow } from './types';
+import type { GoalState, Harness, LiveTurn, ModelInfo, MsgView, ProviderRow, SessionMeta, SettingsInfo, TodoItem, SkillRow, UpdateInfo } from './types';
 import { createTurnEventHandlers, finishTurnProjection } from './turn-events';
 import { discardSide } from './api';
 
@@ -560,6 +561,18 @@ export default function App() {
     }
   };
 
+  /** Header 标题原位重命名（ZCode TaskRenameDialog 语义：PATCH name，失败说清原因） */
+  const renameCurrent = async (name: string) => {
+    if (!current) return;
+    try {
+      const meta = await patchSession(current.id, { name });
+      setSessions((prev) => prev.map((s) => (s.id === meta.id ? meta : s)));
+      toast.success('会话已重命名');
+    } catch (e) {
+      toast.error('重命名失败', { description: e instanceof Error ? e.message : String(e) });
+    }
+  };
+
   const changeHarness = async (id: string) => {
     if (!current) return;
     try {
@@ -587,6 +600,45 @@ export default function App() {
     try { localStorage.setItem('auroraagent.sidebar', rail ? 'rail' : 'wide'); } catch { /* 无痕模式等场景下静默 */ }
   }, [rail]);
   const toggleRail = useCallback(() => setRail((v) => !v), []);
+
+  // 顶部浮层（ZCode DesktopTopOverlay）：实测宽度供 Header 收起态让位；非交互容器不吃事件
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const [overlayW, setOverlayW] = useState(0);
+  useEffect(() => {
+    const el = overlayRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setOverlayW(el.offsetWidth));
+    ro.observe(el);
+    setOverlayW(el.offsetWidth);
+    return () => ro.disconnect();
+  }, []);
+
+  // 会话区过窄时自动收回侧栏（ZCode CONVERSATION_AUTO_COLLAPSE_SIDEBAR_WIDTH_PX=360 同款）：
+  // 只收不展——自动展开会在拖窗口边缘时来回抖，用户想展开用 Ctrl/Cmd+B 或浮层切换钮
+  const mainRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => { if (el.clientWidth > 0 && el.clientWidth < 360) setRail(true); });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // 版本更新状态：进页面拉一次（服务端 6 小时缓存，失败静默）；帮助菜单可强制重查
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  useEffect(() => { void checkUpdate().then(setUpdate).catch(() => {}); }, []);
+  const checkUpdateNow = useCallback(() => {
+    void checkUpdate(true).then((r) => {
+      setUpdate(r);
+      if (r.updateAvailable) toast.success(`发现新版本 v${r.latest}`, { description: '点击顶部浮层的更新图标前往发布页' });
+      else if (!r.error) toast.success('已是最新版本');
+      else toast.error('检查更新失败', { description: r.error });
+    }).catch(() => toast.error('检查更新失败', { description: '网络异常，稍后再试' }));
+  }, []);
+
+  // 浮层上一个 / 下一个提问（回合导航；会话不足两轮时禁用）
+  const [navReq, setNavReq] = useState<{ dir: 'prev' | 'next'; nonce: number } | null>(null);
+  const requestNav = useCallback((dir: 'prev' | 'next') => setNavReq({ dir, nonce: Date.now() }), []);
 
   // 键盘快捷键：Ctrl/Cmd+K 新建会话，Ctrl/Cmd+B 切换侧栏收回态，/ 聚焦输入框（焦点不在可输入元素时）。
   // 弹层打开时只保留聚焦输入（其余让位给对话框自身的按键处理）。
@@ -647,20 +699,40 @@ export default function App() {
             onOpenSettings={() => setSettingsOpen(true)}
             loading={booting}
             version={settings?.version || '4.0.0'}
-            onToggleRail={toggleRail}
           />
         </ScopedErrorBoundary>
       </div>
+      {/* 顶部浮层（ZCode DesktopTopOverlay）：常驻不卸载，盖在侧栏上方 / 收回态浮到最左，
+          切换 / 上一个 / 下一个 / 新建 / 更新入口都在这；自带分区错误边界 */}
+      <ScopedErrorBoundary scope="top-overlay" resetKeys={[currentId, rail]} variant="inline">
+        <div ref={overlayRef}>
+          <WorkspaceTopOverlay
+            collapsed={rail}
+            onToggle={toggleRail}
+            onNew={newSession}
+            onNav={requestNav}
+            canNav={Boolean(current && current.turns >= 2)}
+            updateUrl={update?.updateAvailable ? update.url : null}
+            updateLatest={update?.updateAvailable ? update.latest : null}
+          />
+        </div>
+      </ScopedErrorBoundary>
       <ScopedErrorBoundary scope="main" resetKeys={[currentId]}>
-        <main className="main">
-          {/* 收回态唯一的 chrome：侧栏不可见时切换 / 新建 / 设置都收在这里（ZCode WorkspaceHeader，
-              自带分区错误边界——header 崩了不该把整列对话拖下去） */}
+        <main className="main" ref={mainRef}>
+          {/* 工作区 Header（ZCode WorkspaceHeader）：常驻展示工作区上下文 + 会话标题 +
+              更多菜单 + 帮助 / 设置；侧栏收回时左侧内距让位给顶部浮层。
+              自带分区错误边界——header 崩了不该把整列对话拖下去 */}
           <ScopedErrorBoundary scope="header" resetKeys={[currentId, rail]} variant="inline">
             <WorkspaceHeader
+              session={current}
+              version={settings?.version || '4.0.0'}
               collapsed={rail}
-              onToggle={toggleRail}
-              onNew={newSession}
+              overlayInset={overlayW}
+              onRename={renameCurrent}
+              onFork={() => { if (currentId) void forkSessionById(currentId); }}
+              onDelete={() => { if (currentId) void removeSession(currentId); }}
               onOpenSettings={() => setSettingsOpen(true)}
+              onCheckUpdate={checkUpdateNow}
             />
           </ScopedErrorBoundary>
           {error ? (
@@ -689,6 +761,7 @@ export default function App() {
             onDecidePlan={decidePlan}
             onPick={sideActive ? sendSide : send}
             todos={sideActive ? [] : todos}
+            navRequest={sideActive ? null : navReq}
           />
           {!sideActive && goal ? <GoalBar goal={goal} onAction={decideGoal} /> : null}
           <Composer
