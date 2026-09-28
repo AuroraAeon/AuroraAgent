@@ -215,10 +215,13 @@ const server = createServer(async (req, res) => {
   // AuroraAgent 工作台（web-ui 构建产物，随仓库提交、运行时零构建）：/ 与 /app 同一份 index.html
   if (req.method === 'GET' && (url === '/' || url === '/index.html' || url === '/app' || url.startsWith('/app/'))) {
     const base = join(__dirname, 'public', 'app');
-    const rel = url.startsWith('/app/') ? url.slice('/app/'.length) : 'index.html';
+    // rel 为空 = SPA 入口（/、/index.html、/app、/app/ 与无扩展名的深链）：必须回退 index.html 且 no-cache。
+    // 曾把入口的 rel 写成 'index.html'，被扩展名正则误判成资产给了 immutable——开过根路径的浏览器
+    // 会把旧 HTML 连旧哈希资产一起死缓存一年，发版后看到的永远是老版本（只能硬刷才好）。
+    const rel = url.startsWith('/app/') ? url.slice('/app/'.length) : '';
     const target = resolve(base, rel);
     if (target !== base && !target.startsWith(base + sep)) { res.writeHead(403); res.end('forbidden'); return; }
-    const isAsset = /\.[a-z0-9]+$/i.test(rel);
+    const isAsset = rel !== '' && /\.[a-z0-9]+$/i.test(rel);
     const file = isAsset ? target : join(base, 'index.html');
     if (isAsset && !existsSync(target)) { res.writeHead(404); res.end('not found'); return; }
     return serveStatic(res, file, { cache: isAsset ? 'public, max-age=31536000, immutable' : 'no-cache', req });

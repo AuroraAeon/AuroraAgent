@@ -4090,6 +4090,21 @@ await test('静态资源 ETag 协商：If-None-Match 命中回 304 且校验器�
   eq(stale.status, 200, 'ETag 不匹配应回 200 全量');
 });
 
+await test('SPA 入口缓存头回归：/ 与 /app 各形态都必须 no-cache（曾误给 immutable 导致发版后老页面死缓存）', async () => {
+  for (const path of ['/', '/index.html', '/app', '/app/']) {
+    const res = await fetch(`${BASE}${path}`);
+    eq(res.status, 200, `${path} 应返回 200`);
+    const cc = res.headers.get('cache-control') || '';
+    assert(cc.includes('no-cache'), `${path} 的 index.html 必须 no-cache（实测 ${cc}）`);
+    assert(!cc.includes('immutable'), `${path} 的 index.html 不允许 immutable（实测 ${cc}）`);
+    assert((await res.text()).includes('id="root"'), `${path} 应回退应用外壳`);
+  }
+  const asset = await fetch(`${BASE}/app/assets/index-B8bdGgbp.js`).catch(() => null);
+  if (asset && asset.status === 200) {
+    assert((asset.headers.get('cache-control') || '').includes('immutable'), '真实哈希资产仍应 immutable');
+  }
+});
+
 await test('/app 防目录穿越（原始 socket 不过滤 ..）', async () => {
   const net = await import('node:net');
   const raw = await new Promise((done) => {
