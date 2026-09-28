@@ -50,6 +50,21 @@
 .ct-tip[data-phase="out"] { opacity:0; transform:scale(.96); }
 .ct-tip[data-desc="1"] { flex-direction:column; align-items:flex-start; gap:6px; max-width:18rem; padding:8px 12px; }
 .ct-tip:has(.ct-kbd) { padding-right:4px; }
+/* 富内容卡变体（title 传节点时切换）：ZCode 工作区上下文卡规格——popover 壳
+   （--panel 底 + --line-strong 边）、288px 宽（w-72）、12px 距（p-3）、左对齐、
+   正文 12.5px/400；行距 12px（gap-3）、图标 16px --dim、git 行顶部分隔 + 12px 上距 */
+.ct-tip-rich {
+  display:block; width:288px; max-width:calc(100vw - 1rem); padding:12px;
+  background:var(--panel); border-color:var(--line-strong); color:var(--text);
+  font-weight:400; font-size:12.5px; line-height:1.55; text-align:left;
+  white-space:normal; word-break:normal;
+}
+.ct-rich-rows { display:flex; flex-direction:column; gap:12px; }
+.ct-rich-row { display:flex; align-items:flex-start; gap:8px; min-width:0; }
+.ct-rich-row > svg { flex:none; margin-top:2px; color:var(--dim); }
+.ct-rich-text { min-width:0; overflow-wrap:anywhere; }
+.ct-rich-row.git { border-top:1px solid var(--line); padding-top:12px; }
+.ct-rich-label { color:var(--faint); font-size:11px; }
 
 /* ---------- 下拉菜单（零依赖 Menu.tsx，复刻 ZCode DropdownMenu 语义） ---------- */
 /* 壳词汇对齐既有 mpick-menu：12px 圆角、1px --line-strong 边、--panel 底、--shadow-pop、

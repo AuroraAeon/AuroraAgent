@@ -188,6 +188,42 @@ export const IconCopy = (p: IconProps) => (
     <path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" />
   </Svg>
 );
+export const IconGitBranch = (p: IconProps) => (
+  <Svg {...p}>
+    <line x1="6" y1="3" x2="6" y2="15" />
+    <circle cx="18" cy="6" r="3" />
+    <circle cx="6" cy="18" r="3" />
+    <path d="M18 9a9 9 0 0 1-9 9" />
+  </Svg>
+);
+export const IconEllipsis = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="5.5" cy="12" r="1.4" fill="currentColor" />
+    <circle cx="12" cy="12" r="1.4" fill="currentColor" />
+    <circle cx="18.5" cy="12" r="1.4" fill="currentColor" />
+  </Svg>
+);
+export const IconCircleHelp = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M9.6 9.2a2.5 2.5 0 1 1 3.7 2.4c-.8.5-1.3 1-1.3 2" />
+    <line x1="12" y1="17.2" x2="12" y2="17.4" />
+  </Svg>
+);
+export const IconBookOpen = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 6.5C10.6 5 8.6 4.5 4 4.5v13c4.6 0 6.6.5 8 2 1.4-1.5 3.4-2 8-2v-13c-4.6 0-6.6.5-8 2z" />
+    <line x1="12" y1="6.5" x2="12" y2="19.5" />
+  </Svg>
+);
+export const IconKeyboard = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="2.5" y="6.5" width="19" height="11" rx="2" />
+    <line x1="6.5" y1="10" x2="6.5" y2="10" /><line x1="10" y1="10" x2="10" y2="10" />
+    <line x1="13.5" y1="10" x2="13.5" y2="10" /><line x1="17" y1="10" x2="17" y2="10" />
+    <line x1="7.5" y1="14" x2="16.5" y2="14" />
+  </Svg>
+);
 /** 等待中的三点动画（CSS 驱动，见 app.css） */
 export const Dots = ({ label }: { label: string }) => (
   <span className="dots" aria-label={label} role="status">

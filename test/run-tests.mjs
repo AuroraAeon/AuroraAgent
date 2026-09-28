@@ -1898,11 +1898,18 @@ try {
     // 气泡工程与视觉：portal 单例 root、role=tooltip、Esc 可关、8px 圆角壳、16px 键帽
     assert(tip.includes('createPortal') && tip.includes("root.id = 'tooltip-root'"), '气泡应经 portal 挂模块级单例 root（绕开 overflow 裁剪，别按实例建上下文）');
     assert(tip.includes('role="tooltip"') && tip.includes("e.key === 'Escape'"), '气泡应有 role=tooltip 且 Esc 可关');
-    // 退出动画期间必须保留上次定位：清了会让气泡瞬间跳到 left/top 0，而 visibility 过渡
+    // 退出动画期间必须保留上次定位与挂载：清了会让气泡瞬间跳到 left/top 0，而 visibility 过渡
     // 会让它在左上角继续被绘制满 120ms——就是「移出触发区时 tooltip 闪现」的根因
-    assert(!/if \(phase !== 'in'\) \{ setPos\(null\); return; \}/.test(tip), '退出态不得清空定位（淡出必须发生在按钮原地）');
-    assert(tip.includes("if (phase !== 'in') return;"), '定位副作用应只在打开态运行，out / null 都保留上次位置');
+    assert(!/setPos\(null\)/.test(tip), '退出态不得清空定位（淡出必须发生在按钮原地）');
+    assert(tip.includes('if (!render) return;') && tip.includes('setRender(false), FADE_MS'), '退出态应保留挂载与定位 120ms 后卸载');
+    assert(tip.includes("data-phase={visible ? 'in' : 'out'}"), '进入 / 退出相位应由 visible 驱动');
     assert(css.includes('@starting-style') && css.includes('.ct-tip[data-phase="out"]'), '进入 / 退出动画应由 CSS @starting-style 与 data-phase 承担');
+    // 富内容卡与受控模式：ZCode 工作区上下文卡（ControlHintTooltip 的 open/onOpenChange + popover content）
+    assert(tip.includes('rich = typeof title') && tip.includes('ct-tip-rich'), 'title 传节点应切富内容卡变体');
+    assert(tip.includes('onOpenChange?.(true)') && tip.includes('onOpenChange?.(false)'), '受控模式应把开合交给消费方（ZCode workspaceContextOpen 模式）');
+    assert(tip.includes("align === 'start'") && tip.includes("align === 'end'"), '水平对齐应支持 start / center / end（ZCode align=start）');
+    assert(css.includes('.ct-tip-rich {') && css.includes('width:288px') && css.includes('background:var(--panel)'), '富内容卡应按 ZCode w-72 popover 规格（--panel 底、288px、12px 距）');
+    assert(css.includes('.ct-rich-row.git { border-top:1px solid var(--line); padding-top:12px; }'), 'git 行应有顶部分隔（ZCode border-t pt-3）');
     assert(!tip.includes('requestAnimationFrame'), '组件不应自行 rAF 驱动动画（交给合成器）');
     const shell = /\.ct-tip \{[^}]*\}/.exec(css)?.[0] || '';
     assert(shell.includes('border:1px solid var(--tooltip-line)') && shell.includes('border-radius:8px') && shell.includes('background:var(--tooltip-bg)'), '气泡壳应按 ZCode 规格 1px 边框 + 8px 圆角 + tooltip 令牌底');
