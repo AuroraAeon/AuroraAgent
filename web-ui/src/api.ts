@@ -67,6 +67,10 @@ export const respondPermission = (requestId: string, decision: 'allow' | 'deny' 
 export const respondPlan = (sessionId: string, decision: 'approve' | 'reject') =>
   api<{ ok: boolean }>('/api/agent/plan', { method: 'POST', body: JSON.stringify({ sessionId, decision }) });
 export const abortTurn = (sessionId: string) => api<{ aborted: boolean }>('/api/agent/abort', { method: 'POST', body: JSON.stringify({ sessionId }) });
+/** 侧边对话（/btw）：按主会话 id 查转录 / 丢弃 */
+export const getSideSession = (id: string) => api<{ records: SessionRecord[] }>(`/api/agent/side/${id}`);
+export const discardSide = (sessionId: string) =>
+  api<{ ok: boolean; discarded: boolean }>('/api/agent/side/discard', { method: 'POST', body: JSON.stringify({ sessionId }) });
 export const getGoal = (sessionId: string) => api<{ goal: GoalState | null }>(`/api/agent/goal/${sessionId}`);
 export const searchFiles = (sessionId: string, q: string) =>
   api<{ files: string[] }>(`/api/files/search?sessionId=${encodeURIComponent(sessionId)}&q=${encodeURIComponent(q)}`);
@@ -99,7 +103,7 @@ export const goalAction = (sessionId: string, action: 'pause' | 'resume' | 'stop
   api<{ goal: GoalState }>(`/api/agent/goal/${action}`, { method: 'POST', body: JSON.stringify({ sessionId, ...extra }) });
 
 /** 跑一个 turn：逐事件回调，流结束即 resolve */
-export async function runTurn(body: { sessionId: string; input: string; thinking?: boolean; model?: string; provider?: string }, onEvent: (ev: AgentEvent) => void): Promise<void> {
+export async function runTurn(body: { sessionId: string; input: string; thinking?: boolean; model?: string; provider?: string; side?: boolean }, onEvent: (ev: AgentEvent) => void): Promise<void> {
   const resp = await fetch('/api/agent/turn', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

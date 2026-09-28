@@ -358,6 +358,16 @@
 .plancard.pc-rejected .plancard-head { color:var(--danger-ink); }
 .plancard-state { margin-left:auto; display:inline-flex; color:inherit; }
 .plancard-body { border-top:1px solid var(--line); padding:10px 12px; display:flex; flex-direction:column; gap:10px; }
+/* ---------- 侧边对话横幅（/btw）：临时分支常驻提示 + 返回主对话 / 丢弃 ---------- */
+.side-banner {
+  display:flex; align-items:center; gap:10px; width:100%; max-width:840px; margin:0 auto;
+  padding:7px 12px; border:1px solid var(--accent-line); border-radius:11px;
+  background:var(--accent-soft); color:var(--accent-hi); font-size:12.5px;
+}
+.side-banner-text { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.side-banner-acts { display:flex; align-items:center; gap:6px; flex:none; }
+.side-banner .btn-link { color:var(--accent-hi); font-size:12.5px; padding:2px 4px; }
+.side-banner .btn-link.danger { color:var(--danger-ink); }
 /* ---------- 输入区 ---------- */
 .composer { padding:10px 20px 14px; }
 .composer-card {

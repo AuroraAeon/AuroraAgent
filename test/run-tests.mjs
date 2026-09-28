@@ -1639,7 +1639,8 @@ try {
     const composer = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Composer.tsx'), 'utf8');
     assert(composer.includes('onPlanMode'), '输入区应有计划模式开关');
     const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
-    assert(app.includes('respondPlan') && app.includes('plan_proposed') && app.includes('plan_approved'), 'App 应接线计划决策回传与计划事件');
+    const te = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'turn-events.ts'), 'utf8');
+    assert(app.includes('respondPlan') && (app + te).includes('plan_proposed') && (app + te).includes('plan_approved'), 'App 应接线计划决策回传与计划事件');
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'tokens.css'), 'utf8');
     assert(css.includes('--diff-add:') && css.includes('--diff-del:'), 'tokens.css 应有 diff 语义令牌');
   });
@@ -1702,6 +1703,22 @@ try {
     assert(css.includes('.set-rail {') && css.includes('.set-row {') && css.includes('.set-group-t {'), 'app.css 应有分级导航与行式条目样式');
     assert(css.includes('.set-page[hidden] { display:none; }'), '缓存的非当前 section 应真正隐藏');
     assert(!css.includes('.pv-sec {'), 'section 标题已由壳 header 承担，旧包裹样式应退役');
+  });
+  await test('侧边对话界面源码契约：turn 事件处理器主 / 侧同源、横幅与 Ctrl+/ 切换在场', () => {
+    const te = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'turn-events.ts'), 'utf8');
+    assert(te.includes('export function createTurnEventHandlers') && te.includes('export async function finishTurnProjection'), 'turn 事件处理器应抽为共享模块（主 / 侧同源）');
+    assert(te.includes("scope === 'side'") && te.includes('getSideSession'), '侧边通道应按侧边转录重投影');
+    assert(te.includes("ev.sessionId === currentIdRef.current"), 'goal 事件仍带会话归属校验，防串会话');
+    const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
+    assert(app.includes('const [side, setSide]') && app.includes('sideActive'), 'App 应持有侧边对话状态');
+    assert(app.includes('sendSide') && app.includes('discardBtw') && app.includes('toggleSide'), '应有侧边发送 / 丢弃 / 切换');
+    assert(app.includes("(e.metaKey || e.ctrlKey) && e.key === '/'"), '应有 Ctrl+/ 主 / 侧边对话切换快捷键');
+    assert(app.includes('sideActive ? side?.msgs || [] : messages'), '对话区应按当前通道渲染消息');
+    assert(app.includes('side: true'), '侧边 turn 应带 side:true');
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    assert(css.includes('.side-banner') && css.includes('.side-banner-acts'), '应有侧边横幅样式与动作区');
+    const api = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'api.ts'), 'utf8');
+    assert(api.includes('getSideSession') && api.includes('discardSide'), 'api.ts 应登记侧边对话查询与丢弃');
   });
   await test('设置通用面板源码契约：生成参数（温度 / 最大输出 / API Key）可改且走新端点', () => {
     const gp = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'GeneralPanel.tsx'), 'utf8');
@@ -1797,7 +1814,8 @@ try {
     const types = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'types.ts'), 'utf8');
     assert(types.includes("type: 'session_renamed'"), '前端事件类型应声明 session_renamed');
     const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
-    assert(app.includes("ev.type === 'session_renamed'"), 'App 应处理 session_renamed 并实时刷新会话标题');
+    const te = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'turn-events.ts'), 'utf8');
+    assert((app + te).includes("ev.type === 'session_renamed'"), 'App 应处理 session_renamed 并实时刷新会话标题');
     const turn = readFileSync(join(__dirname, '..', 'util', 'agent', 'terminal-turn.mjs'), 'utf8');
     assert(turn.includes("case 'session_renamed':"), '终端渲染器应呈现标题更新提示');
     assert(turn.includes('titleMode: TITLE_MODES.includes(session.titleMode)'), '终端应把标题生成方式透传 Loop');
@@ -1826,7 +1844,8 @@ try {
     assert(types.includes("type: 'provider_switched'"), '前端事件类型应声明 provider_switched');
     assert(types.includes('PROVIDER_SWITCH_REASONS'), '前端应有切换原因中文映射');
     const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
-    assert(app.includes("ev.type === 'provider_switched'"), 'App 应处理 provider_switched 并落提示');
+    const te = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'turn-events.ts'), 'utf8');
+    assert((app + te).includes("ev.type === 'provider_switched'"), 'App 应处理 provider_switched 并落提示');
     const turn = readFileSync(join(__dirname, '..', 'util', 'agent', 'terminal-turn.mjs'), 'utf8');
     assert(turn.includes("case 'provider_switched':"), '终端渲染器应呈现切换提示');
     const cfg = readFileSync(join(__dirname, '..', 'util', 'config.mjs'), 'utf8');
@@ -1878,7 +1897,8 @@ try {
     assert(bar.includes('goalbar-objective') && bar.includes('data-goal-bar'), '目标条应为单行结构（目标省略 + data 钩子），不是半透明遮罩');
     assert(!hasEmoji(bar), 'GoalBar 零 emoji 铁律');
     const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
-    assert(app.includes("ev.type === 'goal_created'") && app.includes('setGoal(ev.goal)'), 'App 应处理四类 goal 事件');
+    const te = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'turn-events.ts'), 'utf8');
+    assert((app + te).includes("ev.type === 'goal_created'") && (app + te).includes('setGoal(ev.goal)'), 'App 应处理四类 goal 事件');
     assert(app.includes('goalAction(currentId, action)') && app.includes('onAction={decideGoal}'), 'App 应接线目标条动作回传');
     assert(app.includes('handleGoalCommand') && app.includes('onGoalCommand={handleGoalCommand}'), 'App 应接线 /goal 命令处理');
     assert(app.includes('parseGoalCommand(rawArgs)') && app.includes('createGoal(sid') && app.includes('editGoal(sid'), 'App 应走共享解析器并区分创建与改写');
@@ -1887,9 +1907,9 @@ try {
     assert(app.includes('当前没有会话'), '无会话时 goal 命令应给出提示而非静默（对齐 MiniMax 的 session 缺失告警）');
     assert(app.includes("'已暂停', resume: '已恢复', stop: '已停止'") && app.includes('GOAL_STATUS_LABELS[r.goal.status]'), 'pause/resume/stop 应回执状态（与终端 REPL 同源）');
     assert(app.includes('编辑目标文本后按 Enter 提交'), '/goal edit 回填后应给出操作提示（对齐 MiniMax setHint）');
-    assert(/open = parts\.findIndex\(\(p\) => p\.kind === 'tool' && p\.id === ev\.toolId && p\.phase !== 'done'/.test(app), '流式 tool_event 同 id 多调用应优先更新未完结卡片（上游复用 id 不顶掉已完结调用）');
-    assert(app.includes('else if (idx < 0) parts.push(view)'), '重复完成事件不得重复补卡（同 id 前一个调用已完结时忽略）');
-    assert(app.includes('ev.sessionId === currentIdRef.current') && app.includes('if (ev.sessionId === currentIdRef.current) setGoal(ev.goal)'), 'SSE goal 事件应校验会话归属（对齐 MiniMax goal-flow.project 首行 sessionId 校验）');
+    assert(/open = parts\.findIndex\(\(p\) => p\.kind === 'tool' && p\.id === ev\.toolId && p\.phase !== 'done'/.test(app + te), '流式 tool_event 同 id 多调用应优先更新未完结卡片（上游复用 id 不顶掉已完结调用）');
+    assert((app + te).includes('else if (idx < 0) parts.push(view)'), '重复完成事件不得重复补卡（同 id 前一个调用已完结时忽略）');
+    assert((app + te).includes("scope === 'main' && setGoal && ev.sessionId === currentIdRef.current) setGoal(ev.goal)"), 'SSE goal 事件应校验会话归属（对齐 MiniMax goal-flow.project 首行 sessionId 校验）');
     assert(app.includes('const stale = () => goalViewEpochRef.current !== epoch || currentIdRef.current !== sid;'), 'goal 命令回调应捕获发起时会话与纪元（对齐 MiniMax canProjectOperation）');
     assert(app.split('if (stale()) return;').length - 1 >= 4, 'goal 命令四类异步回调（clear / create / budget / pause·resume·stop）应依次防串会话');
     assert(app.includes('existing = (await getGoal(sid)).goal;') && app.includes('if (stale()) return;\n    setGoal(existing);'), 'goal 命令执行前应取新鲜目标快照再分派（对齐 MiniMax execute() 的 runtime.getGoal）');
@@ -1918,7 +1938,7 @@ try {
     assert(composerSrc.includes('生成中可输入 /goal 管理目标'), 'Composer 提示应告知生成中可管理目标');
     // turn 收尾刷新：notice（/goal 命令回执）只存在于本地、不在服务端转录里，整体替换会把它冲掉，
     // 「生成中可管理目标」就收不到任何反馈；同时按会话守卫，避免旧 turn 投影写进已切走的会话
-    assert(app.includes('currentIdRef.current === cur.id') && app.includes("prev.filter((m) => m.kind === 'notice')"), 'turn 收尾刷新应保留本地 notice 并按会话守卫');
+    assert(app.includes('currentIdRef.current === sessionId') && (app + te).includes("prev.filter((m) => m.kind === 'notice')"), 'turn 收尾刷新应保留本地 notice 并按会话守卫');
     const api = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'api.ts'), 'utf8');
     assert(api.includes('/api/agent/goal/${sessionId}') && api.includes('/api/agent/goal/${action}'), 'api 客户端应覆盖 goal 读与动作');
     assert(api.includes('createGoal') && api.includes('editGoal') && api.includes('clearGoal'), 'api 客户端应覆盖设立 / 改写 / 移除');
@@ -2007,8 +2027,8 @@ try {
   assert(msg.includes('msg.parts.map') && msg.includes("p.kind === 'text'"), '历史消息应按 parts 顺序渲染文本与工具卡');
   const cv = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ChatView.tsx'), 'utf8');
   assert(cv.includes('live.parts.map') && cv.includes("p.kind === 'text'"), '流式行应按 parts 顺序渲染');
-  const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
-  assert(app.includes('appendTextPart'), '文本增量应追到最后文本片段（工具后的新文本开新片段）');
+  const te = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'turn-events.ts'), 'utf8');
+  assert(te.includes('appendTextPart'), '文本增量应追到最后文本片段（工具后的新文本开新片段）');
   const tr = readFileSync(join(__dirname, '..', 'util', 'agent', 'transcript.mjs'), 'utf8');
   assert(tr.includes("parts.push({ kind: 'tool'") && tr.includes('t.text = t.parts.filter'), '后端投影应产出 parts 时间线与兼容视图');
 });

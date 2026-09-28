@@ -4,7 +4,6 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
-import { browserNotifyEnabled } from './components/TuiPanel';
 import { ChatView } from './components/ChatView';
 import { Composer } from './components/Composer';
 import { SettingsDialog } from './components/SettingsDialog';
@@ -16,77 +15,22 @@ import {
 import { GOAL_COMMAND_HELP, formatGoalReceipt, formatGoalSummary, parseGoalCommand } from '../../util/agent/goal/command.mjs';
 import { connectGoalEvents } from './goal-events';
 import { GoalBar } from './components/GoalBar';
-import { GOAL_STATUS_LABELS, PROVIDER_SWITCH_REASONS } from './types';
-import type { AgentEvent, GoalState, Harness, LiveTurn, ModelInfo, MsgPart, MsgView, PlanView, ProviderRow, SessionMeta, SettingsInfo, TodoItem, ToolView, SkillRow } from './types';
+import { GOAL_STATUS_LABELS } from './types';
+import type { GoalState, Harness, LiveTurn, ModelInfo, MsgView, ProviderRow, SessionMeta, SettingsInfo, TodoItem, SkillRow } from './types';
+import { createTurnEventHandlers, finishTurnProjection } from './turn-events';
+import { discardSide } from './api';
 
-const planView = (text: string, decided: PlanView['decided']): PlanView => ({ text, decided });
 import { IconAlert, IconClose } from './icons';
 import { toast, ToastViewport } from './toast';
-
-/** 文本增量 → 追加到 parts 的最后一个文本片段（工具之后的新文本开新片段，保住时间线） */
-function appendTextPart(live: LiveTurn, text: string): LiveTurn {
-  const parts = live.parts.slice();
-  const last = parts[parts.length - 1];
-  if (last && last.kind === 'text') parts[parts.length - 1] = { kind: 'text', text: last.text + text };
-  else parts.push({ kind: 'text', text });
-  return { ...live, parts };
-}
-
-/** 工具事件 → live turn parts 里的工具卡片状态机（工具片段保持在时间线原位置） */
-function applyToolEvent(live: LiveTurn, ev: Extract<AgentEvent, { type: 'tool_event' }>): LiveTurn {
-  const parts = live.parts.slice();
-  // 同 id 多调用（个别上游代理复用 tool_call id）：open 定位尚未完结的卡片，
-  // 后一个调用的增量事件开新卡片而非顶掉前一个已完结的调用（与 transcript 投影同语义）
-  const open = parts.findIndex((p) => p.kind === 'tool' && p.id === ev.toolId && p.phase !== 'done' && p.phase !== 'failed' && p.phase !== 'rejected');
-  const idx = open >= 0 ? open : parts.findIndex((p) => p.kind === 'tool' && p.id === ev.toolId);
-  const cur: Extract<MsgPart, { kind: 'tool' }> | null = idx >= 0 && parts[idx].kind === 'tool' ? parts[idx] : null;
-  // loop 对「拒绝」会补发 failed：保留拒绝态，不被失败态覆盖
-  if ((ev.phase === 'failed' || ev.phase === 'completed') && cur?.phase === 'rejected') return live;
-  // begin 类事件（started / params_partial / confirmation_needed）：无未完结卡片即开新卡
-  const begin = (view: Extract<MsgPart, { kind: 'tool' }>) => {
-    if (open >= 0) parts[open] = view;
-    else parts.push(view);
-  };
-  // settle 类事件（completed / failed）：无未完结卡片时仅从未见过的调用才补卡，重复完成事件忽略
-  const settle = (view: Extract<MsgPart, { kind: 'tool' }>) => {
-    if (open >= 0) parts[open] = view;
-    else if (idx < 0) parts.push(view);
-  };
-  const sub = ev.subAgent ? { subAgent: true, subTask: ev.subTask } : {};
-  switch (ev.phase) {
-    case 'started':
-      begin({ kind: 'tool', id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'running', output: '', ...sub });
-      break;
-    case 'params_partial':
-      if (open >= 0 && cur) parts[open] = { ...cur, params: ev.params };
-      else begin({ kind: 'tool', id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'running', output: '', ...sub });
-      break;
-    case 'confirmation_needed':
-      begin({ kind: 'tool', id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'ask', output: '', requestId: ev.requestId });
-      break;
-    case 'confirmed':
-      if (open >= 0 && cur) parts[open] = { ...cur, phase: 'running' };
-      break;
-    case 'rejected':
-      if (open >= 0 && cur) parts[open] = { ...cur, phase: 'rejected' };
-      break;
-    case 'completed':
-      if (open >= 0 && cur) parts[open] = { ...cur, phase: 'done', output: ev.output || '', ...(ev.extra ? { extra: ev.extra as ToolView['extra'] } : {}) };
-      else settle({ kind: 'tool', id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'done', output: ev.output || '', ...sub });
-      break;
-    case 'failed':
-      if (open >= 0 && cur) parts[open] = { ...cur, phase: 'failed', output: ev.output || '', ...(ev.extra ? { extra: ev.extra as ToolView['extra'] } : {}) };
-      else settle({ kind: 'tool', id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'failed', output: ev.output || '', ...sub });
-      break;
-  }
-  return { ...live, parts };
-}
 
 export default function App() {
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [messages, setMessages] = useState<MsgView[]>([]);
   const [live, setLive] = useState<LiveTurn | null>(null);
+  // 侧边对话（/btw）：null = 没开过；live / busy 与主对话同构但完全独立
+  const [side, setSide] = useState<{ msgs: MsgView[]; live: LiveTurn | null; busy: boolean } | null>(null);
+  const [sideActive, setSideActive] = useState(false); // 当前显示哪条对话（Ctrl+/ 切换）
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [goal, setGoal] = useState<GoalState | null>(null);
   const [goalPrefill, setGoalPrefill] = useState<{ text: string; nonce: number; onlyIfEmpty?: boolean }>({ text: '', nonce: 0 });
@@ -180,50 +124,44 @@ export default function App() {
     setError('');
     setMessages((prev) => [...prev, { kind: 'user', key: `opt-${Date.now()}`, text }]);
     setLive({ turnId: '', parts: [], thinking: '', usage: null, compression: null, plan: null, round: 0, startedAt: Date.now() });
+    await runTurnStream('main', cur.id, text, {
+      scope: 'main',
+      setMsgs: setMessages, setLive, setTodos, setError, setSessions, setGoal, currentIdRef,
+    });
+  };
+
+  /** 侧边对话（/btw）：一问一答的临时分支——继承主会话历史前缀，不落盘、不进会话列表、不接管目标 */
+  const sendSide = async (text: string) => {
+    const cur = current;
+    if (!cur || !text.trim()) return;
+    setSide((prev) => ({ msgs: [...(prev?.msgs || []), { kind: 'user', key: `side-opt-${Date.now()}`, text }], live: { turnId: '', parts: [], thinking: '', usage: null, compression: null, plan: null, round: 0, startedAt: Date.now() }, busy: true }));
+    setSideActive(true);
+    await runTurnStream('side', cur.id, text, {
+      scope: 'side',
+      setMsgs: (updater) => setSide((prev) => (prev ? { ...prev, msgs: typeof updater === 'function' ? updater(prev.msgs) : updater } : prev)),
+      setLive: (updater) => setSide((prev) => (prev ? { ...prev, live: typeof updater === 'function' ? updater(prev.live) : updater } : prev)),
+      setTodos, setError, setSessions, currentIdRef,
+    });
+  };
+
+  /**
+   * 跑一个 turn 并收尾：事件投影走 createTurnEventHandlers（主 / 侧同源），结束后按对应转录重投影。
+   * 主对话额外刷新会话列表（标题 / 轮次 / 用量汇总）；侧边对话不碰主会话任何状态。
+   */
+  const runTurnStream = async (
+    scope: 'main' | 'side',
+    sessionId: string,
+    text: string,
+    setters: Parameters<typeof createTurnEventHandlers>[0],
+  ) => {
+    const cur = current;
     try {
       await runTurn(
-        { sessionId: cur.id, input: text, thinking: effort !== 'off', model: cur.model, provider: cur.provider },
-        (ev: AgentEvent) => {
-          if (ev.type === 'session_renamed') setSessions((prev) => prev.map((s) => (s.id === ev.sessionId ? { ...s, name: ev.name } : s)));
-          else if (ev.type === 'turn_started') setLive((l) => (l ? { ...l, startedAt: Date.now() } : l));
-          else if (ev.type === 'model_round_started') setLive((l) => (l ? { ...l, round: ev.round } : l));
-          else if (ev.type === 'text_chunk') setLive((l) => (l ? appendTextPart(l, ev.text) : l));
-          else if (ev.type === 'thinking_chunk') setLive((l) => (l ? { ...l, thinking: l.thinking + ev.text } : l));
-          else if (ev.type === 'tool_event') {
-            setLive((l) => (l ? applyToolEvent(l, ev) : l));
-            const list = (ev.extra as { todos?: TodoItem[] } | undefined)?.todos;
-            if (Array.isArray(list)) setTodos(list);
-          }
-          else if (ev.type === 'plan_proposed') setLive((l) => (l ? { ...l, plan: planView(ev.plan, 'pending') } : l));
-          else if (ev.type === 'plan_approved') setLive((l) => (l ? { ...l, plan: planView(ev.plan, 'approved') } : l));
-          else if (ev.type === 'plan_rejected') setLive((l) => (l ? { ...l, plan: planView(ev.plan, 'rejected') } : l));
-          else if (ev.type === 'token_usage_updated') {
-            setLive((l) => (l ? {
-              ...l,
-              usage: {
-                inputTokens: (l.usage?.inputTokens || 0) + ev.inputTokens,
-                outputTokens: (l.usage?.outputTokens || 0) + ev.outputTokens,
-                cost: Number(((l.usage?.cost || 0) + ev.cost).toFixed(6)),
-              },
-            } : l));
-          } else if (ev.type === 'context_compression_started') setLive((l) => (l ? { ...l, compression: '正在折叠早期对话…' } : l));
-          else if (ev.type === 'context_compression_completed') setLive((l) => (l ? { ...l, compression: `已折叠早期对话，保留近期 ${ev.keptRecords} 条记录` } : l));
-          else if (ev.type === 'context_compression_failed') setLive((l) => (l ? { ...l, compression: null } : l));
-          // goal 事件仅投影到当前会话（对齐 MiniMax goal-flow.project 的 sessionId 首行校验：
-          // 运行中切换 / 新建会话后，旧会话 turn 流仍在推送，不能污染新会话的横幅）
-          else if (ev.type === 'goal_created' || ev.type === 'goal_status_changed' || ev.type === 'goal_usage_updated' || ev.type === 'goal_wait_changed') { if (ev.sessionId === currentIdRef.current) setGoal(ev.goal); }
-          // 故障转移提示（notice 不进服务端转录，turn 收尾刷新时保留，与 /goal 回执同一机制）
-          else if (ev.type === 'provider_switched') setMessages((m) => [...m, { kind: 'notice', key: `ps-${ev.turnId}-${ev.attempt}`, text: `已切换提供方：${ev.fromName || ev.from} → ${ev.toName || ev.to}（${PROVIDER_SWITCH_REASONS[ev.reason] || ev.reason}，第 ${ev.attempt} 次尝试）` }]);
-          else if (ev.type === 'turn_failed') setError(ev.error || '任务失败');
-          // 浏览器通知（opt-in，默认关；未授权时静默跳过）
-          if ((ev.type === 'turn_completed' || ev.type === 'turn_failed') && browserNotifyEnabled() && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-            try {
-              new Notification(ev.type === 'turn_completed' ? 'AuroraAgent：任务完成' : 'AuroraAgent：任务失败', {
-                body: ev.type === 'turn_failed' ? (ev.error || '详见界面错误提示') : '点击回到会话查看结果',
-              });
-            } catch { /* 部分浏览器构造即抛，忽略 */ }
-          }
+        {
+          sessionId, input: text, thinking: effort !== 'off',
+          model: cur?.model, provider: cur?.provider, ...(scope === 'side' ? { side: true } : {}),
         },
+        createTurnEventHandlers(setters),
       );
     } catch (e) {
       toast.error('任务失败', { description: e instanceof Error ? e.message : String(e) });
@@ -231,18 +169,29 @@ export default function App() {
       try {
         // 运行中切换 / 新建会话后，旧 turn 的收尾刷新不得把旧会话投影写进新会话界面
         // （与 SSE goal 事件的 sessionId 校验同一道防线，对齐 MiniMax canProjectOperation）
-        if (currentIdRef.current === cur.id) {
-          const got = await getSession(cur.id);
-          // notice（/goal 命令回执、goal 事件凭据）只存在于本地、不在服务端转录里：
-          // 整体替换会把它们冲掉，「生成中可管理目标」于是收不到任何反馈。保留 notice 追加在投影之后
-          setMessages((prev) => [...projectRecords(got.records), ...prev.filter((m) => m.kind === 'notice')]);
+        if (scope === 'side' || currentIdRef.current === sessionId) {
+          await finishTurnProjection(scope, sessionId, setters.setMsgs);
         }
-        setSessions(await listSessions());
+        if (scope === 'main') setSessions(await listSessions());
       } catch { /* 刷新失败保留当前界面 */ }
-      setBusy(false);
-      setLive(null);
+      if (scope === 'main') { setBusy(false); setLive(null); }
+      else setSide((prev) => (prev ? { ...prev, live: null, busy: false } : prev));
     }
   };
+
+  /** 丢弃侧边对话回到主对话（与终端 Ctrl+C 空提示符同语义） */
+  const discardBtw = async () => {
+    if (!currentId) return;
+    try { await discardSide(currentId); } catch { /* 丢弃失败也照样回到主对话：侧边数据本就不落盘 */ }
+    setSide(null);
+    setSideActive(false);
+  };
+
+  /** Ctrl+/ 主 / 侧边对话切换：没有侧边对话时不开切换 */
+  const toggleSide = useCallback(() => {
+    if (!side) { toast.info('还没有侧边对话', { description: '输入 /btw <问题> 开一个，继承当前会话历史，不落盘' }); return; }
+    setSideActive((v) => !v);
+  }, [side]);
 
   const decide = async (requestId: string, decision: 'allow' | 'deny' | 'always') => {
     try {
@@ -520,6 +469,12 @@ export default function App() {
         void newSession();
         return;
       }
+      // Ctrl+/ 主 / 侧边对话切换（与终端同键位；弹层打开时让位给对话框自身按键处理）
+      if ((e.metaKey || e.ctrlKey) && e.key === '/' && !settingsOpen) {
+        e.preventDefault();
+        toggleSide();
+        return;
+      }
       if (e.key === '/' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
         const dlg = document.querySelector('dialog[open]');
         if (dlg) return; // 弹层内的 / 是搜索输入，不抢
@@ -563,19 +518,28 @@ export default function App() {
             </button>
           </div>
         ) : null}
+        {side && sideActive ? (
+          <div className="side-banner" role="status">
+            <span className="side-banner-text">侧边对话中 · 继承自主对话历史，不落盘、不进会话列表</span>
+            <span className="side-banner-acts">
+              <button type="button" className="btn btn-link" onClick={() => setSideActive(false)}>返回主对话</button>
+              <button type="button" className="btn btn-link danger" onClick={() => { discardBtw().catch(() => {}); }}>丢弃</button>
+            </span>
+          </div>
+        ) : null}
         <ChatView
-          messages={messages}
-          live={live}
+          messages={sideActive ? side?.msgs || [] : messages}
+          live={sideActive ? side?.live ?? null : live}
           hasSession={Boolean(current)}
           onDecide={decide}
           onDecidePlan={decidePlan}
-          onPick={send}
-          todos={todos}
+          onPick={sideActive ? sendSide : send}
+          todos={sideActive ? [] : todos}
         />
-        {goal ? <GoalBar goal={goal} onAction={decideGoal} /> : null}
+        {!sideActive && goal ? <GoalBar goal={goal} onAction={decideGoal} /> : null}
         <Composer
-          busy={busy}
-          onSend={send}
+          busy={sideActive ? Boolean(side?.busy) : busy}
+          onSend={sideActive ? sendSide : send}
           onGoalCommand={handleGoalCommand}
           goalPrefill={goalPrefill}
           onStop={stop}
