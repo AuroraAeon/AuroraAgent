@@ -25,13 +25,17 @@ export interface MenuProps {
   children: ReactNode;
 }
 
+/** onSelect 收到的事件：复刻 Radix DropdownMenuItem 语义——preventDefault 可阻止
+ *  选中后关菜单（Header 帮助菜单的面板导航就靠它在菜单内切面板） */
+export interface MenuItemSelectEvent { preventDefault: () => void }
+
 export interface MenuItemProps {
   icon?: ReactNode;
   /** 键帽提示（如 ⌘B）；菜单项右侧渲染 */
   shortcut?: string;
   danger?: boolean;
   disabled?: boolean;
-  onSelect?: () => void;
+  onSelect?: (e: MenuItemSelectEvent) => void;
   children: ReactNode;
 }
 
@@ -175,7 +179,13 @@ export function MenuItem({ icon, shortcut, danger, disabled, onSelect, children 
       role="menuitem"
       className={`menu-item${danger ? ' danger' : ''}`}
       disabled={disabled}
-      onClick={(e) => { e.stopPropagation(); onSelect?.(); menu?.close(); }}
+      onClick={(e) => {
+        e.stopPropagation();
+        // 复刻 Radix：onSelect 可 preventDefault 阻止关菜单（菜单内面板导航用）
+        let prevented = false;
+        onSelect?.({ preventDefault: () => { prevented = true; } });
+        if (!prevented) menu?.close();
+      }}
     >
       {icon ? <span className="menu-item-icon" aria-hidden="true">{icon}</span> : null}
       <span className="menu-item-label">{children}</span>

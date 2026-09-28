@@ -1886,6 +1886,9 @@ try {
     }
     assert(header.includes('<IconGear size={16} />'), '设置入口应按 ZCode size-4 图标规格');
     assert(header.includes('<IconFolder size={16} />') && header.includes('<IconEllipsis size={16} />') && header.includes('<IconCircleHelp size={16} />'), '工作区卡 / 更多菜单 / 帮助菜单触发器应按 size-4 图标规格');
+    // 帮助菜单面板导航：快捷键 / 关于 / 返回项必须 preventDefault，否则「选中即关」会把菜单关掉
+    assert((header.match(/setHelpPane\('shortcuts'\)/g) || []).length >= 1 && header.includes("onSelect={(e) => { e.preventDefault(); setHelpPane('shortcuts'); }}"), '快捷键面板导航应阻止关菜单');
+    assert(header.includes("onSelect={(e) => { e.preventDefault(); setHelpPane('about'); }}") && header.includes("onSelect={(e) => { e.preventDefault(); setHelpPane('root'); }}"), '关于与返回面板导航应阻止关菜单');
     assert(header.includes('side="bottom"'), 'Header 气泡应在按钮下方（ZCode side=bottom）');
     // 顶部浮层（ZCode DesktopTopOverlay）：切换 / 上一个 / 下一个 / 新建 / 更新全在这
     assert(overlay.includes('ws-overlay') && overlay.includes('ws-overlay-group') && overlay.includes('ws-overlay-new'), '浮层应按 ZCode DesktopTopOverlay 结构组织');
@@ -1902,6 +1905,9 @@ try {
     assert(css.includes('.app { position:relative;'), '布局根应 relative 让浮层绝对定位有锚点');
     // App 侧接线：浮层宽实测 / 窄窗自动收起 / 更新检查 / 导航请求 / 重命名
     assert(app.includes('overlayW') && app.includes('ResizeObserver'), 'App 应实测浮层宽度供 Header 让位');
+    // 浮层是 absolute：外包 flex 容器零宽，ref 必须直挂浮层根节点，否则实测恒 0、Header 让位失效
+    assert(/WorkspaceTopOverlay\s+ref=\{overlayRef\}/.test(app), '浮层 ref 应直挂 WorkspaceTopOverlay 根节点（量外包容器恒为 0）');
+    assert(overlay.includes('ref={ref}') && overlay.includes('ref?: Ref<HTMLDivElement>'), '浮层组件应声明并透出根节点 ref');
     assert(app.includes('mainRef') && app.includes('360'), '主列过窄时应自动收回侧栏（ZCode AUTO_COLLAPSE 阈值 360px 同款）');
     assert(app.includes('checkUpdate') && app.includes('UpdateInfo'), 'App 进页面应拉一次版本更新状态');
     assert(app.includes('requestNav') && app.includes('navRequest={sideActive ? null : navReq}'), '浮层导航请求应经 ChatView 透传给 TurnNavigator');
@@ -1964,6 +1970,10 @@ try {
     assert(menu.includes("e.key === 'Enter'") && menu.includes("e.key === ' '"), '回车与空格应触发激活项');
     assert(menu.includes("e.key === 'Tab'"), 'Tab 应关闭菜单（焦点继续走表单序）');
     assert(menu.includes('pointerdown') && menu.includes('contains(t)'), '点外面应关闭（trigger 与菜单内不算外面）');
+    // 选中即关 + preventDefault 例外：复刻 Radix DropdownMenuItem onSelect 语义——
+    // Header 帮助菜单的面板导航（快捷键 / 关于 / 返回）靠它在菜单内切面板而不关菜单
+    assert(menu.includes('MenuItemSelectEvent') && menu.includes('preventDefault: () => { prevented = true; }'), 'onSelect 应收到可 preventDefault 的事件');
+    assert(menu.includes('if (!prevented) menu?.close();'), '仅当 onSelect 未 preventDefault 时才关菜单');
     assert(menu.includes('[role="menuitem"]:not([disabled])'), '键盘导航应跳过禁用项');
     // 退出动画保留挂载：与 tooltip 闪现修复同源的教训——退出态保留定位，淡出在原地发生
     assert(menu.includes('setRender(false), FADE_MS') && menu.includes("data-phase={open ? 'in' : 'out'}"), '退出动画期间应保留挂载与定位');

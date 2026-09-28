@@ -191,14 +191,14 @@ export function WorkspaceHeader({ session, version, collapsed, overlayInset, onR
                 <MenuItem icon={<IconBookOpen size={16} />} onSelect={() => window.open(`${REPO_URL}#readme`, '_blank', 'noopener')}>使用文档</MenuItem>
                 <MenuItem icon={<IconCircleHelp size={16} />} onSelect={() => window.open(`${REPO_URL}/issues`, '_blank', 'noopener')}>反馈问题</MenuItem>
                 <MenuSeparator />
-                <MenuItem icon={<IconKeyboard size={16} />} shortcut="/" onSelect={() => setHelpPane('shortcuts')}>快捷键</MenuItem>
+                <MenuItem icon={<IconKeyboard size={16} />} shortcut="/" onSelect={(e) => { e.preventDefault(); setHelpPane('shortcuts'); }}>快捷键</MenuItem>
                 <MenuItem icon={<IconRefresh size={16} />} onSelect={onCheckUpdate}>检查更新</MenuItem>
-                <MenuItem icon={<IconInfo size={16} />} onSelect={() => setHelpPane('about')}>关于 AuroraAgent</MenuItem>
+                <MenuItem icon={<IconInfo size={16} />} onSelect={(e) => { e.preventDefault(); setHelpPane('about'); }}>关于 AuroraAgent</MenuItem>
               </>
             ) : null}
             {helpPane === 'shortcuts' ? (
               <>
-                <MenuItem icon={<IconKeyboard size={16} />} onSelect={() => setHelpPane('root')}>返回</MenuItem>
+                <MenuItem icon={<IconKeyboard size={16} />} onSelect={(e) => { e.preventDefault(); setHelpPane('root'); }}>返回</MenuItem>
                 <MenuSeparator />
                 {shortcuts.map(([key, label]) => (
                   <MenuItem key={key} shortcut={key} disabled>{label}</MenuItem>
@@ -207,7 +207,7 @@ export function WorkspaceHeader({ session, version, collapsed, overlayInset, onR
             ) : null}
             {helpPane === 'about' ? (
               <>
-                <MenuItem icon={<IconInfo size={16} />} onSelect={() => setHelpPane('root')}>返回</MenuItem>
+                <MenuItem icon={<IconInfo size={16} />} onSelect={(e) => { e.preventDefault(); setHelpPane('root'); }}>返回</MenuItem>
                 <MenuSeparator />
                 <MenuItem icon={<IconSpark size={16} />} disabled>{`AuroraAgent v${version}`}</MenuItem>
                 <MenuItem icon={<IconSpark size={16} />} disabled>{session ? `当前模型 ${session.model}` : '尚未选择模型'}</MenuItem>

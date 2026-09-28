@@ -601,7 +601,8 @@ export default function App() {
   }, [rail]);
   const toggleRail = useCallback(() => setRail((v) => !v), []);
 
-  // 顶部浮层（ZCode DesktopTopOverlay）：实测宽度供 Header 收起态让位；非交互容器不吃事件
+  // 顶部浮层（ZCode DesktopTopOverlay）：实测宽度供 Header 收回态让位；非交互容器不吃事件。
+  // 浮层自身是 absolute，ref 直接挂它根节点（外包 flex 容器零宽，量不到）
   const overlayRef = useRef<HTMLDivElement>(null);
   const [overlayW, setOverlayW] = useState(0);
   useEffect(() => {
@@ -705,17 +706,16 @@ export default function App() {
       {/* 顶部浮层（ZCode DesktopTopOverlay）：常驻不卸载，盖在侧栏上方 / 收回态浮到最左，
           切换 / 上一个 / 下一个 / 新建 / 更新入口都在这；自带分区错误边界 */}
       <ScopedErrorBoundary scope="top-overlay" resetKeys={[currentId, rail]} variant="inline">
-        <div ref={overlayRef}>
-          <WorkspaceTopOverlay
-            collapsed={rail}
-            onToggle={toggleRail}
-            onNew={newSession}
-            onNav={requestNav}
-            canNav={Boolean(current && current.turns >= 2)}
-            updateUrl={update?.updateAvailable ? update.url : null}
-            updateLatest={update?.updateAvailable ? update.latest : null}
-          />
-        </div>
+        <WorkspaceTopOverlay
+          ref={overlayRef}
+          collapsed={rail}
+          onToggle={toggleRail}
+          onNew={newSession}
+          onNav={requestNav}
+          canNav={Boolean(current && current.turns >= 2)}
+          updateUrl={update?.updateAvailable ? update.url : null}
+          updateLatest={update?.updateAvailable ? update.latest : null}
+        />
       </ScopedErrorBoundary>
       <ScopedErrorBoundary scope="main" resetKeys={[currentId]}>
         <main className="main" ref={mainRef}>

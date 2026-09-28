@@ -12,8 +12,13 @@
 import { IconArrowLeft, IconArrowRight, IconPanelLeftClose, IconPanelLeftOpen, IconPlus, IconRefresh, IconSpark } from '../icons';
 import { ControlTooltip } from '../ControlTooltip';
 import { newSessionLabel, sidebarToggleLabel } from '../shortcut';
+import type { Ref } from 'react';
 
 type Props = {
+  /** 浮层根节点引用：App 实测宽度供 Header 收回态让位。
+   *  必须挂在浮层本身——外包容器是零宽 flex 项（absolute 子元素不参与其尺寸计算），
+   *  量外包容器恒为 0，Header 的左侧让位会失效 */
+  ref?: Ref<HTMLDivElement>;
   /** 侧栏是否已收回 */
   collapsed: boolean;
   onToggle: () => void;
@@ -26,9 +31,9 @@ type Props = {
   updateLatest: string | null;
 };
 
-export function WorkspaceTopOverlay({ collapsed, onToggle, onNew, onNav, canNav, updateUrl, updateLatest }: Props) {
+export function WorkspaceTopOverlay({ ref, collapsed, onToggle, onNew, onNav, canNav, updateUrl, updateLatest }: Props) {
   return (
-    <div className="ws-overlay" aria-label="工作区快捷入口">
+    <div className="ws-overlay" ref={ref} aria-label="工作区快捷入口">
       <div className="ws-overlay-group">
         <ControlTooltip title="切换侧边栏" shortcut={sidebarToggleLabel()} side="bottom">
           <button type="button" className="ws-toggle" aria-label="切换侧边栏" onClick={onToggle}>
