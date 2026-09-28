@@ -1766,6 +1766,15 @@ try {
     assert(usage.includes('DayBars') && usage.includes('usage-stack'), '用量面板应有逐日柱状与构成占比条');
     assert(usage.includes('getUsage'), '用量面板应走 /api/usage');
     assert(!hasEmoji(usage), '用量面板零 emoji 铁律');
+    // 措辞去 token 化：面向用户只讲输入多少 / 输出多少 / 费用多少，不抛术语
+    assert(usage.includes('<dt>输入</dt>') && usage.includes('<dt>输出</dt>'), '总计应直接写输入 / 输出');
+    assert(usage.includes('<th>输入 / 输出</th>'), '最近请求表头应写输入 / 输出');
+    assert(!/>[^<]*tokens</.test(usage) && !usage.includes('每日 token'), '用量面板不得再出现 token 字样');
+    assert(!usage.includes('含被中止的'), '用量面板不必向用户解释被中止与标题请求这两类特殊记录');
+    for (const f of ['Message', 'ChatView']) {
+      const src = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', `${f}.tsx`), 'utf8');
+      assert(!src.includes('tokens 输入'), `${f} 用量脚注应去掉 tokens 前缀，只留输入 / 输出 / 费用`);
+    }
     const errlog = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ErrorLogPanel.tsx'), 'utf8');
     assert(errlog.includes('listErrorLogs') && errlog.includes('clearErrorLogs'), '错误日志面板应支持查看与清空');
     assert(!hasEmoji(errlog), '错误日志面板零 emoji 铁律');

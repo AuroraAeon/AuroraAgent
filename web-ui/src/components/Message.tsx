@@ -67,7 +67,7 @@ export const Message = memo(function Message({ msg, onDecide }: Props) {
           : <ToolCard key={p.id} tool={p} onDecide={onDecide} />))}
         {msg.usage ? (
           <div className="usage-foot">
-            tokens 输入 {msg.usage.inputTokens} · 输出 {msg.usage.outputTokens} · 费用 {fmtCostYen(msg.usage.cost)}
+            输入 {msg.usage.inputTokens} · 输出 {msg.usage.outputTokens} · 费用 {fmtCostYen(msg.usage.cost)}
           </div>
         ) : null}
       </div>

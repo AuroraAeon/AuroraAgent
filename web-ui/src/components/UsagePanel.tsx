@@ -8,11 +8,11 @@ import type { UsageBucket, UsageDay, UsageSummary } from '../types';
 
 const fmtTok = (n: number): string => (n >= 10000 ? `${(n / 10000).toFixed(n >= 100000 ? 0 : 1)} 万` : String(n));
 
-/** 逐日堆叠柱：输入 / 输出 tokens 两段，柱子有最小可见高度（空天不断档也不消失） */
+/** 逐日堆叠柱：输入 / 输出两段，柱子有最小可见高度（空天不断档也不消失） */
 function DayBars({ days }: { days: UsageDay[] }) {
   const max = Math.max(1, ...days.map((d) => d.inputTokens + d.outputTokens));
   return (
-    <div className="usage-chart" role="img" aria-label={`近 ${days.length} 天每日 token 用量柱状图`}>
+    <div className="usage-chart" role="img" aria-label={`近 ${days.length} 天每日用量柱状图`}>
       {days.map((d) => {
         const total = d.inputTokens + d.outputTokens;
         const h = total ? Math.max(2, (total / max) * 100) : 0;
@@ -30,7 +30,7 @@ function DayBars({ days }: { days: UsageDay[] }) {
 }
 
 /** 构成占比条 + 明细列表（同一种形状复用四次） */
-function Breakdown({ title, rows, unit }: { title: string; rows: UsageBucket[]; unit: 'cost' | 'tokens' }) {
+function Breakdown({ title, rows, unit }: { title: string; rows: UsageBucket[]; unit: 'cost' | 'count' }) {
   const sum = rows.reduce((a, r) => a + (unit === 'cost' ? r.cost : r.inputTokens + r.outputTokens), 0) || 1;
   return (
     <div className="usage-break">
@@ -47,7 +47,7 @@ function Breakdown({ title, rows, unit }: { title: string; rows: UsageBucket[]; 
               <li key={r.key}>
                 <span className="usage-list-k" title={r.key}>{r.key}</span>
                 <span className="usage-list-v">{r.requests} 次</span>
-                <span className="usage-list-v">{fmtTok(r.inputTokens + r.outputTokens)} tokens</span>
+                <span className="usage-list-v">{fmtTok(r.inputTokens + r.outputTokens)}</span>
                 <span className="usage-list-v">{fmtCostYen(r.cost)}</span>
               </li>
             ))}
@@ -83,11 +83,11 @@ export function UsagePanel() {
           <IconRefresh size={13} /> 刷新
         </button>
       </div>
-      <p className="pv-intro">账本记录每一次模型请求（含被中止的与自动总结标题的那一次），数据只存本机。</p>
+      <p className="pv-intro">账本记录每一次模型请求，数据只存本机。</p>
       <dl className="kv usage-kv">
         <div><dt>请求数</dt><dd>{t.requests}</dd></div>
-        <div><dt>输入 tokens</dt><dd>{fmtTok(t.inputTokens)}</dd></div>
-        <div><dt>输出 tokens</dt><dd>{fmtTok(t.outputTokens)}</dd></div>
+        <div><dt>输入</dt><dd>{fmtTok(t.inputTokens)}</dd></div>
+        <div><dt>输出</dt><dd>{fmtTok(t.outputTokens)}</dd></div>
         <div><dt>累计费用</dt><dd>{fmtCostYen(t.cost)}</dd></div>
       </dl>
       {st ? (
@@ -106,7 +106,7 @@ export function UsagePanel() {
           <h4 className="usage-break-t">最近请求</h4>
           <div className="usage-recent">
             <table>
-              <thead><tr><th>时间</th><th>模型</th><th>tokens</th><th>费用</th></tr></thead>
+              <thead><tr><th>时间</th><th>模型</th><th>输入 / 输出</th><th>费用</th></tr></thead>
               <tbody>
                 {data.recent.slice(0, 8).map((r, i) => (
                   <tr key={`${r.ts}-${i}`}>

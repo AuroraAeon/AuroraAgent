@@ -43,7 +43,7 @@ function LiveRow({ live, onDecide, onDecidePlan }: { live: LiveTurn; onDecide?: 
         {live.compression ? <div className="row-system">{live.compression}</div> : null}
         {live.usage ? (
           <div className="usage-foot">
-            tokens 输入 {live.usage.inputTokens} · 输出 {live.usage.outputTokens} · 费用 {fmtCostYen(live.usage.cost)}
+            输入 {live.usage.inputTokens} · 输出 {live.usage.outputTokens} · 费用 {fmtCostYen(live.usage.cost)}
           </div>
         ) : null}
         {empty ? <div className="live-idle">正在思考<span className="dots" aria-hidden="true"><i /><i /><i /></span></div> : null}
