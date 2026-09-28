@@ -1648,6 +1648,7 @@ try {
     assert(t.includes('toast-viewport') && t.includes('aria-live'), '视口应挂 aria-live 供读屏软件播报');
     assert(t.includes("role={t.level === 'error' ? 'alert' : 'status'}"), '错误通知应用 role=alert');
     assert(/VISIBLE_MAX = 4/.test(t) && t.includes('DEDUPE_WINDOW'), '应限同屏条数并对重复提示去重');
+    assert(t.includes('items = items.map((t) => (t.id === hit.id') && !/hit\.repeat \+=/.test(t), '重复提示必须换新快照（useSyncExternalStore 靠引用变化重渲染），不能原地改');
     assert(!hasEmoji(t), 'toast 零 emoji 铁律');
     const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
     assert(app.includes('<ToastViewport />'), 'App 应挂通知视口');

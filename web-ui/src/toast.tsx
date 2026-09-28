@@ -61,8 +61,14 @@ function push(level: ToastLevel, title: string, options: ToastOptions = {}): num
   const text = String(title || '').trim() || (level === 'error' ? '出现一个错误' : '操作完成');
   const key = `${level}|${text}|${options.description || ''}`;
   const now = Date.now();
+  // 同屏已有同一条：只累加计数并续期，不开新 toast。
+  // 必须整体换新数组与新对象——useSyncExternalStore 靠快照引用变化判断重渲染，原地改会不刷新。
   const hit = items.find((t) => `${t.level}|${t.title}|${t.description || ''}` === key);
-  if (hit) { hit.repeat += 1; hit.expiresAt = now + (options.duration ?? DURATIONS[level]); emit(); return hit.id; }
+  if (hit) {
+    items = items.map((t) => (t.id === hit.id ? { ...t, repeat: t.repeat + 1, expiresAt: now + (options.duration ?? DURATIONS[level]) } : t));
+    emit();
+    return hit.id;
+  }
   const last = recent.get(key);
   if (last !== undefined && now - last < DEDUPE_WINDOW) return -1; // 刚弹过同一条：静默合并
   recent.set(key, now);
@@ -88,9 +94,8 @@ function update(id: number, patch: { level?: ToastLevel; title?: string; descrip
 }
 
 function setPaused(paused: boolean) {
-  let changed = false;
-  items = items.map((t) => (t.paused === paused ? t : ((changed = true), { ...t, paused })));
-  if (changed) emit();
+  const next = items.map((t) => (t.paused === paused ? t : { ...t, paused }));
+  if (next.some((t, i) => t !== items[i])) { items = next; emit(); }
 }
 
 export const toast = {
