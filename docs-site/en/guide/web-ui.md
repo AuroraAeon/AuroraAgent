@@ -12,6 +12,7 @@
 
 ## Design discipline
 
+- The full visual and interaction spec (token roles / spacing rhythm / radius hierarchy / motion discipline / tooltip density) lives in the [Web Design Spec](/en/reference/web-design); domain vocabulary and copy rules live in [Terminology & Copy](/en/reference/terminology)
 - Semantic tokens live in `web-ui/src/tokens.css`; components never hard-code colors
 - Zero emoji; icons are inline SVG
 - No CDN, no Markdown / state-management libraries; animations in native CSS

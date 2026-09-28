@@ -12,6 +12,7 @@
 
 ## 设计纪律
 
+- 视觉与交互的完整规范（令牌角色表 / 间距节奏 / 圆角层级 / 动效纪律 / tooltip 密度）见[网页设计规范](/zh/reference/web-design)；领域词汇与文案写法见[术语与文案规约](/zh/reference/terminology)
 - 设计令牌集中在 `web-ui/src/tokens.css`：组件内禁止硬编码语义色；diff / 成功 / 危险 / 思考各有专属令牌
 - **零 emoji**，图标一律内联 SVG（`web-ui/src/icons.tsx`）
 - 不引 CDN、不引 Markdown / 状态管理等第三方库；动画用原生 CSS
