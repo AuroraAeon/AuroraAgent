@@ -15,7 +15,12 @@ export function isAppleKeyboardPlatform(info: PlatformInfo = readPlatform()): bo
   return /Mac|iPhone|iPad|iPod/.test(info.userAgent ?? '');
 }
 
-/** 侧边栏导轨切换的展示标签：与 App 里 CmdOrCtrl+B 的实际绑定一一对应 */
+/** 侧边栏收回切换的展示标签：与 App 里 CmdOrCtrl+B 的实际绑定一一对应 */
 export function sidebarToggleLabel(info?: PlatformInfo): string {
   return isAppleKeyboardPlatform(info) ? '⌘B' : 'Ctrl+B';
+}
+
+/** 新建会话的展示标签：与 App 里 CmdOrCtrl+K 的实际绑定一一对应 */
+export function newSessionLabel(info?: PlatformInfo): string {
+  return isAppleKeyboardPlatform(info) ? '⌘K' : 'Ctrl+K';
 }

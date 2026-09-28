@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SseParser, estimateTokens } from '../util/sse.mjs';
-import { sidebarToggleLabel, isAppleKeyboardPlatform } from '../web-ui/src/shortcut.ts';
+import { sidebarToggleLabel, newSessionLabel, isAppleKeyboardPlatform } from '../web-ui/src/shortcut.ts';
 import { buildTurnNavItems, normalizePreviewText, resolveBarVisualState, resolveActiveItemIndex, resolveVisibleRange, resolveRailScrollTopForActive } from '../web-ui/src/turn-nav.mjs';
 import { splitMathSegments, takeDisplayMath, isDisplayMathStart, mathDisplay, MATH_ENVIRONMENTS } from '../web-ui/src/math-split.mjs';
 import { startMock } from './mock-longcat.mjs';
@@ -1734,6 +1734,9 @@ try {
     assert(css.includes('padding:6px 12px; font-size:14px;'), '侧栏内边距与基准字号应对齐 dsh');
     assert(css.includes('background:var(--sidebar-fill)'), '侧栏应用专用填充色而非面板色');
     assert(!css.includes('.sidebar.rail'), '收回态不应再是 56px 图标导轨（ZCode 语义：左边整体消失，只留 Header）');
+    // 侧栏填充必须拉满整列高：块容器里 .sidebar 的 height:auto 会塌成内容高，展开态下面留一大块空白
+    assert(css.includes('.sb-panel {\n  display:flex;'), '侧栏裁剪容器应为 flex 行容器，让 .sidebar 沿交叉轴拉满高度');
+    assert(css.includes('.sb-panel > .sidebar { flex:none; }'), '内层侧栏须定宽不收缩，收起才是「擦除」而不是「挤压」');
     assert(app.includes("localStorage.getItem('auroraagent.sidebar')") && app.includes("localStorage.setItem('auroraagent.sidebar'"), '收回偏好应落 localStorage（受控后持久化随状态上移到 App）');
     // 品牌行：60px / 24px 标 / 18px/600 名 / 28px 圆钮（收起 36px）
     const logo = /\.sb-logo \{[^}]*\}/.exec(css)?.[0] || '';
@@ -1777,11 +1780,13 @@ try {
     }
     assert(!sidebar.includes('mode-seg') && !sidebar.includes('onHarness'), '模式切换应只在输入区（侧栏不再放模式分段控件）');
   });
-  await test('快捷键平台标签：Apple 显示 ⌘B、其他平台 Ctrl+B', () => {
+  await test('快捷键平台标签：Apple 显示 ⌘B / ⌘K、其他平台 Ctrl+B / Ctrl+K', () => {
     eq(sidebarToggleLabel({ platform: 'MacIntel' }), '⌘B', 'macOS 应显示 ⌘B');
     eq(sidebarToggleLabel({ platform: 'Win32' }), 'Ctrl+B', 'Windows 应显示 Ctrl+B');
     eq(sidebarToggleLabel({ platform: 'Linux x86_64' }), 'Ctrl+B', 'Linux 应显示 Ctrl+B');
     eq(sidebarToggleLabel({ userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' }), '⌘B', 'UA 兜底应识别 Mac');
+    eq(newSessionLabel({ platform: 'MacIntel' }), '⌘K', 'macOS 新建会话应显示 ⌘K');
+    eq(newSessionLabel({ platform: 'Win32' }), 'Ctrl+K', 'Windows 新建会话应显示 Ctrl+K');
     eq(isAppleKeyboardPlatform({ platform: 'MacIntel' }), true, 'platform 命中 mac 应为 Apple 键盘平台');
     eq(isAppleKeyboardPlatform({ platform: 'Win32', userAgent: 'Mozilla/5.0 (Windows NT 10.0)' }), false, 'Windows 不应判为 Apple');
   });
@@ -1796,19 +1801,36 @@ try {
     assert(app.includes('aria-hidden={rail || undefined}') && app.includes('inert={rail}'), '收回态侧栏应 aria-hidden + inert（不可见也不可聚焦）');
     assert(app.includes('collapsed={rail}'), 'Header 应收住态受控（collapsed 由 rail 驱动）');
     assert(app.includes('scope="header"') && app.includes('resetKeys={[currentId, rail]}'), 'Header 应自带分区错误边界（ZCode scope=workspace-header 同款，崩了不拖垮整列对话）');
-    assert(header.includes('ws-head') && header.includes('ws-toggle') && header.includes('ws-new') && header.includes('onOpenSettings'), 'Header 应自带切换钮 / 新建会话 / 设置入口（侧栏不可见时功能不丢）');
+    assert(header.includes('ws-head') && header.includes('ws-toggle') && header.includes('ws-act') && header.includes('onOpenSettings'), 'Header 应自带切换钮 / 新建会话 / 设置入口（侧栏不可见时功能不丢）');
     assert(!sidebar.includes('sb-rail') && !sidebar.includes('rail ?'), 'Sidebar 不应再有 56px 导轨分支');
-    // 动画规格：侧栏过渡 width / opacity、Header 过渡 height / opacity / border-color，均 200ms ease-out，且都不许退回 all
+    // 动画规格：侧栏过渡 width / opacity、Header 过渡 height / opacity / box-shadow（分隔线走 inset 阴影，border 在 height:0 时仍占位），均 200ms ease-out，且都不许退回 all
     const panel = /\.sb-panel \{[^}]*\}/.exec(css)?.[0] || '';
     for (const decl of ['width:280px', 'overflow:hidden', 'transition:width 200ms var(--ease), opacity 200ms var(--ease)']) {
       assert(panel.includes(decl), `侧栏裁剪容器应按 ZCode transition-[width,opacity] 声明 ${decl}`);
     }
     assert(css.includes('.sb-panel.off { width:0; opacity:0; pointer-events:none; }'), '收回态应宽高归零 + 淡出 + 断指针（ZCode collapsedSidebarWidthPx=0）');
     const head = /\.ws-head \{[^}]*\}/.exec(css)?.[0] || '';
-    for (const decl of ['height:0', 'opacity:0', 'transition:height 200ms var(--ease), opacity 200ms var(--ease), border-color 200ms var(--ease)']) {
+    for (const decl of ['height:0', 'opacity:0', 'transition:height 200ms var(--ease), opacity 200ms var(--ease), box-shadow 200ms var(--ease)']) {
       assert(head.includes(decl), `Header 常驻态应按同拍动画声明 ${decl}`);
     }
-    assert(css.includes('.ws-head.on { height:48px; opacity:1; border-bottom-color:var(--line); }'), 'Header 展开应为 ZCode h-12 + border-b');
+    assert(css.includes('.ws-head.on { height:48px; opacity:1; box-shadow:inset 0 -1px 0 var(--line); }'), 'Header 展开应为 ZCode h-12 + border-b');
+    assert(css.includes('box-shadow:inset 0 -1px 0 transparent;') && !css.includes('.ws-head {\n  box-sizing'), '折叠态分隔线应走 inset 阴影：border 的 1px 在 height:0 时仍占位，会在主区顶部留 1px 透明缝');
+    // ZCode WorkspaceHeader 内行：h-12 / p-2 / items-center / justify-between / gap-2 / overflow-hidden
+    const row = /\.ws-head-row \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['display:flex', 'align-items:center', 'justify-content:space-between', 'gap:8px', 'height:48px', 'padding:8px', 'overflow:hidden']) {
+      assert(row.includes(decl), `Header 内行应按 ZCode h-12 + p-2 + gap-2 规格声明 ${decl}`);
+    }
+    // 左组 gap-1 / 右组 gap-0.5（DesktopTopOverlay 交互容器与 WorkspaceHeaderActionSection）
+    assert(css.includes('.ws-head-left { display:flex; align-items:center; gap:4px;'), 'Header 左组应按 ZCode gap-1 排布切换钮与新建钮');
+    assert(css.includes('.ws-head-right { display:flex; align-items:center; gap:2px;'), 'Header 右组应按 ZCode gap-0.5 排布');
+    // 入口钮统一 Button ghost icon-md：28px + rounded-lg + 只过渡颜色，图标 size-4
+    const act = /\.ws-act \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['width:28px', 'height:28px', 'border-radius:8px', 'transition:background-color 150ms var(--ease), color 150ms var(--ease)']) {
+      assert(act.includes(decl), `入口钮应按 ZCode ghost icon-md 规格声明 ${decl}`);
+    }
+    assert(header.includes('<IconPlus size={16} />') && header.includes('<IconGear size={16} />'), '新建与设置入口应按 ZCode size-4 图标规格');
+    assert(header.includes('newSessionLabel()') && header.includes('title="新会话"'), '新建钮应带 ⌘K/Ctrl+K 快捷键提示（对齐 ZCode newTaskShortcutLabel）');
+    assert(!header.includes('ws-new') && !header.includes('ws-ver'), 'Header 不应再放带标签的大钮与版本号芯片（ZCode 顶部浮层只有图标钮）');
     assert(!/\.ws-head[^{]*\{[^}]*transition:all/.test(css) && !/\.sb-panel[^{]*\{[^}]*transition:all/.test(css), '过渡必须显式枚举属性，不许 transition:all（ZCode 同款教训）');
     assert(css.includes('prefers-reduced-motion: reduce) { .sb-panel, .ws-head'), '减弱动效下侧栏擦除与 Header 生长应直接跳终态');
     // Header 切换钮：ZCode DesktopTopOverlay 那枚 ghost 方钮（logo / 图标两层叠加 + 「打开面板」语义）
@@ -1832,6 +1854,10 @@ try {
     // 气泡工程与视觉：portal 单例 root、role=tooltip、Esc 可关、8px 圆角壳、16px 键帽
     assert(tip.includes('createPortal') && tip.includes("root.id = 'tooltip-root'"), '气泡应经 portal 挂模块级单例 root（绕开 overflow 裁剪，别按实例建上下文）');
     assert(tip.includes('role="tooltip"') && tip.includes("e.key === 'Escape'"), '气泡应有 role=tooltip 且 Esc 可关');
+    // 退出动画期间必须保留上次定位：清了会让气泡瞬间跳到 left/top 0，而 visibility 过渡
+    // 会让它在左上角继续被绘制满 120ms——就是「移出触发区时 tooltip 闪现」的根因
+    assert(!/if \(phase !== 'in'\) \{ setPos\(null\); return; \}/.test(tip), '退出态不得清空定位（淡出必须发生在按钮原地）');
+    assert(tip.includes("if (phase !== 'in') return;"), '定位副作用应只在打开态运行，out / null 都保留上次位置');
     assert(css.includes('@starting-style') && css.includes('.ct-tip[data-phase="out"]'), '进入 / 退出动画应由 CSS @starting-style 与 data-phase 承担');
     assert(!tip.includes('requestAnimationFrame'), '组件不应自行 rAF 驱动动画（交给合成器）');
     const shell = /\.ct-tip \{[^}]*\}/.exec(css)?.[0] || '';
@@ -2250,7 +2276,10 @@ try {
     const goalCmdIdx = composerSrc.indexOf('/^\\/goal(\\s|$)/.test(t) && onGoalCommand');
     const busyGuardIdx = composerSrc.indexOf('if (busy) return;');
     assert(goalCmdIdx >= 0 && busyGuardIdx > goalCmdIdx, 'Composer 应放行 /goal 命令穿越 busy（对齐 MiniMax：catalog 命令在 turn 运行中直接 dispatch）');
-    assert(composerSrc.includes('生成中可输入 /goal 管理目标'), 'Composer 提示应告知生成中可管理目标');
+    // 底部那行长提示已按要求整行移除；「生成中可管目标」改由斜杠命令目录发现
+    assert(!composerSrc.includes('composer-hint'), 'Composer 底部提示行应已移除（用户明确要求删掉）');
+    const slashSrc = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'slash-commands.ts'), 'utf8');
+    assert(slashSrc.includes("name: 'goal'") && slashSrc.includes('会话目标'), '/goal 家族应仍在斜杠命令目录里（输入 / 即列，生成中可直接 dispatch）');
     // turn 收尾刷新：notice（/goal 命令回执）只存在于本地、不在服务端转录里，整体替换会把它冲掉，
     // 「生成中可管理目标」就收不到任何反馈；同时按会话守卫，避免旧 turn 投影写进已切走的会话
     assert(app.includes('currentIdRef.current === sessionId') && (app + te).includes("prev.filter((m) => m.kind === 'notice')"), 'turn 收尾刷新应保留本地 notice 并按会话守卫');

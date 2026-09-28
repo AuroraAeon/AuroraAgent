@@ -588,7 +588,7 @@ export default function App() {
   }, [rail]);
   const toggleRail = useCallback(() => setRail((v) => !v), []);
 
-  // 键盘快捷键：Ctrl/Cmd+K 新建会话，Ctrl/Cmd+B 切换侧栏导轨，/ 聚焦输入框（焦点不在可输入元素时）。
+  // 键盘快捷键：Ctrl/Cmd+K 新建会话，Ctrl/Cmd+B 切换侧栏收回态，/ 聚焦输入框（焦点不在可输入元素时）。
   // 弹层打开时只保留聚焦输入（其余让位给对话框自身的按键处理）。
   const [focusNonce, setFocusNonce] = useState(0);
   useEffect(() => {
@@ -601,7 +601,7 @@ export default function App() {
         void newSession();
         return;
       }
-      // Ctrl/Cmd+B 切换侧栏导轨（与 ZCode toggleSidebar 同键位；弹层打开时让位）
+      // Ctrl/Cmd+B 切换侧栏收回态（与 ZCode toggleSidebar 同键位；弹层打开时让位）
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b' && !e.shiftKey && !e.altKey) {
         if (settingsOpen) return;
         e.preventDefault();
@@ -661,7 +661,6 @@ export default function App() {
               onToggle={toggleRail}
               onNew={newSession}
               onOpenSettings={() => setSettingsOpen(true)}
-              version={settings?.version || '4.0.0'}
             />
           </ScopedErrorBoundary>
           {error ? (

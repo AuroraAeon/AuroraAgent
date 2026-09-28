@@ -85,8 +85,8 @@ Tooltip spec (replicating ZCode's `ControlHintTooltip`, implemented dependency-f
 | Part | Spec |
 | --- | --- |
 | Shell | `8px` radius, `1px` `--tooltip-line` border, `--tooltip-bg` fill, `--shadow-pop` |
-| Padding | `12px` horizontal / `6px` vertical |
-| Title | `12px` / `500`, `6px` gap to the shortcut |
+| Padding | `10px` horizontal / `4px` vertical; `4px` right when a key cap is present; `12px` / `8px` when a description is present |
+| Title | `12px` / `500`, `8px` gap to the shortcut (`6px` with a description) |
 | Key cap `kbd` | `16px` high, `6px` radius, `6px` horizontal padding, `10px` / `500`, `--kbd-bg` / `--kbd-ink`; monospace on non-Apple platforms, system font on Apple |
 | Behavior | Shows **instantly** on hover / focus (no delay), `120ms` fade-and-scale, closes on `Esc` or blur, repositions during scroll and resize, only one open at a time |
 

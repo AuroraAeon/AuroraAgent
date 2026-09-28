@@ -456,9 +456,6 @@ export function Composer({
           </div>
         </div>
       </div>
-      <p className="composer-hint">
-        Enter 发送，Shift+Enter 换行 · 生成中可按 Esc 或点停止中断，已生成内容会保留 · 生成中可输入 /goal 管理目标（改预算 / 暂停 / 改写目标文本）· 文件与命令工具经授权后在工作目录内执行
-      </p>
     </div>
   );
 }

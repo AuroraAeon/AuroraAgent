@@ -19,12 +19,12 @@ export interface ControlTooltipProps {
   shortcut?: string;
   /** 可选补充说明：有它时标题与键帽占一行、说明另起一行 */
   description?: string;
-  /** 气泡方向：默认 top，侧栏导轨钮用 bottom */
+  /** 气泡方向：默认 top，Header 切换钮用 bottom */
   side?: 'top' | 'bottom';
   children: ReactNode;
 }
 
-const GAP = 4;
+const GAP = 2;
 const EDGE = 8;
 const FADE_MS = 120;
 
@@ -76,9 +76,12 @@ export function ControlTooltip({ title, shortcut, description, side = 'top', chi
     return () => window.clearTimeout(id);
   }, [phase]);
 
-  /** 打开后按触发器实测位置定位：bottom 在下方、top 在上方，水平居中并做视口钳制 */
+  /** 打开后按触发器实测位置定位：bottom 在下方、top 在上方，水平居中并做视口钳制。
+   *  退出动画期间必须保留上次定位：一旦在这里把 pos 清掉，气泡会瞬间跳到 left/top 0，
+   *  而 .ct-tip 上的 visibility 过渡会让它在那个角落继续被绘制满 120ms——
+   *  就是「鼠标移出触发区时 tooltip 在左上角闪现一下」的根因。 */
   useLayoutEffect(() => {
-    if (phase !== 'in') { setPos(null); return; }
+    if (phase !== 'in') return;
     const place = () => {
       const el = tipRef.current, trig = triggerRef.current;
       if (!el || !trig) return;
