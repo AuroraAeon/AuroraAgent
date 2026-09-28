@@ -18,6 +18,7 @@
     "publish": "npm run build:web && node tools/build-app.mjs && launchctl kickstart -k gui/$(id -u)/com.auroraagent.app",
     "dev:web": "npm --prefix web-ui run dev",
     "build:web": "npm --prefix web-ui run build",
+    "typecheck:web": "npm --prefix web-ui run typecheck",
     "docs:dev": "npm --prefix docs-site run dev",
     "docs:build": "npm --prefix docs-site run build",
     "docs:notes": "node tools/gen-release-notes.mjs",

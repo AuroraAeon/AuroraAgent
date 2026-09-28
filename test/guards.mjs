@@ -172,6 +172,37 @@ export function guardDocsSite() {
     if (!pkg.scripts[s]) throw new Error(`package.json 应提供 ${s} 脚本`);
   }
 }
+/** 文档新鲜度守卫：release-please 只改 package.json，README 的版本标注会静默过期 */
+export function guardDocsFreshness() {
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+  const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
+  const m = readme.match(/版本随 package\.json（([0-9][^）]*)）/);
+  if (!m) throw new Error('README.md 缺少「版本随 package.json（X.Y.Z）」标注');
+  if (m[1] !== pkg.version) {
+    throw new Error(`README 版本标注（${m[1]}）与 package.json（${pkg.version}）不一致：合并发布 PR 后应同步 README`);
+  }
+}
+
+/** 架构地图守卫（对齐 ZCode architecture-baseline 思路）：util/ 顶层与 util/agent/ 的每个模块
+ *  都必须登记进 AGENTS.md 架构地图；基线豁免记在 test/architecture-baseline.json，
+ *  只让「新漏报」变红，历史欠账不阻塞（还清一笔删一条） */
+export function guardArchitectureMap() {
+  const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8');
+  const map = agents.slice(agents.indexOf('## 1. 架构地图'), agents.indexOf('## 2. 常用命令'));
+  const baseline = new Set(JSON.parse(readFileSync(join(ROOT, 'test', 'architecture-baseline.json'), 'utf8')).exempt || []);
+  const missing = [];
+  for (const dir of ['util', 'util/agent']) {
+    let names = [];
+    try { names = readdirSync(join(ROOT, dir)); } catch { continue; }
+    for (const name of names) {
+      if (!name.endsWith('.mjs')) continue;
+      const rel = `${dir}/${name}`;
+      if (!map.includes(name) && !baseline.has(rel)) missing.push(rel);
+    }
+  }
+  if (missing.length) throw new Error(`以下模块未登记进 AGENTS.md 架构地图（补表格或记入 test/architecture-baseline.json）: ${missing.join(', ')}`);
+}
+
 export const GUARDS = [
   ['产品源码零 emoji', guardNoEmoji],
   ['网页设计令牌双主题对比度达标', guardWebTokenContrast],
@@ -180,6 +211,8 @@ export const GUARDS = [
   ['新模块行数预算 ≤500', guardLineBudget],
   ['过渡动画禁 transition:all（只动颜色/透明度/变换）', guardNoTransitionAll],
   ['文档站结构契约（中英对应 / 标记 / 依赖例外）', guardDocsSite],
+  ['文档新鲜度（package.json 版本 ↔ README 标注）', guardDocsFreshness],
+  ['架构地图覆盖 util/ 与 util/agent/ 模块', guardArchitectureMap],
 ];
 
 export async function runGuardTests(test, assert) {
