@@ -230,6 +230,43 @@ export const IconKeyboard = (p: IconProps) => (
     <line x1="7.5" y1="14" x2="16.5" y2="14" />
   </Svg>
 );
+export const IconMessageCirclePlus = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719" />
+    <path d="M8 12h8" />
+    <path d="M12 8v8" />
+  </Svg>
+);
+export const IconPalette = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z" />
+    <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+    <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+    <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+    <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+  </Svg>
+);
+export const IconMonitor = (p: IconProps) => (
+  <Svg {...p}>
+    <rect width="20" height="14" x="2" y="3" rx="2" />
+    <line x1="8" x2="16" y1="21" y2="21" />
+    <line x1="12" x2="12" y1="17" y2="21" />
+  </Svg>
+);
+export const IconMoon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401" />
+  </Svg>
+);
+export const IconSun = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="4" />
+    <path d="M12 2v2" /><path d="M12 20v2" />
+    <path d="m4.93 4.93 1.41 1.41" /><path d="m17.66 17.66 1.41 1.41" />
+    <path d="M2 12h2" /><path d="M20 12h2" />
+    <path d="m6.34 17.66-1.41 1.41" /><path d="m19.07 4.93-1.41 1.41" />
+  </Svg>
+);
 /** 等待中的三点动画（CSS 驱动，见 app.css） */
 export const Dots = ({ label }: { label: string }) => (
   <span className="dots" aria-label={label} role="status">

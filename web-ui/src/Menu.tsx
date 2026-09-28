@@ -7,10 +7,12 @@
  *    danger 项用 --danger-ink；进入 120ms 淡入缩放（@starting-style），只动透明度与变换；
  *  - 工程：全部实例经 createPortal 挂模块级单例 root（与 ControlTooltip 同一思路：
  *    别按实例建上下文；portal 同时绕开 Header 的 overflow:hidden 裁剪），
- *    打开时按触发器实测位置定位并做视口钳制（下方空间不足时上翻），滚动 / resize 重定位。
+ *    打开时按触发器实测位置定位并做视口钳制（下方空间不足时上翻），滚动 / resize 重定位；
+ *    触发器可挂气泡（tip，复刻 ZCode「ControlHintTooltip 包住 DropdownMenuTrigger」）。
  */
 import { cloneElement, createContext, isValidElement, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { ControlTooltip } from './ControlTooltip';
 
 export interface MenuProps {
   /** 无障碍名称（菜单用途，如「会话操作」） */
@@ -22,6 +24,9 @@ export interface MenuProps {
   /** 受控开放（可选）：给了就由外部掌控开合，onClose 必填 */
   open?: boolean;
   onClose?: () => void;
+  /** 触发器气泡（复刻 ZCode：ControlHintTooltip 包住 DropdownMenuTrigger，如帮助钮的「帮助」）；
+   *  菜单开着时压掉——气泡与菜单同朝下方会重叠 */
+  tip?: { title: string; shortcut?: string };
   children: ReactNode;
 }
 
@@ -54,7 +59,7 @@ function ensureRoot(): HTMLDivElement {
   return root;
 }
 
-export function Menu({ label, trigger, align = 'end', open: controlledOpen, onClose, children }: MenuProps) {
+export function Menu({ label, trigger, align = 'end', open: controlledOpen, onClose, tip, children }: MenuProps) {
   const triggerRef = useRef<HTMLElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [innerOpen, setInnerOpen] = useState(false);
@@ -168,7 +173,16 @@ export function Menu({ label, trigger, align = 'end', open: controlledOpen, onCl
     ensureRoot(),
   ) : null;
 
-  return <>{triggerEl}{menu}</>;
+  // 触发器气泡：ControlTooltip 与 Menu 的克隆互相包着不会打架——ControlTooltip 的 ref 是
+  // 组合式 callback（同时写自己与 Menu 的 triggerRef，见该组件注释）；菜单开着时传 open=false
+  // 压掉气泡，避免与下方菜单重叠（ZCode 里 Radix 点开即散，这里同效果）。
+  const withTip = tip ? (
+    <ControlTooltip title={tip.title} shortcut={tip.shortcut} side="bottom" open={render && open ? false : undefined}>
+      {triggerEl}
+    </ControlTooltip>
+  ) : triggerEl;
+
+  return <>{withTip}{menu}</>;
 }
 
 export function MenuItem({ icon, shortcut, danger, disabled, onSelect, children }: MenuItemProps) {

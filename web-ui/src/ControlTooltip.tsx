@@ -13,7 +13,7 @@
  *    Provider 上下文，同时 portal 绕开 .sb-logo 的 overflow:hidden 裁剪；
  *    同一时刻只开一个（模块级 activeHide），滚动 / resize 期间重新定位。
  */
-import { cloneElement, isValidElement, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
+import { cloneElement, isValidElement, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode, type Ref } from 'react';
 import { createPortal } from 'react-dom';
 import { isAppleKeyboardPlatform } from './shortcut';
 
@@ -118,9 +118,17 @@ export function ControlTooltip({ title, shortcut, description, side = 'top', ali
 
   const rich = typeof title !== 'string';
   const child = isValidElement(children) ? (children as ReactElement<Record<string, unknown>>) : null;
+  // ref 组合（ZCode 教训）：触发器可能已带 ref（如 Menu 克隆出的 trigger 要量定位），
+  // 直接覆盖会让消费方的 ref 永远拿不到节点。callback ref 同时写两处，且身份随渲染稳定。
+  const childRef = child ? (child.props as { ref?: Ref<HTMLElement> }).ref : undefined;
+  const composedRef = useCallback((el: HTMLElement | null) => {
+    triggerRef.current = el;
+    if (typeof childRef === 'function') childRef(el);
+    else if (childRef && typeof childRef === 'object') (childRef as { current: HTMLElement | null }).current = el;
+  }, [childRef]);
   const trigger = child ? cloneElement(child, {
     className: ['ct-trigger', child.props.className].filter(Boolean).join(' '),
-    ref: (el: HTMLElement | null) => { triggerRef.current = el; },
+    ref: composedRef,
     onMouseEnter: () => show(),
     onMouseLeave: () => hide(),
     onFocus: () => show(),

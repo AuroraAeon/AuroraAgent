@@ -180,6 +180,7 @@ export function WorkspaceHeader({ session, version, collapsed, overlayInset, onR
         <div className="ws-head-right">
           <Menu
             label="帮助"
+            tip={{ title: '帮助' }}
             trigger={(
               <button type="button" className="ws-act ws-act-dim" aria-label="帮助">
                 <IconCircleHelp size={16} />

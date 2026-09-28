@@ -1,11 +1,11 @@
-/** 设置「通用」section：外观主题 + 生成参数（温度 / 最大输出 / API Key）+ 服务状态与版本更新。
+/** 设置「通用」section：生成参数（温度 / 最大输出 / API Key）+ 服务状态与版本更新。
+ *  外观主题已迁往独立的「外观」section（ZCode appearance 一级目录，见 AppearancePanel）。
  * 分级对齐 dsh web 设置页：组标题（12px 重色）→ 行（标题 + 描述 + 右侧控件，行间 0.5px 分隔）。 */
 import { useCallback, useEffect, useState } from 'react';
 import { IconAlert, IconRefresh } from '../icons';
 import { checkUpdate, getGeneration, getKeyState, getSettings, saveApiKey, saveGeneration, setAutostart } from '../api';
 import type { SettingsInfo, UpdateInfo } from '../types';
 import { toast } from '../toast';
-import { THEME_OPTIONS, useThemePreference } from '../theme';
 
 function Group({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -33,7 +33,6 @@ export function GeneralPanel() {
   const [autostartBusy, setAutostartBusy] = useState(false);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
-  const [themePref, chooseTheme] = useThemePreference();
   // 生成参数（全局）：温度 / 单次最大输出 / API Key，与网页斜杠命令 /temp /max /key 同源
   const [gen, setGen] = useState<{ temperature: number; maxTokens: number } | null>(null);
   const [hasKey, setHasKey] = useState<boolean | null>(null);
@@ -125,23 +124,6 @@ export function GeneralPanel() {
 
   return (
     <>
-      <Group title="外观">
-        <p className="pv-intro">界面配色跟随系统或固定为浅色 / 深色，选择只影响本机浏览器。</p>
-        <div className="mode-seg" role="group" aria-label="界面主题">
-          {THEME_OPTIONS.map((o) => (
-            <button
-              key={o.id}
-              type="button"
-              className={`mode-btn ${themePref === o.id ? 'on' : ''}`}
-              aria-pressed={themePref === o.id}
-              onClick={() => chooseTheme(o.id)}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-      </Group>
-
       <Group title="生成参数">
         <p className="pv-intro">全局生效，改后下一轮模型请求即用新值；网页斜杠命令 /temp /max /key 与这里同源。</p>
         <Row title="温度" desc="0 ~ 1，越低越保守；影响下一次请求的采样随机性">

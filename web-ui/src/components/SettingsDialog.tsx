@@ -4,7 +4,7 @@
 import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import {
-  IconAlert, IconChart, IconClose, IconGear, IconGlobe, IconKey, IconList, IconShield, IconTerminal, IconWrench,
+  IconAlert, IconChart, IconClose, IconGear, IconGlobe, IconKey, IconList, IconPalette, IconShield, IconTerminal, IconWrench,
 } from '../icons';
 import { ProvidersPanel } from './ProvidersPanel';
 import { SkillsPanel } from './SkillsPanel';
@@ -15,13 +15,15 @@ import { FailoverPanel } from './FailoverPanel';
 import { UsagePanel } from './UsagePanel';
 import { ErrorLogPanel } from './ErrorLogPanel';
 import { GeneralPanel } from './GeneralPanel';
+import { AppearancePanel } from './AppearancePanel';
 
-type SectionId = 'general' | 'providers' | 'skills' | 'mcp' | 'terminal' | 'network' | 'failover' | 'usage' | 'errlog';
+type SectionId = 'general' | 'appearance' | 'providers' | 'skills' | 'mcp' | 'terminal' | 'network' | 'failover' | 'usage' | 'errlog';
 
 type SectionIcon = (p: { size?: number }) => ReactNode;
 
 const SECTIONS: { id: SectionId; label: string; icon: SectionIcon }[] = [
   { id: 'general', label: '通用', icon: IconGear },
+  { id: 'appearance', label: '外观', icon: IconPalette },
   { id: 'providers', label: '提供方', icon: IconKey },
   { id: 'failover', label: '故障转移', icon: IconShield },
   { id: 'network', label: '网络', icon: IconGlobe },
@@ -60,6 +62,7 @@ export function SettingsDialog({ open, onClose, onProvidersChanged }: Props) {
   const renderSection = (id: SectionId): ReactNode => {
     switch (id) {
       case 'general': return <GeneralPanel />;
+      case 'appearance': return <AppearancePanel />;
       case 'providers': return <ProvidersPanel onProvidersChanged={onProvidersChanged} />;
       case 'skills': return <SkillsPanel />;
       case 'mcp': return <McpPanel />;

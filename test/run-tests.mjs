@@ -1773,30 +1773,31 @@ try {
     const sidebar = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Sidebar.tsx'), 'utf8');
     const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
-    // 栏体：280px 宽 / 48px 顶部浮层带 + 12px 6px 内边距 / 14px 基准字号 / 专用填充
+    // 栏体：280px 宽 / 48px 顶部浮层带 + 12px 内容上距（ZCode h-12 拖拽带 + py-3）/ 14px 基准字号 / 专用填充
     assert(css.includes('width:280px'), '侧栏宽应为 dsh 的 280px');
-    assert(css.includes('padding:48px 12px 6px; font-size:14px;'), '侧栏应留 48px 顶部浮层带并保持 dsh 基准字号');
+    assert(css.includes('padding:60px 12px 6px; font-size:14px;'), '侧栏应留 48px 浮层带 + 12px 内容上距并保持 dsh 基准字号');
     assert(css.includes('background:var(--sidebar-fill)'), '侧栏应用专用填充色而非面板色');
     assert(!css.includes('.sidebar.rail'), '收回态不应再是 56px 图标导轨（ZCode 语义：左边整体消失，只留 Header）');
     // 侧栏填充必须拉满整列高：块容器里 .sidebar 的 height:auto 会塌成内容高，展开态下面留一大块空白
     assert(css.includes('.sb-panel {\n  display:flex;'), '侧栏裁剪容器应为 flex 行容器，让 .sidebar 沿交叉轴拉满高度');
     assert(css.includes('.sb-panel > .sidebar { flex:none; }'), '内层侧栏须定宽不收缩，收起才是「擦除」而不是「挤压」');
     assert(app.includes("localStorage.getItem('auroraagent.sidebar')") && app.includes("localStorage.setItem('auroraagent.sidebar'"), '收回偏好应落 localStorage（受控后持久化随状态上移到 App）');
-    // 品牌行：60px / 24px 标 / 18px/600 名 / 28px 圆钮（收起 36px）
-    const logo = /\.sb-logo \{[^}]*\}/.exec(css)?.[0] || '';
-    for (const decl of ['height:60px', 'justify-content:flex-end', 'gap:8px', 'padding:8px 0 8px 4px']) {
-      assert(logo.includes(decl), `品牌行应按 dsh 数值声明 ${decl}`);
-    }
-    assert(css.includes('.sb-brand-name { font-size:18px; font-weight:600; line-height:24px; letter-spacing:.04em;'), '品牌名应按 dsh 18px/600/24px');
-    // 切换入口已整体迁到 WorkspaceTopOverlay（ZCode DesktopTopOverlay）：品牌行只留品牌本体
+    // ZCode 侧栏没有大 Logo：aside 首段是 48px 空拖拽带，品牌只在浮层切换钮里（左上角已有一枚）
+    assert(!css.includes('.sb-logo') && !css.includes('.sb-brand'), '侧栏品牌行样式应随 ZCode 复刻退役（Logo 只在顶部浮层）');
+    assert(!sidebar.includes('sb-brand') && !sidebar.includes('sb-logo'), 'Sidebar 不应再渲染品牌行（ZCode：展开态侧栏无大 Logo）');
+    // 切换入口已整体迁到 WorkspaceTopOverlay（ZCode DesktopTopOverlay）
     assert(!css.includes('.sb-iconbtn'), '侧栏图标钮样式应随切换钮迁出而退役');
     assert(!sidebar.includes('IconPanelLeftClose') && !sidebar.includes('sb-rail') && !sidebar.includes('onToggleRail'), 'Sidebar 不应再有切换钮 / 56px 导轨分支 / onToggleRail prop');
-    assert(sidebar.includes('className="sb-brand"') && sidebar.includes('onClick={onNew}'), '点品牌即新建会话（同 dsh 行为）');
-    // 新建会话钮：38px / 圆角 12px / 14px/500
+    // 新建任务钮（ZCode NewTaskButtonGroup 像素级）：w-full h-8 rounded-lg ghost、pl-2.5 pr-2.5 gap-2，
+    // MessageCirclePlus 16px +「新建任务」14px truncate + 右侧快捷键标签（12px 三次色 ml-auto）
     const newBtn = /\.sb-new \{[^}]*\}/.exec(css)?.[0] || '';
-    for (const decl of ['height:38px', 'border-radius:12px', 'font-size:14px', 'font-weight:500', 'line-height:22px', 'gap:6px']) {
-      assert(newBtn.includes(decl), `新建会话钮应按 dsh 数值声明 ${decl}`);
+    for (const decl of ['width:100%', 'height:32px', 'border-radius:8px', 'gap:8px', 'padding:0 10px', 'font-size:14px', 'line-height:20px']) {
+      assert(newBtn.includes(decl), `新建任务钮应按 ZCode NewTaskButtonGroup 数值声明 ${decl}`);
     }
+    assert(!newBtn.includes('border:1px'), 'ZCode 新建任务钮是 ghost 无描边（不是旧 dsh 细描边钮）');
+    assert(css.includes('.sb-new-key { flex:none; margin-left:auto; font-size:12px; line-height:16px; color:var(--faint); }'), '新建任务钮右侧快捷键标签应按 ZCode text-ui-xs 三次色声明');
+    assert(sidebar.includes('<IconMessageCirclePlus size={16} />') && sidebar.includes('>新建任务<') && sidebar.includes('sb-new-key') && sidebar.includes('newSessionLabel()'), '新建任务钮应含 MessageCirclePlus 图标 + 文案 + 快捷键标签');
+    assert(!sidebar.includes('title="新会话"'), '按钮已自带文案与快捷键，不再挂重复 tooltip（ZCode 同款纪律）');
     // 会话区：36px 区头 + 可展开搜索 + 32px 行 / 圆角 8px / 行距 2px
     const head = /\.sb-sechead \{[^}]*\}/.exec(css)?.[0] || '';
     assert(head.includes('height:36px'), '区头高应为 dsh 的 36px');
@@ -1876,6 +1877,8 @@ try {
     assert(css.includes('@container (max-width:560px) { .ws-title { max-width:30vw; } }'), '标题窄档应按 ZCode @max-[560px] 收 30vw');
     assert(css.includes('@container (max-width:420px) { .ws-title { max-width:22vw; } }'), '标题更窄档应按 ZCode @max-[420px] 收 22vw');
     assert(header.includes('ws-title-input') && header.includes('onDoubleClick'), '标题应支持双击原位重命名（ZCode TaskRenameDialog 轻量替代）');
+    // 帮助钮气泡（ZCode WorkspaceHelpMenuButton：ControlHintTooltip 包住 DropdownMenuTrigger）
+    assert(header.includes("tip={{ title: '帮助' }}"), '帮助菜单触发器应挂「帮助」气泡（ZCode 同款：hover 即显）');
     // 工作区上下文卡：hover 即显 + 点击 pin，路径 home 缩写 + 最近活动 + git 分支（懒拉取按工作目录缓存）
     assert(header.includes('abbreviateHome') && header.includes('getWorkspace('), '工作区卡应经 abbreviateHome 缩写路径并按工作目录懒拉取 GET /api/workspace');
     assert(header.includes('ct-rich-rows') && header.includes('ctxHover') && header.includes('ctxPinned'), '工作区卡应支持 hover 即显 + 点击 pin（ZCode workspaceContextOpen 受控模式）');
@@ -1892,7 +1895,11 @@ try {
     assert(header.includes('side="bottom"'), 'Header 气泡应在按钮下方（ZCode side=bottom）');
     // 顶部浮层（ZCode DesktopTopOverlay）：切换 / 上一个 / 下一个 / 新建 / 更新全在这
     assert(overlay.includes('ws-overlay') && overlay.includes('ws-overlay-group') && overlay.includes('ws-overlay-new'), '浮层应按 ZCode DesktopTopOverlay 结构组织');
-    assert(overlay.includes('<IconPlus size={16} />') && overlay.includes('newSessionLabel()'), '新建会话钮应带 ⌘K/Ctrl+K 快捷键提示（对齐 ZCode newTaskShortcutLabel）');
+    // 新建任务图标：ZCode 用 lucide MessageCirclePlus（聊天气泡 + 加号），不是裸加号
+    assert(overlay.includes('<IconMessageCirclePlus size={16} />') && overlay.includes('aria-label="新建任务"'), '浮层新建任务应按 ZCode 用 MessageCirclePlus 图标与「新建任务」文案');
+    const icons = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'icons.tsx'), 'utf8');
+    assert(icons.includes('IconMessageCirclePlus') && icons.includes('M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29'), 'MessageCirclePlus 应取 lucide 1.17.0 精确路径（ZCode 同版本）');
+    assert(overlay.includes('<IconMessageCirclePlus size={16} />') && overlay.includes('newSessionLabel()'), '新建任务钮应带 MessageCirclePlus 图标与 ⌘K/Ctrl+K 快捷键提示（对齐 ZCode newTaskShortcutLabel）');
     assert(overlay.includes('IconArrowLeft') && overlay.includes('IconArrowRight') && overlay.includes('canNav'), '浮层应承载上一个 / 下一个提问导航（会话不足两轮禁用）');
     assert(overlay.includes('IconPanelLeftOpen') && overlay.includes('IconPanelLeftClose'), '切换钮应按 ZCode SidebarToggleIcon 语义取「打开 / 关闭面板」双图标');
     assert(overlay.includes('ControlTooltip') && overlay.includes('title="切换侧边栏"') && overlay.includes('sidebarToggleLabel()'), '浮层切换钮应挂 ControlTooltip 并带快捷键标签');
@@ -1901,7 +1908,7 @@ try {
     assert(css.includes('.ws-overlay-new.on { width:28px; opacity:1; }') && css.includes('transition:opacity 300ms var(--ease), width 300ms var(--ease)'), '新建钮应按 ZCode isNewTaskButtonVisible 语义做 opacity/width 300ms 过渡');
     assert(app.includes('overlayInset={overlayW}'), 'Header 收回态应按实测浮层宽让位（ZCode shouldOffsetHeaderForWindowControls 同思路）');
     // 侧栏顶部留出 48px 浮层带（ZCode overlay h-14 盖住侧栏顶部同款）
-    assert(css.includes('padding:48px 12px 6px; font-size:14px;'), '侧栏应留 48px 顶部浮层带');
+    assert(css.includes('padding:60px 12px 6px; font-size:14px;'), '侧栏应留 48px 浮层带 + 12px 内容上距（ZCode h-12 拖拽带 + py-3）');
     assert(css.includes('.app { position:relative;'), '布局根应 relative 让浮层绝对定位有锚点');
     // App 侧接线：浮层宽实测 / 窄窗自动收起 / 更新检查 / 导航请求 / 重命名
     assert(app.includes('overlayW') && app.includes('ResizeObserver'), 'App 应实测浮层宽度供 Header 让位');
@@ -1942,6 +1949,8 @@ try {
     assert(tip.includes('rich = typeof title') && tip.includes('ct-tip-rich'), 'title 传节点应切富内容卡变体');
     assert(tip.includes('onOpenChange?.(true)') && tip.includes('onOpenChange?.(false)'), '受控模式应把开合交给消费方（ZCode workspaceContextOpen 模式）');
     assert(tip.includes("align === 'start'") && tip.includes("align === 'end'"), '水平对齐应支持 start / center / end（ZCode align=start）');
+    // ref 组合：触发器可能已带 ref（Menu 克隆出的 trigger 要量定位），覆盖会让消费方拿不到节点
+    assert(tip.includes('composedRef') && tip.includes("child.props as { ref?: Ref<HTMLElement> }"), 'ControlTooltip 应组合子元素既有 ref（ZCode setRef 同款教训）');
     assert(css.includes('.ct-tip-rich {') && css.includes('width:288px') && css.includes('background:var(--panel)'), '富内容卡应按 ZCode w-72 popover 规格（--panel 底、288px、12px 距）');
     assert(css.includes('.ct-rich-row.git { border-top:1px solid var(--line); padding-top:12px; }'), 'git 行应有顶部分隔（ZCode border-t pt-3）');
     assert(!tip.includes('requestAnimationFrame'), '组件不应自行 rAF 驱动动画（交给合成器）');
@@ -1975,6 +1984,10 @@ try {
     assert(menu.includes('MenuItemSelectEvent') && menu.includes('preventDefault: () => { prevented = true; }'), 'onSelect 应收到可 preventDefault 的事件');
     assert(menu.includes('if (!prevented) menu?.close();'), '仅当 onSelect 未 preventDefault 时才关菜单');
     assert(menu.includes('[role="menuitem"]:not([disabled])'), '键盘导航应跳过禁用项');
+    // 触发器气泡（tip）：复刻 ZCode「ControlHintTooltip 包住 DropdownMenuTrigger」；
+    // 菜单开着时传 open=false 压掉气泡，避免与下方菜单重叠
+    assert(menu.includes('tip?: { title: string; shortcut?: string }') && menu.includes('<ControlTooltip title={tip.title}'), 'Menu 应支持 tip 属性把气泡包到触发器上');
+    assert(menu.includes('open={render && open ? false : undefined}'), '菜单开着时应压掉触发器气泡（同朝下方会重叠）');
     // 退出动画保留挂载：与 tooltip 闪现修复同源的教训——退出态保留定位，淡出在原地发生
     assert(menu.includes('setRender(false), FADE_MS') && menu.includes("data-phase={open ? 'in' : 'out'}"), '退出动画期间应保留挂载与定位');
     assert(!/transition:all/.test(menu), '组件不许退回 transition:all');
@@ -2131,7 +2144,7 @@ try {
     assert(settings.includes('set-rail') && settings.includes('set-nav-cell') && settings.includes('set-content'), '设置弹层应为左导航轨 + 右侧内容区的分级布局（对齐 dsh web SettingsRoot）');
     assert(settings.includes("aria-current={on ? 'page' : undefined}"), '当前分类应标记 aria-current 供读屏软件感知');
     assert(settings.includes('const [mounted, setMounted]') && settings.includes('hidden={id !== active}'), '各 section 应懒挂载并用 hidden 缓存（切换保留面板内部草稿态）');
-    for (const id of ['general', 'providers', 'failover', 'network', 'skills', 'mcp', 'terminal', 'usage', 'errlog']) {
+    for (const id of ['general', 'appearance', 'providers', 'failover', 'network', 'skills', 'mcp', 'terminal', 'usage', 'errlog']) {
       assert(settings.includes(`id: '${id}'`), `分类轨应登记 ${id}`);
       assert(settings.includes(`case '${id}':`), `设置壳应挂载 ${id} 面板`);
     }
@@ -2180,6 +2193,45 @@ try {
     assert(api.includes('/api/settings/generation') && api.includes('/api/settings/key'), 'api.ts 应登记两个新端点');
     assert(readFileSync(join(__dirname, '..', 'util', 'settings-generation.mjs'), 'utf8').includes('handleGenerationApi'), '应有生成参数 HTTP 面模块');
     assert(readFileSync(join(__dirname, '..', 'web.mjs'), 'utf8').includes("url.startsWith('/api/settings/generation')"), 'web.mjs 应委派新端点');
+  });
+  await test('设置外观面板源码契约：ZCode appearance 一级目录 + 主题下拉（不是分段按钮）', async () => {
+    const dlg = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SettingsDialog.tsx'), 'utf8');
+    assert(dlg.includes("id: 'appearance'") && dlg.includes("case 'appearance': return <AppearancePanel />;"), '设置弹层应登记并挂载外观面板（ZCode appearance 一级目录）');
+    assert(dlg.includes("label: '外观'") && dlg.includes('IconPalette'), '外观分类应按 ZCode 用 Palette 图标');
+    // ZCode 目录顺序：general 之后紧跟 appearance
+    assert(dlg.indexOf("id: 'general'") < dlg.indexOf("id: 'appearance'") && dlg.indexOf("id: 'appearance'") < dlg.indexOf("id: 'providers'"), '外观应排在通用之后、提供方之前（ZCode basics 组同序）');
+    const ap = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'AppearancePanel.tsx'), 'utf8');
+    assert(ap.includes('界面设置') && ap.includes('界面主题') && ap.includes('选择浅色、深色或跟随系统主题。'), '外观面板应按 ZCode 文案呈现界面设置与主题行');
+    assert(ap.includes('width={260}'), '主题下拉应按 ZCode w-[260px] 宽度');
+    assert(ap.includes('useThemePreference') && !hasEmoji(ap), '外观面板应复用 theme.ts 偏好且零 emoji');
+    // 主题控件是下拉：选项带图标时分段按钮排不下，且下拉与设置页其它选择器语言一致
+    assert(ap.includes('<Select') && ap.includes('SelectOption'), '主题选择应走零依赖 Select 下拉');
+    const gp = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'GeneralPanel.tsx'), 'utf8');
+    assert(!gp.includes('mode-seg') && !gp.includes('THEME_OPTIONS') && !gp.includes('useThemePreference'), '通用面板不应再留主题分段控件（已迁往外观面板）');
+    // Select 组件契约：ZCode trigger input 变体 lg 尺寸 + 内容壳 + Radix 键盘全集 + dialog 内 portal
+    const sel = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'Select.tsx'), 'utf8');
+    assert(sel.includes('role="combobox"') && sel.includes('aria-haspopup="listbox"'), '触发器应挂 combobox 语义');
+    assert(sel.includes('role="option"') && sel.includes('aria-selected'), '选项应挂 listbox / option 语义与选中态');
+    assert(sel.includes("e.key === 'Escape'") && sel.includes("e.key === 'ArrowDown'") && sel.includes("e.key === 'Home'") && sel.includes("e.key === 'Enter'"), 'Select 应有 Radix 键盘全集（Esc / 上下 / Home / End / 回车空格）');
+    assert(sel.includes("trigger?.closest('dialog')"), 'portal 宿主应取最近的 dialog（模态内挂 body 会被 top-layer 对话框盖住）');
+    assert(sel.includes("data-phase={open ? 'in' : 'out'}") && !sel.includes('transition:all'), '退出淡出应走 data-phase，禁 transition:all');
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    const trig = /\.sel-trigger \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['height:32px', 'border-radius:8px', 'border:1px solid var(--line-strong)', 'padding:0 8px 0 12px']) {
+      assert(trig.includes(decl), `Select 触发器应按 ZCode input 变体 lg 尺寸声明 ${decl}`);
+    }
+    const pop = /\.sel-pop \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['border-radius:8px', 'border:1px solid var(--line-strong)', 'background:var(--panel)', 'box-shadow:var(--shadow-pop)', 'padding:4px']) {
+      assert(pop.includes(decl), `Select 内容壳应按 ZCode SelectContent 规格声明 ${decl}`);
+    }
+    assert(css.includes('#select-root { position:fixed; left:0; top:0; z-index:140; pointer-events:none; }'), 'Select root 应常驻且不抢指针（z-index 高于菜单的 130）');
+    assert(css.includes('.ap-card') && css.includes('.ap-row') && css.includes('.ap-title'), '外观面板应有 ZCode Card + SettingsRow 形态样式');
+    // 构建产物在场：改了 web-ui 忘了 build:web 会红
+    const html = await (await fetch(`${BASE}/`)).text();
+    const js = await (await fetch(`${BASE}${/\/app\/assets\/[A-Za-z0-9._-]+\.js/.exec(html)[0]}`)).text();
+    for (const marker of ['sb-new-key', 'sel-trigger', 'sel-pop', 'ap-card']) {
+      assert(js.includes(marker), `构建产物应含 ${marker}（改了 web-ui 忘了 build:web 会红）`);
+    }
   });
   await test('对话区跟手与渲染性能源码契约：贴底才跟随、历史 memo、快捷键聚焦', () => {
     const chat = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ChatView.tsx'), 'utf8');
@@ -2235,7 +2287,8 @@ try {
     const theme = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'theme.ts'), 'utf8');
     assert(theme.includes('watchSystemTheme') && theme.includes("matchMedia('(prefers-color-scheme: dark)')"), 'theme.ts 应跟随系统主题');
     const general = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'GeneralPanel.tsx'), 'utf8');
-    assert(general.includes('useThemePreference') && general.includes('THEME_OPTIONS'), '设置页应有主题切换');
+    const apPanel = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'AppearancePanel.tsx'), 'utf8');
+    assert(apPanel.includes('useThemePreference'), '设置页应有主题切换（外观面板的界面主题下拉）');
     const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
     assert(!/box-shadow:0 14px 44px rgb\(0 0 0/.test(app), '浮层阴影应走令牌，浅色下自动变淡');
   });

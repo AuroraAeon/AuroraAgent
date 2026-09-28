@@ -9,7 +9,7 @@
  *     侧栏可见时收起（transition-[opacity,width] 300ms ease-out），收回时展开；
  *   - 更新按钮：ZCode 的教训是「收起态不能继续按侧栏宽度阈值隐藏更新入口，用户会在最需要
  *     全局入口时反而看不到」——两种状态都常驻（仅发现有新版时出现）。 */
-import { IconArrowLeft, IconArrowRight, IconPanelLeftClose, IconPanelLeftOpen, IconPlus, IconRefresh, IconSpark } from '../icons';
+import { IconArrowLeft, IconArrowRight, IconMessageCirclePlus, IconPanelLeftClose, IconPanelLeftOpen, IconRefresh, IconSpark } from '../icons';
 import { ControlTooltip } from '../ControlTooltip';
 import { newSessionLabel, sidebarToggleLabel } from '../shortcut';
 import type { Ref } from 'react';
@@ -51,11 +51,12 @@ export function WorkspaceTopOverlay({ ref, collapsed, onToggle, onNew, onNav, ca
             <IconArrowRight size={16} />
           </button>
         </ControlTooltip>
-        {/* 新建会话：收回态才显（ZCode isNewTaskButtonVisible 语义；展开态侧栏里有新会话钮） */}
+        {/* 新建任务：收回态才显（ZCode isNewTaskButtonVisible 语义；展开态侧栏里有新建任务钮）。
+            图标用 lucide MessageCirclePlus 精确路径（ZCode 同款：聊天气泡 + 加号，不是裸加号） */}
         <div className={`ws-overlay-new${collapsed ? ' on' : ' off'}`} aria-hidden={!collapsed}>
-          <ControlTooltip title="新会话" shortcut={newSessionLabel()} side="bottom">
-            <button type="button" className="ws-act" aria-label="新会话" tabIndex={collapsed ? undefined : -1} onClick={onNew}>
-              <IconPlus size={16} />
+          <ControlTooltip title="新建任务" shortcut={newSessionLabel()} side="bottom">
+            <button type="button" className="ws-act" aria-label="新建任务" tabIndex={collapsed ? undefined : -1} onClick={onNew}>
+              <IconMessageCirclePlus size={16} />
             </button>
           </ControlTooltip>
         </div>

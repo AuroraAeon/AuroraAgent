@@ -97,9 +97,10 @@
 Header 常驻 `48px`（ZCode `h-12`）：内行 `p-2` / `gap-2` / `justify-between` / `overflow-hidden`，标题区按内容占宽不铺满（父级是拖拽区，铺满会让空白处无法拖动）；分隔线走 inset 阴影而非 border（不参与布局，与主区顶部严格对齐）。
 
 - **左组**（`gap-1`）：工作区上下文钮（`28px` ghost 方钮，hover 即显信息卡、点击 pin；卡内三行——工作目录 home 缩写 / 最近活动 / git 分支，分支由 `GET /api/workspace` 零依赖直读 `.git/HEAD`）+ 会话标题（`14px` / `600`、`max-width:400px`、容器查询窄档 `30vw` / `22vw`、双击原位重命名）+ 更多菜单（`28px` ghost，菜单项选中即关）
-- **右组**（`gap-0.5`）：帮助菜单（文档 / 反馈外链 + 快捷键与关于两个信息面板）+ 设置
-- **顶部浮层**（复刻 ZCode `DesktopTopOverlay`）：absolute 常驻，外层 `pointer-events:none`、交互容器 `auto`——空白处的点击仍归侧栏；切换钮静止显 `20px` 品牌砖（圆角 `6px`）、hover 淡出并淡入 `16px` 面板图标（绝对居中），气泡显示「切换侧边栏 + ⌘B/Ctrl+B」；上一个 / 下一个提问（会话不足两轮禁用）；新建会话钮随 `isNewTaskButtonVisible` 语义做 `opacity` / `width` `300ms` 过渡（收回态才显）；更新入口仅发现有新版时出现（ZCode 教训：收回态不能按宽度阈值隐藏全局入口）
+- **右组**（`gap-0.5`）：帮助菜单（文档 / 反馈外链 + 快捷键与关于两个信息面板；触发器挂「帮助」气泡，复刻 ZCode「ControlHintTooltip 包住 DropdownMenuTrigger」）+ 设置
+- **顶部浮层**（复刻 ZCode `DesktopTopOverlay`）：absolute 常驻，外层 `pointer-events:none`、交互容器 `auto`——空白处的点击仍归侧栏；切换钮静止显 `20px` 品牌砖（圆角 `6px`）、hover 淡出并淡入 `16px` 面板图标（绝对居中），气泡显示「切换侧边栏 + ⌘B/Ctrl+B」；上一个 / 下一个提问（会话不足两轮禁用）；新建任务钮随 `isNewTaskButtonVisible` 语义做 `opacity` / `width` `300ms` 过渡（收回态才显，图标取 lucide `MessageCirclePlus` 精确路径——聊天气泡 + 加号，不是裸加号）；更新入口仅发现有新版时出现（ZCode 教训：收回态不能按宽度阈值隐藏全局入口）
 - **让位**：侧栏收回时 Header 内行加左侧内距（实测浮层宽 + `8px`）；侧栏顶部留 `48px` 浮层带；主列窄于 `360px` 时自动收回侧栏（只收不展）
+- **侧栏本体**（复刻 ZCode `WorkspaceSidebar`）：展开态没有大 Logo——`aside` 首段是 `48px` 空拖拽带（浮层盖在上面），品牌只存在于浮层那枚切换钮；带下第一件是新建任务钮（ZCode `NewTaskButtonGroup`：`w-full h-8 rounded-lg` ghost、`pl-2.5 pr-2.5 gap-2`、`MessageCirclePlus 16px` +「新建任务」+ 右侧 `12px` 快捷键标签；正常态不挂 tooltip——按钮已自带文案与快捷键，再挂就是重复）；设置外观在设置弹层「外观」一级目录（ZCode `appearance` section）：界面主题是 `Select` 下拉（`260px`、选项带 `Monitor` / `Moon` / `Sun` 图标 + 对勾指示），不是分段按钮——选项带图标时分段控件排不下，且下拉与设置页其它选择器语言一致
 - 入口钮统一 `28px` + 圆角 `8px` + 只过渡背景色 / 颜色（ZCode 教训：`transition-all` 会在缩放窗口时把尺寸变化也动画化）
 
 ## 11. 可访问性与长文案

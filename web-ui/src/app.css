@@ -8,8 +8,9 @@
   width:280px; flex:none; display:flex; flex-direction:column; min-height:0;
   background:var(--sidebar-fill); border-right:1px solid var(--line);
   /* 顶部 48px 是 DesktopTopOverlay 浮层带：切换 / 上一个 / 下一个 / 更新钮浮在这条带上，
-     侧栏内容从带下开始（ZCode 同款：overlay h-14 盖住侧栏顶部，sidebar 首段自其下起排） */
-  padding:48px 12px 6px; font-size:14px;
+     侧栏自己没有大 Logo（ZCode 同款：aside 首段就是 h-12 空拖拽带，品牌只在浮层切换钮里）；
+     再往下 12px（ZCode py-3）才是新建任务钮——合计 padding-top 60px */
+  padding:60px 12px 6px; font-size:14px;
 }
 /* 侧栏裁剪容器（ZCode data-workspace-sidebar-panel）：收回时宽高归零 + 淡出，
    200ms ease-out 只过渡 width / opacity。两个容易踩的点：
@@ -24,14 +25,6 @@
 .sb-panel > .sidebar { flex:none; }
 .sb-panel.off { width:0; opacity:0; pointer-events:none; }
 
-/* 品牌行：60px 高，品牌在左、折叠钮在右（dsh logoRow） */
-.sb-logo { display:flex; align-items:center; justify-content:flex-end; gap:8px; height:60px; margin-bottom:8px; padding:8px 0 8px 4px; flex:none; overflow:hidden; }
-.sb-brand { display:inline-flex; align-items:center; gap:8px; min-width:0; flex:1; background:none; border:0; padding:0; cursor:pointer; color:inherit; }
-.sb-brand-mark {
-  width:24px; height:24px; border-radius:7px; display:grid; place-items:center; flex:none;
-  background:linear-gradient(135deg, var(--accent), #7cc4f6); color:var(--accent-ink);
-}
-.sb-brand-name { font-size:18px; font-weight:600; line-height:24px; letter-spacing:.04em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 /* 提示气泡（复刻 ZCode ControlHintTooltip 规格，挂载于 body 下的 #tooltip-root） */
 #tooltip-root { position:fixed; left:0; top:0; z-index:120; pointer-events:none; }
 .ct-tip {
@@ -101,16 +94,21 @@
 .ct-kbd.apple { font-family:-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; }
 @media (prefers-reduced-motion: reduce) { .ct-tip { transition:none; } }
 
-/* 新建会话钮：38px / 圆角 12px / 细描边 / 悬浮底（dsh newSession） */
+/* 新建任务钮（ZCode NewTaskButtonGroup 像素级）：w-full h-8 rounded-lg ghost，
+   pl-2.5 pr-2.5 gap-2 overflow-hidden hover:bg-surface-hover；内容 = MessageCirclePlus 16px
+   +「新建任务」14px truncate + 右侧快捷键标签（text-ui-xs 三次色 ml-auto）。
+   只过渡背景色——ZCode 注释：基础钮 transition-all 会在缩放窗口时把尺寸变化也动画化 */
 .sb-new {
-  box-sizing:border-box; height:38px; border:1px solid var(--line-strong); border-radius:12px;
-  background:var(--surface); color:var(--text); cursor:pointer; flex:none;
-  display:flex; align-items:center; justify-content:center; gap:6px;
-  margin:0 2px 8px; padding:8px 16px; font-size:14px; font-weight:500; line-height:22px;
-  transition:background .15s var(--ease), border-color .15s var(--ease);
+  box-sizing:border-box; width:100%; height:32px; border:0; border-radius:8px;
+  background:none; color:var(--text); cursor:pointer; flex:none;
+  display:flex; align-items:center; gap:8px; overflow:hidden;
+  margin:0 0 4px; padding:0 10px; font-size:14px; line-height:20px; text-align:left;
+  transition:background-color .15s var(--ease), color .15s var(--ease);
 }
 .sb-new:hover { background:var(--surface-hover); }
-.sb-new-label { white-space:nowrap; }
+.sb-new > svg { flex:none; }
+.sb-new-label { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sb-new-key { flex:none; margin-left:auto; font-size:12px; line-height:16px; color:var(--faint); }
 
 /* 会话区（dsh regionArea + WorkspaceBrowser）：负外 margin 让滚动条溢出到栏边 */
 .sb-region { flex:1; min-height:0; display:flex; flex-direction:column; margin-left:-4px; margin-right:-12px; padding-left:4px; }
@@ -788,6 +786,54 @@
   font-size:12px; color:var(--text); background:var(--code-bg); border-radius:6px; padding:3px 8px;
   min-width:0; overflow-wrap:anywhere;
 }
+/* ---------- 下拉选择框（复刻 ZCode Select：trigger input 变体 + lg 尺寸） ---------- */
+/* portal 宿主：最近的 dialog（模态内在 top-layer，挂 body 会被对话框盖住），否则 body */
+#select-root { position:fixed; left:0; top:0; z-index:140; pointer-events:none; }
+/* 触发器（ZCode selectTrigger variant=input size=lg + w-[260px] justify-between）：
+   h-8 + rounded-lg + 1px 输入框边 + --surface 底、pl-3 pr-2、右侧 14px chevron；
+   只过渡边框色——ZCode 注释：transition-all 会把缩放时的尺寸 / 滚动条变化也动画化 */
+.sel-trigger {
+  box-sizing:border-box; height:32px; display:inline-flex; align-items:center; gap:6px; flex:none;
+  border:1px solid var(--line-strong); border-radius:8px; background:var(--surface); color:var(--text);
+  padding:0 8px 0 12px; font-size:14px; line-height:20px; cursor:pointer;
+  transition:border-color .15s var(--ease), background-color .15s var(--ease);
+}
+.sel-trigger:hover, .sel-trigger[aria-expanded="true"] { border-color:var(--accent-line); }
+.sel-value { flex:1; min-width:0; text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sel-value-icon { display:grid; place-items:center; flex:none; color:var(--dim); }
+.sel-chevron { flex:none; color:var(--dim); }
+/* 内容（ZCode SelectContent）：rounded-lg + 1px 强边 + --panel 底 + --shadow-pop、p-1 壳距 */
+.sel-pop {
+  position:fixed; min-width:128px; padding:4px; pointer-events:auto;
+  border:1px solid var(--line-strong); border-radius:8px; background:var(--panel);
+  box-shadow:var(--shadow-pop); outline:none;
+  transition:opacity 120ms var(--ease), transform 120ms var(--ease), visibility 120ms;
+}
+@starting-style { .sel-pop[data-phase="in"] { opacity:0; transform:scale(.96); } }
+.sel-pop[data-phase="out"] { opacity:0; transform:scale(.96); }
+/* 选项（ZCode SelectItem）：min-h-7 rounded-md px-2 gap-2，选中项右侧 16px 对勾 */
+.sel-item {
+  display:flex; align-items:center; gap:8px; width:100%; min-height:28px;
+  border:0; border-radius:6px; background:none; color:var(--text);
+  font:inherit; font-size:14px; padding:4px 8px; cursor:pointer; text-align:left;
+}
+.sel-item:hover, .sel-item:focus-visible { background:var(--surface-hover); }
+.sel-item:focus-visible { outline:none; }
+.sel-item-icon { display:grid; place-items:center; flex:none; color:var(--dim); }
+.sel-item-label { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sel-item-check { flex:none; color:var(--dim); }
+@media (prefers-reduced-motion: reduce) { .sel-pop { transition:none; } }
+/* ---------- 设置「外观」section（复刻 ZCode appearance：h3 + 描述 + Card 行） ---------- */
+.ap-block { display:flex; flex-direction:column; gap:10px; }
+.ap-title { font-size:14px; font-weight:600; color:var(--text); }
+.ap-desc { margin-top:2px; font-size:12.5px; line-height:1.6; color:var(--dim); }
+.ap-card { border:1px solid var(--line); border-radius:12px; background:var(--panel); overflow:hidden; }
+/* ZCode SettingsRow：左标签 + 描述（minmax(0,1fr)），右控件 justify-end，行间 1px 分隔 */
+.ap-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:16px; padding:12px 16px; }
+.ap-row + .ap-row { border-top:1px solid var(--line); }
+.ap-row-text { min-width:0; }
+.ap-row-t { font-size:13.5px; font-weight:600; }
+.ap-row-d { display:block; margin-top:2px; font-size:12px; line-height:1.6; color:var(--dim); }
 .pv-intro { color:var(--dim); font-size:12.5px; }
 .pv-rows { display:flex; flex-direction:column; gap:8px; }
 .pv-row {
