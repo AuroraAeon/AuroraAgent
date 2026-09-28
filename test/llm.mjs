@@ -5,6 +5,10 @@ import { normalizeTool, toolAction, toOpenAIFunction, toAnthropicTool } from '..
 import { classifyStatus, classifyError, ERROR_KINDS, QUOTA_WORDING, upstreamHint } from '../util/llm/errors.mjs';
 import { textOf, systemTextOf, toAnthropicContent, toAnthropicTurns } from '../util/llm/message.mjs';
 import { toolSchemas, anthropicToolSchemas, TOOLS } from '../util/agent/tools.mjs';
+import {
+  isFailoverable, failoverReason, pickFailoverCandidate, failoverBackoffMs,
+  parseFailoverConfig, FAILOVER_DEFAULTS, FAILOVER_ATTEMPT_LIMITS,
+} from '../util/llm/failover.mjs';
 
 export async function runLlmTests(test, assert, eq) {
   console.log('\nLLM 抽象层单元测试');
@@ -129,5 +133,72 @@ export async function runLlmTests(test, assert, eq) {
     eq(classifyError(new Error('x')), 'unknown');
     eq(classifyError(null), 'unknown');
     assert(ERROR_KINDS.includes('quota'));
+  });
+
+  await test('failover: 可转移判定只认限流 / 超时 / 服务端 / 网络，中止不转移', () => {
+    for (const status of [429, 408, 500, 502, 503, 504, 599]) {
+      eq(isFailoverable({ kind: 'x', status }), true, `HTTP ${status} 应可转移`);
+    }
+    eq(isFailoverable({ kind: 'rate_limit' }), true, 'rate_limit 应可转移');
+    eq(isFailoverable({ kind: 'server' }), true, 'server 应可转移');
+    eq(isFailoverable({ kind: 'network' }), true, 'network 应可转移');
+    eq(isFailoverable(Object.assign(new TypeError('fetch failed'), {})), true, 'fetch 网络异常应可转移');
+    for (const status of [400, 401, 402, 403, 404, 422]) {
+      eq(isFailoverable({ kind: 'auth', status }), false, `HTTP ${status} 不应转移（配置 / 鉴权 / 计费问题）`);
+    }
+    const abort = Object.assign(new Error('aborted'), { name: 'AbortError' });
+    eq(isFailoverable(abort), false, '用户中止绝不转移');
+    eq(isFailoverable({ kind: 'aborted' }), false, 'aborted 种类不转移');
+    eq(isFailoverable(null), false, '空错误不转移');
+  });
+
+  await test('failover: 原因词归一（kind 优先，状态码兜底）', () => {
+    eq(failoverReason({ kind: 'rate_limit', status: 500 }), 'rate_limit', 'kind 优先于状态码');
+    eq(failoverReason({ status: 429 }), 'rate_limit');
+    eq(failoverReason({ status: 408 }), 'timeout');
+    eq(failoverReason({ status: 503 }), 'server');
+    eq(failoverReason(Object.assign(new TypeError('x'), {})), 'network');
+    eq(failoverReason({ status: 401 }), 'unknown', '不可转移的错误没有原因词');
+  });
+
+  await test('failover: 候选挑选排除当前 / 已试 / 无 Key / 不含目标模型', () => {
+    const all = [
+      { id: 'a', apiKey: 'k', models: [{ id: 'm1' }] },
+      { id: 'b', apiKey: '', models: [{ id: 'm1' }] },
+      { id: 'c', apiKey: 'k', models: [{ id: 'other' }] },
+      { id: 'd', apiKey: 'k', models: [{ id: 'm1' }, { id: 'm2' }] },
+      { id: 'e', apiKey: 'k', models: [{ id: 'm1' }] },
+    ];
+    const first = pickFailoverCandidate(all, { model: 'm1', currentId: 'a', tried: [] });
+    eq(first.id, 'd', '无 Key 与不含目标模型的提供方应被跳过');
+    const second = pickFailoverCandidate(all, { model: 'm1', currentId: 'a', tried: ['d'] });
+    eq(second.id, 'e', '已试过的提供方不应重复踩');
+    eq(pickFailoverCandidate(all, { model: 'm1', currentId: 'a', tried: ['d', 'e'] }), null, '候选耗尽返回 null');
+    eq(pickFailoverCandidate([], { model: 'm1', currentId: 'a' }), null, '空候选返回 null');
+  });
+
+  await test('failover: 退避线性递增，坏值回退默认', () => {
+    eq(failoverBackoffMs(1), FAILOVER_DEFAULTS.backoffMs);
+    eq(failoverBackoffMs(2), FAILOVER_DEFAULTS.backoffMs * 2);
+    eq(failoverBackoffMs(0), FAILOVER_DEFAULTS.backoffMs, 'attempt 至少按 1 计');
+    eq(failoverBackoffMs(1, -5), FAILOVER_DEFAULTS.backoffMs, '负退避回退默认');
+    eq(failoverBackoffMs(1, 0), 0, '允许 0 退避（测试用）');
+  });
+
+  await test('failover: 配置解析缺省开启、钳制次数、env 优先', () => {
+    const d = parseFailoverConfig({}, {});
+    eq(d.enabled, true, '缺省开启');
+    eq(d.maxAttempts, 3, '缺省 3 次尝试');
+    eq(parseFailoverConfig({ providerFailover: false }, {}).enabled, false, '盘上可关');
+    eq(parseFailoverConfig({ providerFailover: 'false' }, {}).enabled, false, '字符串 false 也认');
+    eq(parseFailoverConfig({ providerFailoverMaxAttempts: 99 }, {}).maxAttempts, FAILOVER_ATTEMPT_LIMITS.max, '上限钳到 5');
+    eq(parseFailoverConfig({ providerFailoverMaxAttempts: 0 }, {}).maxAttempts, FAILOVER_ATTEMPT_LIMITS.min, '下限钳到 1');
+    eq(parseFailoverConfig({ providerFailoverMaxAttempts: 'abc' }, {}).maxAttempts, 3, '坏值回退 3');
+    eq(parseFailoverConfig({}, { AURORAAGENT_FAILOVER: '0' }).enabled, false, 'env 可关');
+    eq(parseFailoverConfig({ providerFailover: false }, { AURORAAGENT_FAILOVER: '1' }).enabled, true, 'env 优先于盘上');
+    eq(parseFailoverConfig({}, { AURORAAGENT_FAILOVER_MAX_ATTEMPTS: '2' }).maxAttempts, 2, 'env 覆盖次数');
+    let warned = '';
+    parseFailoverConfig({ providerFailover: 'maybe', providerFailoverMaxAttempts: 'x' }, {}, { warn: (m) => { warned += m; } });
+    assert(warned.includes('providerFailover') && warned.includes('providerFailoverMaxAttempts'), '坏值应告警');
   });
 }

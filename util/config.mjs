@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { parseGoalConfig } from './agent/goal/config.mjs';
 import { parseTuiConfig } from './tui/config.mjs';
 import { parseAgentProxy } from './proxy.mjs';
+import { parseFailoverConfig, FAILOVER_DEFAULTS } from './llm/failover.mjs';
 
 /** 限时折扣价: 输入 ¥2 / 输出 ¥8 每百万 tokens */
 export const PRICE = { input: 2, output: 8 };
@@ -78,6 +79,8 @@ export function loadConfig({ warn } = {}) {
     fileExists = true;
   } catch {}
   const overrideKey = process.env.AURORAAGENT_API_KEY || '';
+  // 多提供方故障转移（429/5xx/网络错误时换到提供同模型的其它提供方重试，缺省开）
+  const failover = parseFailoverConfig(saved, process.env, warn ? { warn } : {});
   return {
     apiKey: overrideKey || saved.apiKey || '',
     // 环境变量 Key 只是临时覆盖: 配置文件已有 Key 时绝不写回文件
@@ -95,7 +98,18 @@ export function loadConfig({ warn } = {}) {
     goal: parseGoalConfig(saved.goal, warn ? { warn } : {}),
     // tui 段解析（终端标题项序 + 通知三档）落在 tui/config.mjs，同样的单叶容错纪律
     tui: parseTuiConfig(saved.tui, warn ? { warn } : {}),
+    providerFailover: failover.enabled,
+    providerFailoverMaxAttempts: failover.maxAttempts,
   };
+}
+
+/** 盘上现值（saveConfig 用）：调用方未感知故障转移字段时保留，防止整体覆写误清（env 覆盖值不落盘） */
+function savedFailover() {
+  try {
+    const saved = JSON.parse(readFileSync(join(resolveDataDir(), CONFIG_FILE), 'utf8'));
+    const parsed = parseFailoverConfig(saved, {});
+    return { providerFailover: parsed.enabled, providerFailoverMaxAttempts: parsed.maxAttempts };
+  } catch { return { providerFailover: FAILOVER_DEFAULTS.enabled, providerFailoverMaxAttempts: FAILOVER_DEFAULTS.maxAttempts }; }
 }
 
 /** 盘上现值（saveConfig 用）：调用方未感知 agentProxy 时保留，防止旧调用方整体覆写误清 */
@@ -116,6 +130,9 @@ export function saveConfig(cfg) {
     goal: parseGoalConfig(cfg.goal),
     tui: parseTuiConfig(cfg.tui),
     agentProxy: cfg.agentProxy !== undefined ? (parseAgentProxy(cfg.agentProxy) || '') : savedAgentProxy(),
+    providerFailover: cfg.providerFailover !== undefined ? parseFailoverConfig(cfg, {}).enabled : savedFailover().providerFailover,
+    providerFailoverMaxAttempts: cfg.providerFailoverMaxAttempts !== undefined
+      ? parseFailoverConfig(cfg, {}).maxAttempts : savedFailover().providerFailoverMaxAttempts,
   };
   if (!cfg.keyIsOverride) out.apiKey = cfg.apiKey;
   writeFileSync(join(resolveDataDir(), CONFIG_FILE), JSON.stringify(out, null, 2) + '\n');
