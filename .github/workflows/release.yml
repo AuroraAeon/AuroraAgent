@@ -1,0 +1,36 @@
+# CI 与自动发布：push 到 master 先跑 e2e 测试，全绿后由 release-please 按常规提交
+# （feat → 次版本，fix → 修订号，docs / chore 等不触发）开或更新「发布 PR」；
+# 发布 PR 合并即打 tag 并创建 GitHub Release（版本号只动 package.json 一处）。
+name: 测试与发布
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  test:
+    name: e2e 测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm test
+
+  release:
+    name: 自动发布
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          release-type: node

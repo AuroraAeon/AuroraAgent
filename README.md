@@ -200,12 +200,16 @@ Bundle 结构：
 │   │   ├── app/             # React 工作台构建产物（/app/ 服务，哈希资产长缓存）
 │   │   ├── icon.svg         # AuroraAgent 品牌标识（App 图标同款）
 │   │   └── vendors/         # 各接入厂商的标识（meituan.svg …）
-│   ├── test/                # mock 上游 + 138 个测试
+│   ├── test/                # mock 上游 + 319 个测试
 │   └── tools/               # color-test / install-service / build-app
 ├── Resources/docs/          # figures/（学术图与原始数据）+ figure-work/（图表脚本）
 ├── AppIcon.icns
-└── Info.plist               # com.auroraagent.app · LSUIElement · 5.0.0
+└── Info.plist               # com.auroraagent.app · LSUIElement · 版本随 package.json（7.0.0）
 ```
+
+## 自动发布（GitHub Actions）
+
+仓库接入 `.github/workflows/release.yml`：每次 push 到 `master`（含 PR）先由 GitHub Actions 跑 `npm test`；push 场景测试全绿后，[release-please](https://github.com/googleapis/release-please) 按常规提交信息（`feat` / `fix` 前缀，与仓库历史同规约）自动开或更新一个「发布 PR」——内含版本号提升（只动 `package.json`）与按提交分组的发布说明。合并该发布 PR 即自动打 tag 并创建 GitHub Release，无需手动操作。文档站的发布笔记页仍由本地 `npm run docs:notes` 生成后随仓库提交。
 
 ## 自定义提供方（接任意上游）
 
