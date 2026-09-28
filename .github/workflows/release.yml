@@ -23,6 +23,9 @@ jobs:
         with:
           # 测试直接 import web-ui/src/highlight.ts，需 Node 类型剥离（>=23.6 默认开启），与本机基线一致
           node-version: 24
+      # shell 工具按 macOS 约定走 /bin/zsh；Linux runner 无此路径，装齐依赖以跑同一套 e2e
+      - name: 安装 zsh
+        run: sudo apt-get update && sudo apt-get install -y zsh
       - run: npm test
 
   release:
