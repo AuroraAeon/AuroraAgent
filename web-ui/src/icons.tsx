@@ -156,6 +156,12 @@ export const IconAlert = (p: IconProps) => (
     <line x1="12" y1="10" x2="12" y2="14" /><circle cx="12" cy="17" r=".5" fill="currentColor" />
   </Svg>
 );
+export const IconInfo = (p: IconProps) => (
+  <Svg {...p}><circle cx="12" cy="12" r="9" /><line x1="12" y1="11" x2="12" y2="16.5" /><line x1="12" y1="7.8" x2="12" y2="8" /></Svg>
+);
+export const IconWarn = (p: IconProps) => (
+  <Svg {...p}><path d="M12 4.2 21 19.5H3z" /><line x1="12" y1="10" x2="12" y2="14.5" /><line x1="12" y1="17.2" x2="12" y2="17.4" /></Svg>
+);
 export const IconCopy = (p: IconProps) => (
   <Svg {...p}>
     <rect x="9" y="9" width="11" height="11" rx="2" />

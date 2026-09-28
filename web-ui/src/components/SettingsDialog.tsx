@@ -12,6 +12,7 @@ import { McpPanel } from './McpPanel';
 import { SkillsPanel } from './SkillsPanel';
 import { TuiPanel } from './TuiPanel';
 import { ProxyPanel } from './ProxyPanel';
+import { toast } from '../toast';
 
 const emptyDraft = (protocol = 'openai'): Draft => ({
   id: '', name: '', protocol, baseUrl: '', pathPrefix: '', apiKey: '',
@@ -101,6 +102,7 @@ export function SettingsDialog({ open, onClose, onProvidersChanged }: Props) {
       await reload();
       onProvidersChanged();
       resetCard();
+      toast.success(card?.kind === 'edit' ? '提供方已更新' : '提供方已添加');
     } catch (e) {
       setFormError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -151,6 +153,7 @@ export function SettingsDialog({ open, onClose, onProvidersChanged }: Props) {
       await deleteProvider(delTarget.id);
       await reload();
       onProvidersChanged();
+      toast.success('提供方已删除');
       if (card?.kind === 'edit' && card.id === delTarget.id) resetCard();
     } catch (e) {
       setFormError(e instanceof Error ? e.message : String(e));
@@ -165,6 +168,7 @@ export function SettingsDialog({ open, onClose, onProvidersChanged }: Props) {
       await setAutostart(v);
       const st = await getSettings();
       setSettings(st);
+      toast.success(v ? '已开启开机自启' : '已关闭开机自启', { description: v ? '服务重启期间约 1 秒不可用' : undefined });
     } catch (e) {
       setFormError(e instanceof Error ? e.message : String(e));
     } finally {

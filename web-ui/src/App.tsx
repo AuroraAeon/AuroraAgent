@@ -20,6 +20,7 @@ import type { AgentEvent, GoalState, Harness, LiveTurn, ModelInfo, MsgPart, MsgV
 
 const planView = (text: string, decided: PlanView['decided']): PlanView => ({ text, decided });
 import { IconAlert, IconClose } from './icons';
+import { toast, ToastViewport } from './toast';
 
 /** 文本增量 → 追加到 parts 的最后一个文本片段（工具之后的新文本开新片段，保住时间线） */
 function appendTextPart(live: LiveTurn, text: string): LiveTurn {
@@ -163,7 +164,7 @@ export default function App() {
         setSessions([s]);
         openSession(s.id);
       } catch (e) {
-        setError(`初始化会话失败：${e instanceof Error ? e.message : String(e)}`);
+        toast.error('初始化会话失败', { description: e instanceof Error ? e.message : String(e) });
       }
     })();
   }, [openSession, refreshModels]);
@@ -219,7 +220,7 @@ export default function App() {
         },
       );
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      toast.error('任务失败', { description: e instanceof Error ? e.message : String(e) });
     } finally {
       try {
         // 运行中切换 / 新建会话后，旧 turn 的收尾刷新不得把旧会话投影写进新会话界面
@@ -241,7 +242,7 @@ export default function App() {
     try {
       await respondPermission(requestId, decision);
     } catch (e) {
-      setError(`权限回传失败：${e instanceof Error ? e.message : String(e)}`);
+      toast.error('权限回传失败', { description: e instanceof Error ? e.message : String(e) });
       return;
     }
     // 乐观更新：服务端会随即推进并推送后续 tool_event 校正
@@ -258,7 +259,7 @@ export default function App() {
     try {
       await respondPlan(currentId, decision);
     } catch (e) {
-      setError(`计划回传失败：${e instanceof Error ? e.message : String(e)}`);
+      toast.error('计划回传失败', { description: e instanceof Error ? e.message : String(e) });
       return;
     }
     // 乐观更新：服务端会随即推进并推送 plan_approved / plan_rejected 校正
@@ -322,7 +323,7 @@ export default function App() {
       } catch (e) {
         push('无法为当前目标创建会话：请稍后重试或手动新建会话后再设立目标');
         setGoalPrefill({ text: `/goal ${rawArgs}`, nonce: Date.now() });
-        setError(`自动创建会话失败：${e instanceof Error ? e.message : String(e)}`);
+        toast.error('自动创建会话失败', { description: e instanceof Error ? e.message : String(e) });
         return;
       }
     }
@@ -334,7 +335,7 @@ export default function App() {
       // 对齐 MiniMax goal-flow 的 retained 语义：操作失败不清空用户输入，原样回填便于就地修改重发
       // onlyIfEmpty：仅当用户尚未输入新内容时恢复，避免覆盖失败等待期间新敲的文本
       setGoalPrefill({ text: `/goal ${rawArgs}`, nonce: Date.now(), onlyIfEmpty: true });
-      setError(`目标操作失败：${e instanceof Error ? e.message : String(e)}（输入已保留，可修改后重发）`);
+      toast.error('目标操作失败', { description: `${e instanceof Error ? e.message : String(e)}（输入已保留，可修改后重发）` });
     };
     // 新鲜快照：create-or-edit 判定、纪元、查看摘要、edit 回填全部以它为准（在途切会话则丢弃）
     let existing: GoalState | null;
@@ -395,7 +396,7 @@ export default function App() {
       const r = await goalAction(currentId, action);
       setGoal(r.goal); // 以服务端结算为准（含纪元与状态校验的拒绝信息）
     } catch (e) {
-      setError(`目标操作失败：${e instanceof Error ? e.message : String(e)}`);
+      toast.error('目标操作失败', { description: e instanceof Error ? e.message : String(e) });
     }
   };
 
@@ -406,7 +407,7 @@ export default function App() {
       setSessions((prev) => prev.map((s) => (s.id === meta.id ? meta : s)));
       setPermMode(mode);
     } catch (e) {
-      setError(`切换权限模式失败：${e instanceof Error ? e.message : String(e)}`);
+      toast.error('切换权限模式失败', { description: e instanceof Error ? e.message : String(e) });
     }
   };
 
@@ -417,7 +418,7 @@ export default function App() {
       setSessions((prev) => prev.map((s) => (s.id === meta.id ? meta : s)));
       setTitleMode(mode);
     } catch (e) {
-      setError(`切换标题生成方式失败：${e instanceof Error ? e.message : String(e)}`);
+      toast.error('切换标题生成方式失败', { description: e instanceof Error ? e.message : String(e) });
     }
   };
 
@@ -428,7 +429,7 @@ export default function App() {
       setSessions((prev) => prev.map((s) => (s.id === meta.id ? meta : s)));
       setPlanOn(on);
     } catch (e) {
-      setError(`切换计划模式失败：${e instanceof Error ? e.message : String(e)}`);
+      toast.error('切换计划模式失败', { description: e instanceof Error ? e.message : String(e) });
     }
   };
 
@@ -443,7 +444,7 @@ export default function App() {
       setSessions((prev) => [s, ...prev]);
       openSession(s.id);
     } catch (e) {
-      setError(`新建会话失败：${e instanceof Error ? e.message : String(e)}`);
+      toast.error('新建会话失败', { description: e instanceof Error ? e.message : String(e) });
     }
   };
 
@@ -453,7 +454,7 @@ export default function App() {
       setSessions((prev) => [s, ...prev]);
       openSession(s.id);
     } catch (e) {
-      setError(`派生会话失败：${e instanceof Error ? e.message : String(e)}`);
+      toast.error('派生会话失败', { description: e instanceof Error ? e.message : String(e) });
     }
   };
 
@@ -474,7 +475,7 @@ export default function App() {
       const meta = await patchSession(current.id, { harness: id });
       setSessions((prev) => prev.map((s) => (s.id === meta.id ? meta : s)));
     } catch (e) {
-      setError(`切换模式失败：${e instanceof Error ? e.message : String(e)}`);
+      toast.error('切换模式失败', { description: e instanceof Error ? e.message : String(e) });
     }
   };
 
@@ -484,7 +485,7 @@ export default function App() {
       const meta = await patchSession(current.id, { model: m.id, provider: m.provider });
       setSessions((prev) => prev.map((s) => (s.id === meta.id ? meta : s)));
     } catch (e) {
-      setError(`切换模型失败：${e instanceof Error ? e.message : String(e)}`);
+      toast.error('切换模型失败', { description: e instanceof Error ? e.message : String(e) });
     }
   };
 
@@ -562,6 +563,7 @@ export default function App() {
         onClose={() => setSettingsOpen(false)}
         onProvidersChanged={providersChanged}
       />
+      <ToastViewport />
     </div>
   );
 }

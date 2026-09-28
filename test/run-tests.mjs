@@ -1572,6 +1572,29 @@ try {
     const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'tokens.css'), 'utf8');
     assert(css.includes('--diff-add:') && css.includes('--diff-del:'), 'tokens.css 应有 diff 语义令牌');
   });
+  await test('通知与错误上报源码契约：toast 视口、全局捕获与崩溃兜底页', () => {
+    const t = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'toast.tsx'), 'utf8');
+    assert(t.includes('ToastViewport') && t.includes('useSyncExternalStore'), '应有 toast 视口与单例 store');
+    assert(t.includes('toast-viewport') && t.includes('aria-live'), '视口应挂 aria-live 供读屏软件播报');
+    assert(t.includes("role={t.level === 'error' ? 'alert' : 'status'}"), '错误通知应用 role=alert');
+    assert(/VISIBLE_MAX = 4/.test(t) && t.includes('DEDUPE_WINDOW'), '应限同屏条数并对重复提示去重');
+    assert(!hasEmoji(t), 'toast 零 emoji 铁律');
+    const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
+    assert(app.includes('<ToastViewport />'), 'App 应挂通知视口');
+    assert(app.includes("toast.error('切换模型失败'"), '操作类失败应走通知而非只写横幅');
+    const rep = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'error-report.ts'), 'utf8');
+    assert(rep.includes("addEventListener('error'") && rep.includes("addEventListener('unhandledrejection'"), '应装全局错误捕获');
+    assert(rep.includes('/api/logs/errors'), '未捕获错误应上报服务端错误日志');
+    assert(rep.includes('shouldReport'), '上报应去重，崩溃循环不刷屏');
+    const bd = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'error-boundary.tsx'), 'utf8');
+    assert(bd.includes('getDerivedStateFromError') && bd.includes('componentDidCatch'), '应有错误边界两个生命周期钩子');
+    assert(bd.includes('重新加载') && bd.includes('复制详情'), '崩溃页应可重载与复制详情');
+    assert(bd.includes('frontend_crash'), '渲染崩溃应记 frontend_crash');
+    const main = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'main.tsx'), 'utf8');
+    assert(main.includes('<AppErrorBoundary>') && main.includes('installGlobalErrorHandlers()'), '入口应包错误边界并装全局捕获');
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    assert(css.includes('.toast-viewport') && css.includes('.crash-card'), '应有通知视口与崩溃页样式');
+  });
   await test('输入区窄屏布局源码契约：工具栏可换行、芯片不收缩不折行、尾部右对齐', () => {
     const com = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Composer.tsx'), 'utf8');
     assert(com.includes('className="composer-tail"'), '模型选择器与发送键应收进尾部组，窄屏整组换行不拆散');
