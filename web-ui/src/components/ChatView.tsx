@@ -6,6 +6,7 @@ import { ToolCard } from './ToolCard';
 import { TodoPanel } from './Todo';
 import { PlanCard } from './PlanCard';
 import { fmtCostYen } from '../projection';
+import { TurnNavigator } from './TurnNavigator';
 import { IconChevronDown, IconSpark } from '../icons';
 import type { LiveTurn, MsgView, TodoItem } from '../types';
 
@@ -119,18 +120,21 @@ export function ChatView({ messages, live, hasSession, onDecide, onPick, todos, 
     );
   }
   return (
-    <div className="chat-scroll" id="chatScroll" ref={scrollRef} onScroll={onScroll}>
-      <div className="chat-inner">
-        <TodoPanel todos={todos} />
-        {messages.map((m) => <Message key={m.key} msg={m} onDecide={onDecide} />)}
-        {live ? <LiveRow live={live} onDecide={onDecide} onDecidePlan={onDecidePlan} /> : null}
-        <div ref={endRef} />
-        {live && !atBottom ? (
-          <button type="button" className="chat-jump" onClick={jumpToBottom}>
-            <IconChevronDown size={13} /> 回到最新
-          </button>
-        ) : null}
+    <div className="chat-wrap">
+      <div className="chat-scroll" id="chatScroll" ref={scrollRef} onScroll={onScroll}>
+        <div className="chat-inner">
+          <TodoPanel todos={todos} />
+          {messages.map((m) => <Message key={m.key} msg={m} onDecide={onDecide} />)}
+          {live ? <LiveRow live={live} onDecide={onDecide} onDecidePlan={onDecidePlan} /> : null}
+          <div ref={endRef} />
+          {live && !atBottom ? (
+            <button type="button" className="chat-jump" onClick={jumpToBottom}>
+              <IconChevronDown size={13} /> 回到最新
+            </button>
+          ) : null}
+        </div>
       </div>
+      <TurnNavigator views={messages} live={live} scrollRef={scrollRef} />
     </div>
   );
 }

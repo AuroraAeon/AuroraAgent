@@ -36,7 +36,7 @@ type Props = {
 export const Message = memo(function Message({ msg, onDecide }: Props) {
   if (msg.kind === 'user') {
     return (
-      <div className="row row-user hist">
+      <div className="row row-user hist" data-turn-key={msg.key}>
         <div className="avatar avatar-user" title="你"><IconPerson size={15} /></div>
         <div className="bubble-user">{msg.text}</div>
       </div>

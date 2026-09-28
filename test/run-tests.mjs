@@ -9,6 +9,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SseParser, estimateTokens } from '../util/sse.mjs';
 import { sidebarToggleLabel, isAppleKeyboardPlatform } from '../web-ui/src/shortcut.ts';
+import { buildTurnNavItems, normalizePreviewText, resolveBarVisualState, resolveActiveItemIndex, resolveVisibleRange, resolveRailScrollTopForActive } from '../web-ui/src/turn-nav.mjs';
 import { splitMathSegments, takeDisplayMath, isDisplayMathStart, mathDisplay, MATH_ENVIRONMENTS } from '../web-ui/src/math-split.mjs';
 import { startMock } from './mock-longcat.mjs';
 import { ProviderStore, ProviderError, parseCapacity, formatCapacity, normalizeEndpoint, validateProviderDraft, chatUrl, modelsUrl, messagesUrl } from '../util/providers.mjs';
@@ -1830,6 +1831,129 @@ try {
     const tokens = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'tokens.css'), 'utf8');
     assert(tokens.includes('--tooltip-bg:') && tokens.includes('--kbd-bg:') && tokens.includes('--tooltip-ink:') && tokens.includes('--kbd-ink:'), 'tokens.css 双主题应提供 tooltip / kbd 令牌');
     assert((tokens.match(/--tooltip-bg:/g) || []).length === 2 && (tokens.match(/--kbd-bg:/g) || []).length === 2, 'tooltip / kbd 令牌应深浅双主题各一份');
+  });
+
+  await test('回合导航条目构建：按 turn 聚合并助手摘录、相邻提问共享、运行态仅最后一项', () => {
+    const items = buildTurnNavItems([
+      { kind: 'user', key: 'u0', text: '第一问' },
+      { kind: 'assistant', key: 'a0', parts: [{ kind: 'text', text: '第一答' }, { kind: 'tool' }] },
+      { kind: 'user', key: 'u1', text: '第二问' },
+      { kind: 'assistant', key: 'a1', parts: [{ kind: 'tool' }] },
+      { kind: 'user', key: 'u2', text: '第三问' },
+    ], { running: true });
+    eq(items.length, 3, '每条用户行应成一个导航项（助手 / 系统行不成项）');
+    eq(items[0].key, 'u0');
+    eq(items[0].userPreview, '第一问');
+    eq(items[0].assistantPreview, '第一答', '助手预览应取同一用户轮的文本段');
+    eq(items[0].assistantKind, 'text');
+    eq(items[0].running, false);
+    eq(items[1].assistantPreview, '暂无助手正文', '无文本的助手轮应回落空态文案');
+    eq(items[1].assistantKind, 'empty');
+    eq(items[2].running, true, '运行态只应标在最后一项');
+    eq(items[2].assistantPreview, '助手仍在工作');
+    eq(items[2].assistantKind, 'running');
+    eq(buildTurnNavItems([{ kind: 'user', key: 'u0', text: '   ' }])[0].userPreview, '用户输入', '空提问应回落兜底文案');
+    eq(buildTurnNavItems([]).length, 0, '空转录应无导航项');
+    // 相邻且尚未得到回复的提问归入同一 turn，共享该 turn 的助手摘录（复刻 ZCode render-unit 语义）
+    const merged = buildTurnNavItems([
+      { kind: 'user', key: 'u0', text: '问甲' },
+      { kind: 'user', key: 'u1', text: '问乙' },
+      { kind: 'assistant', key: 'a0', parts: [{ kind: 'text', text: '合并答复' }] },
+      { kind: 'user', key: 'u2', text: '问丙' },
+    ]);
+    eq(merged.length, 3, '相邻未回复提问仍逐条成项');
+    eq(merged[0].assistantPreview, '合并答复', '同一 turn 的多条提问应共享该 turn 的助手摘录');
+    eq(merged[1].assistantPreview, '合并答复', '相邻提问共享助手摘录（对齐 ZCode product turn 聚合）');
+    eq(merged[2].assistantPreview, '暂无助手正文', '已收尾 turn 之后的新提问应重新计轮');
+    // 流式进行中：已产出的文本并入最后一个 turn 的摘录
+    const streaming = buildTurnNavItems([
+      { kind: 'user', key: 'u0', text: '第一问' },
+      { kind: 'assistant', key: 'a0', parts: [{ kind: 'text', text: '第一答' }] },
+      { kind: 'user', key: 'u1', text: '第二问' },
+    ], { running: true, liveParts: [{ kind: 'text', text: '正在流出的答复' }, { kind: 'tool' }] });
+    eq(streaming[1].assistantPreview, '正在流出的答复', '流式已产出文本应并入最后一项摘录');
+    eq(streaming[1].running, true, '运行态只应标在最后一项');
+    eq(streaming[1].assistantKind, 'text', '已有流式正文时应按 text 呈现而非 running 占位');
+    // 系统行（上下文压缩摘要）不成项但切分 turn；notice 回执不成项也不切分
+    const marked = buildTurnNavItems([
+      { kind: 'system', key: 's0', text: '早期对话摘要' },
+      { kind: 'user', key: 'u0', text: '问甲' },
+      { kind: 'assistant', key: 'a0', parts: [{ kind: 'text', text: '答甲' }] },
+      { kind: 'notice', key: 'n0', text: '已切换提供方' },
+      { kind: 'user', key: 'u1', text: '问乙' },
+    ]);
+    eq(marked.length, 2, '系统行与 notice 回执都不成项');
+    eq(marked[0].assistantPreview, '答甲', '压缩摘要之后的提问正常配对');
+    eq(marked[1].assistantPreview, '暂无助手正文', 'notice 之后的提问应重新计轮');
+    eq(buildTurnNavItems([
+      { kind: 'assistant', key: 'a0', parts: [{ kind: 'text', text: '孤儿答复' }] },
+      { kind: 'user', key: 'u0', text: '问' },
+    ]).length, 1, '无用户提问的助手段不成项（对齐 ZCode realUserInputs 为空即跳过）');
+  });
+  await test('回合导航预览文本：段落归一与 220 字截断', () => {
+    eq(normalizePreviewText('  第一段   含   折叠空白  \n\n 第二段 \n\n 第三段 '), '第一段 含 折叠空白\n第二段', '最多保留 2 段且段内空白折叠');
+    const cut = normalizePreviewText('x'.repeat(300));
+    eq(cut.length, 220, '超长预览应截到 220 字');
+    assert(cut.endsWith('...'), '截断应加省略号');
+    eq(normalizePreviewText('短文本'), '短文本', '短文本原样返回');
+    eq(normalizePreviewText(undefined), '', 'undefined 应安全返回空串');
+  });
+  await test('回合导航悬浮山峰视觉：距焦点 0/1/2/3+ 的透明度与缩放', () => {
+    const peak = resolveBarVisualState(3, 3);
+    eq(peak.tone, 'peak'); eq(peak.colorTone, 'focus'); eq(peak.opacity, 1); eq(peak.scaleX, 2.6);
+    const near = resolveBarVisualState(4, 3);
+    eq(near.tone, 'near'); eq(near.opacity, 0.86); eq(near.scaleX, 1.7);
+    const mid = resolveBarVisualState(5, 3);
+    eq(mid.tone, 'mid'); eq(mid.opacity, 0.72); eq(mid.scaleX, 1.25);
+    const idle = resolveBarVisualState(9, 3);
+    eq(idle.tone, 'idle'); eq(idle.opacity, 0.58); eq(idle.scaleX, 1);
+    eq(resolveBarVisualState(2, 3).tone, 'near', '距离应取绝对值（焦点上方同样衰减）');
+    eq(resolveBarVisualState(1, 3).tone, 'mid', '距焦点 2 格应回落 mid');
+    eq(resolveBarVisualState(3, undefined).opacity, 0.58, '无悬浮 / 焦点时应全部回落静止态');
+  });
+  await test('回合导航活动条目与虚拟窗口：视口内取距顶最近、越界钳制', () => {
+    const positions = [0, 1, 2, 3].map((i) => ({ index: i, start: i * 500, end: i * 500 + 400 }));
+    eq(resolveActiveItemIndex(positions, 1050, 600), 2, '视口内应取距滚动顶部最近的行');
+    eq(resolveActiveItemIndex(positions, 120, 600), 0);
+    eq(resolveActiveItemIndex(positions, 5000, 600), 3, '视口下方应取上方最后一个');
+    eq(resolveActiveItemIndex([], 0, 600), -1, '空位置表应回 -1');
+    const range = resolveVisibleRange(100, 250, 300);
+    eq(range.start, 19, '窗口起点应减 overscan');
+    eq(range.end, 61, '窗口终点应加 overscan');
+    const clamped = resolveVisibleRange(5, 0, 300);
+    eq(clamped.end, 5, '窗口不越界');
+    eq(resolveVisibleRange(0, 0, 300).end, 0, '零条目不渲染');
+    eq(resolveRailScrollTopForActive(30, 0, 300), 155, '活动项在可视带外时应滚到居中附近');
+    eq(resolveRailScrollTopForActive(3, 0, 300), 0, '活动项已在带内则不动');
+  });
+  await test('回合导航源码契约：复刻 ZCode ConversationTurnNavigator 的离散梯状历史轨', () => {
+    const nav = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'TurnNavigator.tsx'), 'utf8');
+    const chat = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ChatView.tsx'), 'utf8');
+    const msg = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Message.tsx'), 'utf8');
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    assert(chat.includes('chat-wrap') && chat.includes('<TurnNavigator'), '对话区应包定位包裹层并挂回合导航');
+    assert(msg.includes('data-turn-key={msg.key}'), '用户行应带 data-turn-key 供跳转定位');
+    assert(nav.includes('items.length >= 2') && nav.includes('TURN_NAV_MIN_WIDTH'), '少于 2 问不渲染、窄于 864px 不渲染');
+    assert(nav.includes('resolveVisibleRange') && nav.includes('resolveRailScrollTopForActive'), '应有虚拟窗口与活动项跟进');
+    assert(nav.includes('resolveBarVisualState') && nav.includes('scaleX('), '梯状山峰应走距离衰减 + 横向缩放');
+    assert(nav.includes('liveParts'), '流式已产出文本应并入最后一项摘录');
+    assert(nav.includes('CARD_OPEN_MS = 120') && nav.includes('CARD_CLOSE_MS = 80') && nav.includes('CARD_GAP = 8'), '预览卡应按 ZCode HoverCard 时序与偏移');
+    assert(nav.includes('createPortal') && nav.includes('tn-tip-user') && nav.includes('tn-tip-ai'), '预览卡应 portal 挂载且含用户 / 助手两层摘录');
+    assert(nav.includes('aria-label="对话问题导航"') && nav.includes('aria-posinset') && nav.includes('prefers-reduced-motion'), '应有导航语义、位置标注与减少动效适配');
+    assert(nav.includes("behavior: reduced ? 'auto' : 'smooth'"), '跳转应在减少动效时改用 auto');
+    const rail = /\.turn-nav-rail \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['width:36px', 'overflow-x:hidden', 'overflow-y:auto', 'max-height:calc(100% - 6rem)']) {
+      assert(rail.includes(decl), `导航轨应按 ZCode 规格声明 ${decl}`);
+    }
+    const item = /\.tn-item \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['width:36px', 'height:10px', 'position:absolute']) {
+      assert(item.includes(decl), `导航项应按 ZCode h-2.5 w-9 规格声明 ${decl}`);
+    }
+    const bar = /\.tn-bar \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['width:12px', 'height:2px', 'border-radius:99px', 'transform-origin:left center']) {
+      assert(bar.includes(decl), `短棒应按 ZCode h-0.5 w-3 rounded-full 规格声明 ${decl}`);
+    }
+    assert(css.includes('transition:height 150ms var(--ease), opacity 150ms var(--ease), transform 150ms var(--ease), background-color 150ms var(--ease)'), '短棒过渡应只动高度 / 透明度 / 变换 / 背景色');
   });
   await test('更新检查源码契约：设置页入口、路由与缓存语义', () => {
     const general = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'GeneralPanel.tsx'), 'utf8');
