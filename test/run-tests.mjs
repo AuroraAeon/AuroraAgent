@@ -24,6 +24,7 @@ import { runAgentTurn } from '../util/agent/loop.mjs';
 import { connectMcp, callResultText, McpError } from '../util/mcp/client.mjs';
 import { McpRegistry, validateServerDraft, loadMcpServers, mcpToolName } from '../util/mcp/registry.mjs';
 import { UsageLedger } from '../util/usage.mjs';
+import { ErrorLog, createDeduper, normalizeErrorKind, ERROR_LOG_MAX_LINES } from '../util/errorlog.mjs';
 import { runTuiToolkitTests } from './tui-toolkit.mjs';
 import { runGuardTests } from './guards.mjs';
 import { runLlmTests } from './llm.mjs';
@@ -1458,6 +1459,45 @@ await test('Loop：未知工具与坏参数不中断循环', async () => {
   assert(toolMsgs[0].content.includes('未知工具'), '未知工具应给出可用清单');
 });
 
+// ---------- 单元测试: 错误日志 ----------
+console.log('\n错误日志单元测试');
+await test('错误日志：环形保留、坏行容错与清空', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-errlog-'));
+  const lg = new ErrorLog(dir, { version: '9.9.9' });
+  lg.record('frontend_crash', '渲染崩了', 'Error: boom\n  at App');
+  lg.record('weird_kind', '未知来源归一为 backend', '');
+  lg.record('backend', '坏行不应影响读取', 'x'.repeat(5000));
+  const rows = lg.list(10);
+  eq(rows.length, 3, '应记 3 条');
+  eq(rows[0].kind, 'backend', '未知 kind 归一为 backend');
+  eq(rows[1].kind, 'backend', '未知 kind 归一');
+  eq(rows[2].kind, 'frontend_crash', '倒序返回');
+  eq(rows[0].version, '9.9.9', '应带版本号');
+  assert(rows[0].detail.length <= 4096, 'detail 应截断到 4KB');
+  // 超过上限时原子重写只留最后 N 行
+  for (let i = 0; i < ERROR_LOG_MAX_LINES + 5; i++) lg.record('backend', `第 ${i} 条`);
+  eq(lg.count(), ERROR_LOG_MAX_LINES, '环形保留上限');
+  eq(lg.list(1)[0].message, `第 ${ERROR_LOG_MAX_LINES + 4} 条`, '只留最后若干行');
+  appendFileSync(lg.path, 'not-json\n');
+  eq(lg.list(5).length, 4, '坏行跳过：末尾坏行不计入');
+  assert(lg.clear() >= ERROR_LOG_MAX_LINES, '清空返回行数');
+  eq(lg.list(5).length, 0, '清空后无记录');
+  rmSync(dir, { recursive: true, force: true });
+});
+await test('错误日志：kind 白名单归一化', () => {
+  eq(normalizeErrorKind('frontend_unhandled'), 'frontend_unhandled');
+  eq(normalizeErrorKind('frontend_crash'), 'frontend_crash');
+  eq(normalizeErrorKind('任意字符串'), 'backend');
+  eq(normalizeErrorKind(undefined), 'backend');
+});
+await test('错误日志去重器：同 key 窗口内只放行一次，过期后放行', () => {
+  const dd = createDeduper(1000, 3);
+  assert(dd.allow('a|b'), '首次放行');
+  assert(!dd.allow('a|b'), '窗口内去重');
+  assert(dd.allow('a|c'), '不同 key 放行');
+  assert(dd.allow('a|b', Date.now() + 1500), '过期后重新放行');
+});
+
 // ---------- e2e ----------
 console.log('\n端到端测试（mock 上游 + 真实 socket）');
 const mock = await startMock(MOCK_PORT);
@@ -1889,6 +1929,23 @@ await test('代码高亮源码契约：Markdown 代码块接入零依赖高亮�
       body: JSON.stringify({ requestId: 'no-such-request-id' }),
     })).json();
     eq(j.aborted, false);
+  });
+  await test('错误日志：前端上报落盘、30 秒去重、查看与清空', async () => {
+    const post = (body) => fetch(`${BASE}/api/logs/errors`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    eq((await post({ kind: 'frontend_unhandled', message: '测试未捕获错误', detail: 'stack...' })).status, 200);
+    const dup = await (await post({ kind: 'frontend_unhandled', message: '测试未捕获错误', detail: 'stack...' })).json();
+    eq(dup.deduped, true, '同 kind+message 30 秒内应去重');
+    eq((await post({ kind: 'frontend_crash', message: '测试渲染崩溃', detail: '' })).status, 200);
+    eq((await post({ kind: 'frontend_crash', message: '' })).status, 400, '空 message 400');
+    const listed = await (await fetch(`${BASE}/api/logs/errors?limit=10`)).json();
+    assert(listed.ok && listed.entries.length >= 2, '应能查看错误日志');
+    eq(listed.entries[0].message, '测试渲染崩溃', '新的在前');
+    assert(listed.entries[0].ts && listed.entries[0].version, '记录应带时间与版本');
+    const cleared = await (await fetch(`${BASE}/api/logs/errors`, { method: 'DELETE' })).json();
+    assert(cleared.ok && cleared.cleared >= 2, '清空应返回行数');
+    eq((await (await fetch(`${BASE}/api/logs/errors`)).json()).entries.length, 0, '清空后为空');
   });
   await test('/api/abort 能真正中断生成并记录 stopped 账本', async () => {
     const requestId = 'test-abort-' + Date.now();

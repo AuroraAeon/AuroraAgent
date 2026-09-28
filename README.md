@@ -145,7 +145,7 @@ Agent 运行时（`/api/agent/*`，单活跃 turn：已有 turn 在跑时返回 
 
 MCP 实验面（`AURORAAGENT_EXPERIMENTAL_MCP=1` 门控，未开启 404 并附开启指引）：`GET /api/mcp/servers`、`POST /api/mcp/servers`、`DELETE /api/mcp/servers/:id`、`POST /api/mcp/servers/:id/probe`（测试连接并列举工具）。
 
-模型速测底座（全部保持原样）：`POST /api/chat`（SSE 流式对话，`provider` 路由自定义上游）、`POST /api/abort`、`GET /api/models`（60s 缓存）、`GET/POST/PUT/DELETE /api/providers*`、`POST /api/providers/discover`、`GET /api/status` `/api/health`、`GET /api/usage`、`GET/POST /api/settings`、`GET /vendor/<name>.svg`。
+模型速测底座（全部保持原样）：`POST /api/chat`（SSE 流式对话，`provider` 路由自定义上游）、`POST /api/abort`、`GET /api/models`（60s 缓存）、`GET/POST/PUT/DELETE /api/providers*`、`POST /api/providers/discover`、`GET /api/status` `/api/health`、`GET /api/usage`、`GET/POST /api/settings`、`POST/GET/DELETE /api/logs/errors`（前端崩溃与未捕获错误的落盘与查看）、`GET /vendor/<name>.svg`。
 
 ## 数据与日志（与 App 解耦）
 
@@ -155,6 +155,7 @@ MCP 实验面（`AURORAAGENT_EXPERIMENTAL_MCP=1` 门控，未开启 404 并附�
 | 会话（meta + 追加式转录） | `~/Library/Application Support/AuroraAgent/sessions/<id>.meta.json` + `.jsonl` |
 | 目标（一会话一个，原子落盘） | `~/Library/Application Support/AuroraAgent/goals/<sessionId>.json` |
 | 用量账本（含被中止的请求） | `~/Library/Application Support/AuroraAgent/usage.jsonl` |
+| 错误日志（前端崩溃 / 未捕获错误，环形保留 200 行） | `~/Library/Application Support/AuroraAgent/logs/errors.log` |
 | 自定义提供方（Key / 端点 / 模型目录 / 单价） | `~/Library/Application Support/AuroraAgent/providers.json` |
 | 服务日志 | `~/Library/Logs/com.auroraagent.app.log` |
 

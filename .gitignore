@@ -1,6 +1,8 @@
 auroraagent.config.json
 usage.jsonl
 sessions/
+goals/
+logs/
 *.log
 node_modules/
 __pycache__/

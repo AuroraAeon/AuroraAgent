@@ -12,6 +12,7 @@ import { homedir } from 'node:os';
 import { exec, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { UsageLedger } from './util/usage.mjs';
+import { ErrorLog, createDeduper } from './util/errorlog.mjs';
 import { SERVICE_LOG, servicePid, isManaged, autostartInstalled } from './util/service.mjs';
 import { ProviderStore, ProviderError, handleProviderApi } from './util/providers.mjs';
 import { pumpSse, pumpTranslated } from './util/stream.mjs';
@@ -28,6 +29,10 @@ const usage = new UsageLedger(DATA_DIR, { warn: (m, e) => log('warn', m, e) });
 const BASE = process.env.AURORAAGENT_BASE_URL || 'https://api.longcat.chat';
 const PORT = Number(process.env.PORT || 8787);
 const VERSION = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8')).version; // 版本唯一来源
+// 错误日志（<数据目录>/logs/errors.log，JSON Lines 环形保留）：前端崩溃与后端错误共用一份
+const errorLog = new ErrorLog(DATA_DIR, { version: VERSION, warn: (m, e) => log('warn', m, e) });
+// 上报去重：同 kind+message 30 秒内只记一条，崩溃循环不刷屏
+const errorDeduper = createDeduper(30_000, 50);
 // 自定义 Provider 仓库：内置提供方（美团 LongCat）由 env/配置合成，自定义提供方落 providers.json
 const providers = new ProviderStore(DATA_DIR, {
   name: '美团 LongCat',
@@ -233,6 +238,44 @@ const server = createServer(async (req, res) => {
   if (req.method === 'GET' && url === '/api/usage') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify(usage.summary()));
+  }
+
+  // 错误日志（/api/logs/errors，实现见 util/errorlog.mjs）：前端全局捕获上报 + 设置页查看 / 清空
+  if (url === '/api/logs/errors' || url.startsWith('/api/logs/errors?')) {
+    if (req.method === 'GET') {
+      const limit = Number(new URL(req.url, 'http://localhost').searchParams.get('limit') || 50);
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      return res.end(JSON.stringify({ ok: true, entries: errorLog.list(limit), total: errorLog.count() }));
+    }
+    if (req.method === 'DELETE') {
+      const cleared = errorLog.clear();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true, cleared }));
+    }
+    if (req.method === 'POST') {
+      let raw = '';
+      req.on('data', (d) => { raw += d; if (raw.length > 32 * 1024) req.destroy(); });
+      req.on('end', () => {
+        let body = {};
+        try { body = JSON.parse(raw || '{}'); } catch {}
+        const kind = String(body.kind || 'backend').slice(0, 40);
+        const message = String(body.message || '').trim();
+        const detail = typeof body.detail === 'string' ? body.detail : '';
+        if (!message) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, error: 'message 不能为空' }));
+        }
+        // 去重后再落盘：同一处相同错误 30 秒内只记一条
+        if (!errorDeduper.allow(`${kind}|${message.slice(0, 200)}`)) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: true, deduped: true }));
+        }
+        errorLog.record(kind, message, detail);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      });
+      return;
+    }
   }
 
   if (req.method === 'GET' && url === '/api/models') {
