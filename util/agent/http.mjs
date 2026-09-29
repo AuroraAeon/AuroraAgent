@@ -14,6 +14,7 @@ import { subscribeGoalEvents, publishGoalEvent } from './goal/bus.mjs';
 import { loadSkills, findSkill, skillInvocationText } from './skills.mjs';
 import { searchWorkspaceFiles } from './files.mjs';
 import { SideSession } from './side-session.mjs';
+import { TurnQueue, newOpId } from './queue.mjs';
 import { PERMISSION_MODES, TITLE_MODES, experimentalEnabled } from '../config.mjs';
 import { McpRegistry } from '../mcp/registry.mjs';
 import { parseFailoverConfig, effectiveTimeouts } from '../llm/failover.mjs';
@@ -55,6 +56,10 @@ export function createAgentApi(deps) {
   // 技能目录：内置 skills/ + 用户 <数据目录>/skills/（进程启动时加载一次）
   const skills = loadSkills({ userDir: join(dataDir, 'skills') });
   const activeTurns = new Map(); // sessionId -> { controller }
+  // 消息队列（#3212 / #3220）：活跃 turn 期间的新提交进 FIFO，前一条结算后由泵接力
+  const queue = new TurnQueue(dataDir, { warn: (m, e) => log('warn', m, e) });
+  /** opId -> 该条排队提交的 SSE 响应（轮到它开跑时由泵接管写入） */
+  const waitingStreams = new Map();
   // 侧边对话（/btw）：mainSessionId -> SideSession 内存门面（继承主会话 meta 快照 + 自洽历史前缀）。
   // 不落盘、不进 /sessions、不接管 goal、不派发子代理（SideSession.create 抛错），主会话存储零污染
   const sides = new Map();
@@ -73,6 +78,119 @@ export function createAgentApi(deps) {
   const mcp = mcpEnabled ? new McpRegistry({ dataDir, log: (l, m, e) => log(l, m, e) }) : null;
   const mcpTools = () => (mcp ? mcp.tools.slice() : []);
   if (mcp) mcp.refresh().catch(() => {});
+
+  /** 队列变更广播：给该会话所有排队流推一条 turn_queued（位置 / 内容刷新），客户端据此重画队列条 */
+  const publishQueue = (sessionId) => {
+    const items = queue.list(sessionId).filter((i) => i.state !== 'running');
+    for (const item of items) {
+      const stream = waitingStreams.get(item.opId);
+      if (stream && !stream.writableEnded) {
+        stream.write(sseFrame('turn_queued', { sessionId, opId: item.opId, position: items.indexOf(item) + 1, input: item.text }));
+      }
+    }
+  };
+
+  /** 泵：前一条 turn 结算后接力下一条。activeTurns 已删除——若此时又有新 turn 抢跑，直接让位 */
+  const pumpNext = (sessionId) => {
+    if (activeTurns.has(sessionId)) return;
+    const next = queue.shift(sessionId);
+    if (!next) return;
+    const got = sessions.get(sessionId);
+    if (!got) { queue.finish(sessionId, next.opId, 'failed'); return; }
+    const stream = waitingStreams.get(next.opId);
+    waitingStreams.delete(next.opId);
+    // 无人认领（客户端早就断开）也要跑完：用户确实发了这条，只是不看结果了
+    if (!stream || stream.writableEnded) { void startTurn(sessionId, got, next.body, null, next.text); return; }
+    void startTurn(sessionId, got, next.body, stream, next.text);
+  };
+
+  /**
+   * 起跑一条 turn（直接提交或队列泵接力共用）。
+   * res 为 null 表示无人认领的流（排队期间客户端断开）：照常执行，事件丢弃。
+   */
+  /**
+   * 起跑一条 turn（直接提交或队列泵接力共用）。
+   * res 为 null 表示无人认领的流（排队期间客户端断开）：照常执行，事件丢弃。
+   */
+  const startTurn = async (sessionId, got, body, res, raw) => {
+    // side=true 跑侧边对话：store 换内存门面、goalStore 置空（goal 工具自然摘除）；
+    // activeTurns 仍按 sessionId 键控，主 / 侧互斥（与终端 busy 语义一致）
+    const side = body.side === true;
+    const store = side ? sideStoreFor(sessionId, got.meta) : sessions;
+    const sessionMeta = side ? store.meta : got.meta;
+    // 斜杠技能命令：/<技能名> [参数] → 技能正文注入（与终端同一规则，两端同源单点解析）
+    const skillCmd = /^\/([A-Za-z0-9._-]+)[ \t]*([\s\S]*)$/.exec(raw);
+    const hit = skillCmd ? findSkill(skills, skillCmd[1]) : null;
+    const input = hit ? skillInvocationText(hit, skillCmd[2]) : raw;
+    const inputSkill = hit ? hit.name : ''; // 供 Loop 标记用户记录（压缩期保护技能规范）
+    const cfg = loadConfig();
+    const model = pickModel(body.model, got.meta.model || cfg.model);
+    const provider = resolveChatProvider(body.provider || got.meta.provider, model);
+    const harness = getHarness(got.meta.harness);
+    // 权限三档 / 计划模式优先级：请求体 > 会话 meta > 全局配置（缺省等价现状）
+    const permissionMode = PERMISSION_MODES.includes(body.permissionMode) ? body.permissionMode
+      : PERMISSION_MODES.includes(got.meta.permissionMode) ? got.meta.permissionMode : cfg.permissionMode;
+    const planMode = body.planMode !== undefined ? body.planMode === true
+      : got.meta.planMode !== undefined ? got.meta.planMode === true : cfg.planMode === true;
+    const titleMode = TITLE_MODES.includes(body.titleMode) ? body.titleMode
+      : got.meta.titleMode !== undefined ? got.meta.titleMode : cfg.titleMode;
+    const controller = new AbortController();
+    activeTurns.set(sessionId, { controller, side });
+    // 队列接力的流已在入队回执里写过头部，只能写一次（重复 writeHead 会抛 HEADERS_SENT）
+    if (res && !res.headersSent) res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' });
+    const emit = (type, payload) => { if (res && !res.writableEnded) res.write(sseFrame(type, payload)); };
+    // 客户端断开即中止上游与工具执行，不浪费额度（与 /api/chat 一致）
+    if (res) res.on('close', () => {
+      if (!res.writableEnded) {
+        controller.abort(new Error('客户端断开连接'));
+        log('info', 'Agent 客户端断开，已中止', { sessionId });
+      }
+    });
+    const cleanupPermissions = () => {
+      for (const [id, p] of pendingPermissions) {
+        if (p.sessionId === sessionId) { pendingPermissions.delete(id); p.resolve('deny'); }
+      }
+      const waiting = pendingPlans.get(sessionId);
+      if (waiting) { pendingPlans.delete(sessionId); waiting.resolve('reject'); }
+    };
+    // 队列接力的项带回自己的 opId，结算时按终态剪掉（跑完即从队列视图消失）
+    const opId = String(body.opId || '').trim();
+    let turnFailed = false;
+    try {
+      await runAgentTurn({
+        store, usage, session: sessionMeta, input, inputSkill, provider, model, harness,
+        builtinPrice, skills,
+        gen: { maxTokens: cfg.maxTokens, temperature: cfg.temperature, thinkingOn: body.thinking !== false },
+        emit, controller, permissionMode, planMode, titleMode, extraTools: mcpTools(),
+        agentProxy: cfg.agentProxy,
+        providerFailover: cfg.providerFailover, providerFailoverMaxAttempts: cfg.providerFailoverMaxAttempts,
+        failoverCandidates,
+        failoverState,
+        // 生效超时：故障转移关闭时归零（effectiveTimeouts 单点保证），关闭即完全回到老行为
+        failoverTimeouts: effectiveTimeouts(parseFailoverConfig(cfg, {})),
+        failoverQueue,
+        goalStore: side ? null : goals, goalCfg: cfg.goal,
+        requestPermission: ({ requestId }) => new Promise((resolve) => {
+          pendingPermissions.set(requestId, { resolve, sessionId });
+        }),
+        requestPlanDecision: () => new Promise((resolve) => {
+          pendingPlans.set(sessionId, { resolve });
+        }),
+        log: (level, msg, extra) => log(level, msg, extra),
+      });
+    } catch (err) {
+      turnFailed = true;
+      log('error', 'Agent turn 异常', { sessionId, error: String(err) });
+      emit('turn_failed', { sessionId, error: String(err) });
+    } finally {
+      cleanupPermissions();
+      activeTurns.delete(sessionId);
+      if (opId && queue.find(sessionId, opId)) queue.finish(sessionId, opId, turnFailed ? 'failed' : 'done');
+      // 队列接力：先让出 activeTurns，再摘牌下一条（!has 的二次判断防延迟清理吞掉新工作）
+      pumpNext(sessionId);
+      try { if (res) res.end(); } catch {}
+    }
+  };
 
   return async function handleAgentApi(req, res, url) {
     if (req.method === 'GET' && url === '/api/agent/harnesses') {
@@ -359,81 +477,72 @@ export function createAgentApi(deps) {
       const sessionId = String(body.sessionId || '');
       const got = sessions.get(sessionId);
       if (!got) return json(res, 404, { error: { message: '会话不存在或已删除' } });
-      if (activeTurns.has(sessionId)) {
-        return json(res, 409, { error: { message: '该会话已有正在进行的任务，请先停止或等待完成' } });
-      }
       const raw = String(body.input || '').trim();
       if (!raw) return json(res, 400, { error: { message: '输入不能为空' } });
-      // side=true 跑侧边对话：store 换内存门面、goalStore 置空（goal 工具自然摘除）；
-      // activeTurns 仍按 sessionId 键控，主 / 侧互斥（与终端 busy 语义一致）
-      const side = body.side === true;
-      const store = side ? sideStoreFor(sessionId, got.meta) : sessions;
-      const sessionMeta = side ? store.meta : got.meta;
-      // 斜杠技能命令：/<技能名> [参数] → 技能正文注入（与终端同一规则，两端同源单点解析）
-      const skillCmd = /^\/([A-Za-z0-9._-]+)[ \t]*([\s\S]*)$/.exec(raw);
-      const hit = skillCmd ? findSkill(skills, skillCmd[1]) : null;
-      const input = hit ? skillInvocationText(hit, skillCmd[2]) : raw;
-      const inputSkill = hit ? hit.name : ''; // 供 Loop 标记用户记录（压缩期保护技能规范）
-      const cfg = loadConfig();
-      const model = pickModel(body.model, got.meta.model || cfg.model);
-      const provider = resolveChatProvider(body.provider || got.meta.provider, model);
-      const harness = getHarness(got.meta.harness);
-      // 权限三档 / 计划模式优先级：请求体 > 会话 meta > 全局配置（缺省等价现状）
-      const permissionMode = PERMISSION_MODES.includes(body.permissionMode) ? body.permissionMode
-        : PERMISSION_MODES.includes(got.meta.permissionMode) ? got.meta.permissionMode : cfg.permissionMode;
-      const planMode = body.planMode !== undefined ? body.planMode === true
-        : got.meta.planMode !== undefined ? got.meta.planMode === true : cfg.planMode === true;
-      const titleMode = TITLE_MODES.includes(body.titleMode) ? body.titleMode
-        : TITLE_MODES.includes(got.meta.titleMode) ? got.meta.titleMode : cfg.titleMode;
-      const controller = new AbortController();
-      activeTurns.set(sessionId, { controller });
-      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' });
-      const emit = (type, payload) => { if (!res.writableEnded) res.write(sseFrame(type, payload)); };
-      // 客户端断开即中止上游与工具执行，不浪费额度（与 /api/chat 一致）
-      res.on('close', () => {
-        if (!res.writableEnded) {
-          controller.abort(new Error('客户端断开连接'));
-          log('info', 'Agent 客户端断开，已中止', { sessionId });
-        }
-      });
-      const cleanupPermissions = () => {
-        for (const [id, p] of pendingPermissions) {
-          if (p.sessionId === sessionId) { pendingPermissions.delete(id); p.resolve('deny'); }
-        }
-        const waiting = pendingPlans.get(sessionId);
-        if (waiting) { pendingPlans.delete(sessionId); waiting.resolve('reject'); }
-      };
-      try {
-        await runAgentTurn({
-          store, usage, session: sessionMeta, input, inputSkill, provider, model, harness,
-          builtinPrice, skills,
-          gen: { maxTokens: cfg.maxTokens, temperature: cfg.temperature, thinkingOn: body.thinking !== false },
-          emit, controller, permissionMode, planMode, titleMode, extraTools: mcpTools(),
-          agentProxy: cfg.agentProxy,
-          providerFailover: cfg.providerFailover, providerFailoverMaxAttempts: cfg.providerFailoverMaxAttempts,
-          failoverCandidates,
-          failoverState,
-          // 生效超时：故障转移关闭时归零（effectiveTimeouts 单点保证），关闭即完全回到老行为
-          failoverTimeouts: effectiveTimeouts(parseFailoverConfig(cfg, {})),
-          failoverQueue,
-          goalStore: side ? null : goals, goalCfg: cfg.goal,
-          requestPermission: ({ requestId }) => new Promise((resolve) => {
-            pendingPermissions.set(requestId, { resolve, sessionId });
-          }),
-          requestPlanDecision: () => new Promise((resolve) => {
-            pendingPlans.set(sessionId, { resolve });
-          }),
-          log: (level, msg, extra) => log(level, msg, extra),
-        });
-      } catch (err) {
-        log('error', 'Agent turn 异常', { sessionId, error: String(err) });
-        emit('turn_failed', { sessionId, error: String(err) });
-      } finally {
-        cleanupPermissions();
-        activeTurns.delete(sessionId);
-        try { res.end(); } catch {}
+      // 主 / 侧互斥不因队列松动：任一侧有活跃 turn，对侧提交一律 409（与终端 busy 语义一致）
+      const active = activeTurns.get(sessionId);
+      if (active && (body.side === true || active.side)) {
+        return json(res, 409, { error: { message: '该会话已有正在进行的任务，请先停止或等待完成' } });
       }
-      return;
+      // side=true 跑侧边对话：不落盘、不接管 goal，也不入队
+      if (body.side === true) return startTurn(sessionId, got, body, res, raw);
+      // 活跃主 turn 期间的新提交：入队等待，前一条结算后由泵自动接力（不再 409 挡人）
+      if (active) {
+        const opId = String(body.opId || '').trim() || newOpId();
+        const receipt = queue.enqueue(sessionId, { opId, text: raw, body: { ...body, input: raw, opId } });
+        if (!receipt) return json(res, 400, { error: { message: '输入不能为空' } });
+        res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' });
+        // 重复 opId：同一回执原样返回，不开第二条流、不重复执行
+        const emit = (type, payload) => { if (!res.writableEnded) res.write(sseFrame(type, payload)); };
+        emit('turn_queued', { sessionId, opId: receipt.item.opId, position: receipt.position, input: raw, duplicate: receipt.duplicate });
+        if (receipt.duplicate) { try { res.end(); } catch {} return; }
+        waitingStreams.set(receipt.item.opId, res);
+        // 客户端断开：还在排队（未开跑）就摘掉，别让无人认领的流占着队列
+        res.on('close', () => {
+          waitingStreams.delete(receipt.item.opId);
+          const item = queue.find(sessionId, receipt.item.opId);
+          if (item && item.state === 'queued') { queue.remove(sessionId, receipt.item.opId); publishQueue(sessionId); }
+        });
+        publishQueue(sessionId);
+        log('info', 'Agent 消息已入队', { sessionId, opId: receipt.item.opId, position: receipt.position });
+        return;
+      }
+      return startTurn(sessionId, got, body, res, raw);
+    }
+
+    if (req.method === 'GET' && /^\/api\/agent\/queue\/[0-9a-f-]{36}$/.test(url)) {
+      const sessionId = url.slice('/api/agent/queue/'.length);
+      if (!sessions.get(sessionId)) return json(res, 404, { error: { message: '会话不存在或已删除' } });
+      return json(res, 200, { sessionId, items: queue.list(sessionId) });
+    }
+
+    if (req.method === 'POST' && url === '/api/agent/queue/promote') {
+      const body = await readBody(req, 64 * 1024);
+      const sessionId = String(body.sessionId || '');
+      if (!sessions.get(sessionId)) return json(res, 404, { error: { message: '会话不存在或已删除' } });
+      const item = queue.promote(sessionId, String(body.opId || ''));
+      if (!item) return json(res, 404, { error: { message: '队列里没有这一条' } });
+      publishQueue(sessionId);
+      return json(res, 200, { ok: true, item });
+    }
+
+    if (req.method === 'POST' && url === '/api/agent/queue/remove') {
+      const body = await readBody(req, 64 * 1024);
+      const sessionId = String(body.sessionId || '');
+      if (!sessions.get(sessionId)) return json(res, 404, { error: { message: '会话不存在或已删除' } });
+      const item = queue.find(sessionId, String(body.opId || ''));
+      if (!item) return json(res, 404, { error: { message: '队列里没有这一条' } });
+      // 已在跑的那条不给远端删：删了就没有流能收它的结果，只能走停止
+      if (item.state === 'running') return json(res, 409, { error: { message: '这一条已经在执行，请改用停止' } });
+      const stream = waitingStreams.get(item.opId);
+      if (stream && !stream.writableEnded) {
+        stream.write(sseFrame('turn_cancelled', { sessionId, opId: item.opId, reason: 'removed' }));
+        try { stream.end(); } catch {}
+      }
+      waitingStreams.delete(item.opId);
+      queue.remove(sessionId, item.opId);
+      publishQueue(sessionId);
+      return json(res, 200, { ok: true });
     }
 
     json(res, 404, { error: { message: 'not found' } });

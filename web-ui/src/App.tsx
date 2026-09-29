@@ -12,8 +12,8 @@ import { Composer } from './components/Composer';
 import { SettingsDialog } from './components/SettingsDialog';
 import { projectRecords } from './projection';
 import {
-  abortTurn, checkUpdate, clearGoal, createGoal, createSession, deleteSession, editGoal, forkSession, getGoal, getSession, getSettings, goalAction,
-  listHarnesses, listMcpServers, listModels, listSkills, listProviders, listSessions, patchSession, respondPermission, respondPlan, runTurn,
+  abortTurn, checkUpdate, clearGoal, createGoal, createSession, deleteSession, editGoal, forkSession, getAgentQueue, getGoal, getSession, getSettings, goalAction,
+  listHarnesses, listMcpServers, listModels, listSkills, listProviders, listSessions, patchSession, promoteQueueItem, removeQueueItem, respondPermission, respondPlan, runTurn,
   saveApiKey, saveGeneration,
 } from './api';
 import { GOAL_COMMAND_HELP, formatGoalReceipt, formatGoalSummary, parseGoalCommand } from '../../util/agent/goal/command.mjs';
@@ -23,7 +23,7 @@ import { GOAL_STATUS_LABELS } from './types';
 import { BASE_COMMANDS } from './slash-commands';
 import { setThemePreference } from './theme';
 import type { ThemePreference } from './theme';
-import type { GoalState, Harness, LiveTurn, ModelInfo, MsgView, ProviderRow, SessionMeta, SettingsInfo, TodoItem, SkillRow, UpdateInfo } from './types';
+import type { AgentEvent, GoalState, Harness, LiveTurn, ModelInfo, MsgView, ProviderRow, QueueItem, SessionMeta, SettingsInfo, TodoItem, SkillRow, UpdateInfo } from './types';
 import { createTurnEventHandlers, finishTurnProjection } from './turn-events';
 import { canGoBack, canGoForward, createNavHistory, goBack, goForward, pushNav, removeNav } from './nav-history.mjs';
 import { discardSide } from './api';
@@ -52,6 +52,11 @@ export default function App() {
   const [titleMode, setTitleMode] = useState('local');
   const [planOn, setPlanOn] = useState(false);
   const [busy, setBusy] = useState(false);
+  // 消息队列（#3212）：活跃 turn 期间提交的消息在服务端排队，这里只做界面投影与操作入口
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const refreshQueue = useCallback(async (sid: string) => {
+    try { setQueue((await getAgentQueue(sid)).items); } catch { setQueue([]); }
+  }, []);
   // 正在运行的会话 id 集合（侧栏行左侧灰色加载圈的数据源）：主 / 侧边 turn 开始时登记、收尾移除。
   // 运行中允许切换会话，旧的 turn 仍在跑——故不能简单用 busy && currentId 推导
   const [running, setRunning] = useState<Set<string>>(() => new Set());
@@ -141,18 +146,90 @@ export default function App() {
     })();
   }, [openSession, refreshModels]);
 
+  /**
+   * 主 turn 结算信号：队列接力的流必须等前一条完全落地才能接管主对话视图，
+   * 否则前一条 finally 里的 setBusy(false) / setLive(null) 会把刚起跑的接力 turn 抹掉。
+   * 每条主对话工作（直接提交的、队列接力的）结束前都把自己的 promise 挂上来，形成链式等待。
+   */
+  const mainSettled = useRef<Promise<void>>(Promise.resolve());
+
   const send = async (text: string) => {
     const cur = current;
-    if (!cur || busy || !text.trim()) return;
+    if (!cur || !text.trim()) return;
+    // 生成中提交：不进转录、不起 live，交给服务端入队；队列条即它的容身之处，
+    // 前一条结算后由泵接力，届时 runQueuedTurn 把投影接到主对话视图上
+    if (busy) { void runQueuedTurn(cur.id, text); return; }
+    let settle!: () => void;
+    mainSettled.current = new Promise<void>((resolve) => { settle = resolve; });
     setBusy(true);
     setRunning((prev) => new Set(prev).add(cur.id));
     setError('');
     setMessages((prev) => [...prev, { kind: 'user', key: `opt-${Date.now()}`, text }]);
     setLive({ turnId: '', parts: [], thinking: '', usage: null, compression: null, plan: null, round: 0, startedAt: Date.now() });
-    await runTurnStream('main', cur.id, text, {
+    try {
+      await runTurnStream('main', cur.id, text, {
+        scope: 'main',
+        setMsgs: setMessages, setLive, setTodos, setError, setSessions, setGoal, currentIdRef,
+      });
+    } finally { settle(); }
+  };
+
+  /**
+   * 队列接力：服务端把这条消息排在活跃 turn 之后，流先只回 turn_queued 回执。
+   * 等 turn_started 到场（泵开始跑它）且前一条主 turn 已结算，再把用户消息 + live turn
+   * 补进主对话视图，缓冲事件按序补放——用户视角就是两条消息连着跑完，中间没有断档。
+   */
+  const runQueuedTurn = async (sessionId: string, text: string) => {
+    const prev = mainSettled.current;
+    const opId = `q${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    let settle!: () => void;
+    mainSettled.current = new Promise<void>((resolve) => { settle = resolve; });
+    const handlers = createTurnEventHandlers({
       scope: 'main',
       setMsgs: setMessages, setLive, setTodos, setError, setSessions, setGoal, currentIdRef,
     });
+    const buf: AgentEvent[] = [];
+    let primed = false;
+    const prime = () => {
+      primed = true;
+      setMessages((m) => [...m, { kind: 'user', key: `q-${opId}`, text }]);
+      setLive({ turnId: '', parts: [], thinking: '', usage: null, compression: null, plan: null, round: 0, startedAt: Date.now() });
+      setBusy(true);
+      setRunning((r) => new Set(r).add(sessionId));
+    };
+    let flushing = false;
+    const flush = async () => {
+      await prev;
+      for (const ev of buf.splice(0)) {
+        if (!primed && ev.type !== 'turn_queued') prime();
+        handlers(ev);
+      }
+    };
+    try {
+      await runTurn({ sessionId, input: text, opId }, (ev) => {
+        if (ev.type === 'turn_queued') { void refreshQueue(sessionId); return; }
+        buf.push(ev);
+        if (!flushing) { flushing = true; void flush(); }
+      });
+    } catch (e) {
+      if (primed) toast.error('任务失败', { description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      await flush();
+      if (primed) await finishMainTurn(sessionId);
+      else await refreshQueue(sessionId);
+      settle();
+    }
+  };
+
+  /** 主对话收尾：与 runTurnStream 的 finally 同构（重投影 + 清 live + 摘运行标记） */
+  const finishMainTurn = async (sessionId: string) => {
+    try {
+      if (currentIdRef.current === sessionId) await finishTurnProjection('main', sessionId, setMessages);
+      setSessions(await listSessions());
+    } catch { /* 刷新失败保留当前界面 */ }
+    setBusy(false);
+    setLive(null);
+    setRunning((prev) => { const next = new Set(prev); next.delete(sessionId); return next; });
   };
 
   /** 侧边对话（/btw）：一问一答的临时分支——继承主会话历史前缀，不落盘、不进会话列表、不接管目标 */
@@ -204,6 +281,29 @@ export default function App() {
       else setSide((prev) => (prev ? { ...prev, live: null, busy: false } : prev));
       setRunning((prev) => { const next = new Set(prev); next.delete(sessionId); return next; });
     }
+  };
+
+  // 队列刷新：会话忙或有等待项时按 1.2s 轮询（turn_queued 只推给自己那条流，
+  // 跨提交的队列视图统一由轮询兜底，避免漏刷导致「已经跑了却还显示在队列里」）
+  useEffect(() => {
+    if (!currentId) { setQueue([]); return; }
+    let dead = false;
+    const tick = () => { if (!dead) void refreshQueue(currentId); };
+    tick();
+    const id = setInterval(tick, 1200);
+    return () => { dead = true; clearInterval(id); };
+  }, [currentId, refreshQueue, busy]);
+
+    /** 队列操作：立即发送（挪到队首，下一个就被泵接走）/ 移除等待中的消息 */
+  const promoteQueue = async (opId: string) => {
+    if (!currentId) return;
+    try { await promoteQueueItem(currentId, opId); await refreshQueue(currentId); }
+    catch (e) { toast.error('操作失败', { description: e instanceof Error ? e.message : String(e) }); }
+  };
+  const removeQueue = async (opId: string) => {
+    if (!currentId) return;
+    try { await removeQueueItem(currentId, opId); await refreshQueue(currentId); }
+    catch (e) { toast.error('操作失败', { description: e instanceof Error ? e.message : String(e) }); }
   };
 
   /** 丢弃侧边对话回到主对话（与终端 Ctrl+C 空提示符同语义） */
@@ -827,6 +927,9 @@ export default function App() {
             skills={skills}
             sessionId={currentId}
             disabled={!current}
+            queue={sideActive ? [] : queue}
+            onQueuePromote={(opId) => { void promoteQueue(opId); }}
+            onQueueRemove={(opId) => { void removeQueue(opId); }}
             focusNonce={focusNonce}
             pickerNonce={pickerRequest?.nonce}
           />

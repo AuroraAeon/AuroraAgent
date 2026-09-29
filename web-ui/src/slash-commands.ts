@@ -38,6 +38,7 @@ export const BASE_COMMANDS: SlashEntry[] = [
     argHint: '<目标内容>|[pause|resume|stop|budget <n>|clear|edit|help]',
     summary: '会话目标：无参查看；设立或改写；edit 回填续编',
   },
+  { name: 'queue', argHint: '[send|drop <序号>|clear]', summary: '消息队列：生成中提交的消息在输入区上方排队，可立即发送或移除' },
   { name: 'btw', argHint: '<问题>', summary: '侧边对话：继承当前会话历史开聊，不落盘' },
   { name: 'plan', argHint: 'on|off', summary: '计划模式开关（开启后下一轮先出计划，批准才执行）' },
   { name: 'think', argHint: 'on|off', summary: '思考过程开关' },

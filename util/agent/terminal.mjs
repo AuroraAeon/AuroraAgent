@@ -30,6 +30,7 @@ import { loadSkills, skillInvocationText } from './skills.mjs';
 import { SideSession } from './side-session.mjs';
 import { join } from 'node:path';
 import { truncate, toolLabel } from './terminal-format.mjs';
+import { formatQueueLines, parseQueueArg, pickQueueItem } from './queue-cmd.mjs';
 
 const BASE = process.env.AURORAAGENT_BASE_URL || 'https://api.longcat.chat';
 const KEY_PAGE = 'https://longcat.chat/platform/api_keys';
@@ -318,6 +319,39 @@ export async function runTerminal({ argv = [] } = {}) {
     }
   };
 
+  /**
+   * /queue 家族：查看 / 立即发送 / 移除 / 清空本地排队行。
+   * 队列本身由 lineQueue 持有（busy 期间输入自动入队，空闲即按序发出），
+   * 与网页侧 util/agent/queue.mjs 的服务端队列是同一条用户意图的两种落点。
+   */
+  const cmdQueue = (arg) => {
+    const p = painter();
+    const parsed = parseQueueArg(arg);
+    if (parsed.action === 'list') {
+      for (const line of formatQueueLines(lineQueue)) console.log('  ' + p.dim(line));
+      if (lineQueue.length) console.log(p.dim(`  /queue send <序号> 立即发送 · /queue drop <序号> 移除 · /queue clear 清空`));
+      return;
+    }
+    if (parsed.action === 'clear') {
+      const n = lineQueue.length;
+      lineQueue.length = 0;
+      console.log(n ? p.dim(`✓ 已清空 ${n} 条排队消息`) : p.dim('队列本就是空的'));
+      return;
+    }
+    if (parsed.action === 'error') { console.log(p.warning(parsed.message)); return; }
+    const picked = pickQueueItem(lineQueue, parsed.index);
+    if (picked.error) { console.log(p.warning(picked.error)); return; }
+    const idx = lineQueue.indexOf(picked.item);
+    if (parsed.action === 'send') {
+      const [item] = lineQueue.splice(idx, 1);
+      lineQueue.unshift(item);
+      console.log(p.dim(`✓ 已把「${truncate(item, 40)}」挪到队首，下一条就发它`));
+      return;
+    }
+    lineQueue.splice(idx, 1);
+    console.log(p.dim(`✓ 已移除「${truncate(picked.item, 40)}」`));
+  };
+
   /** 声明式斜杠命令表：/help 与分发同源；技能派生命令追加进同一张表（/<技能名> 直接调用） */
   const baseCommands = [
     { name: 'help', summary: '显示全部命令', run: printHelp },
@@ -361,6 +395,7 @@ export async function runTerminal({ argv = [] } = {}) {
       console.log(painter().dim(`✓ 标题生成方式已切换为${want === 'model' ? '模型总结（每个新会话多一次小额请求）' : '本地推导（零成本）'}`));
     } },
     { name: 'goal', argHint: '<目标内容>|[pause|resume|stop|budget <n>|clear|edit|help]', summary: '会话目标（无参查看；/<目标内容> 设立或改写；edit 回填续编）', run: cmdGoal },
+    { name: 'queue', argHint: '[send|drop <序号>|clear]', summary: '消息队列：生成中提交的消息在此排队（无参列出，send 立即发送，drop 移除）', run: cmdQueue },
     { name: 'btw', argHint: '<问题>', summary: '侧边对话：继承当前会话历史开聊，不落盘不进会话列表；Ctrl+/ 切换、Ctrl+C 丢弃', run: async (arg) => {
       const q = String(arg || '').trim();
       if (!q) { console.log(painter().warning('用法: /btw <问题>（侧边对话，继承当前会话历史，不落盘）')); return; }
@@ -418,6 +453,9 @@ export async function runTerminal({ argv = [] } = {}) {
     tokens: foot.tokens,
     cost: foot.cost,
     goal: (() => { const g = goals.get(meta.id); return g && g.status === 'active' ? goalUsageChip(g) : null; })(),
+    // 消息队列（#3212）：生成中提交的消息在服务端排队，footer 报个数即可（/queue 看明细）
+    queue: lineQueue.length,
+    busy,
   });
 
   // side=true 跑侧边对话：内存门面 store、不接管 goal、用量仍记真实账本

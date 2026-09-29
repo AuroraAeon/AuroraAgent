@@ -9,6 +9,7 @@ export const EVENT_TYPES = [
   'session_created',
   'session_renamed',
   'turn_started',
+  'turn_queued',
   'model_round_started',
   'text_chunk',
   'thinking_chunk',
@@ -31,6 +32,7 @@ export const EVENT_TYPES = [
   'turn_failed',
 ];
 
+/** 队列回执：活跃 turn 期间的新提交进 FIFO，客户端据此画等待条；position 为 1 based 队序 */
 /** 工具事件阶段：权限确认走 tool_event(confirmation_needed)，决策经 POST /api/agent/permission 回传 */
 export const TOOL_EVENT_PHASES = [
   'started',

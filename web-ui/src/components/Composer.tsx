@@ -14,7 +14,7 @@
  * 无参数命令回车即执行、带参数命令只补全；计划模式开关从工具栏挪进 /plan 命令，原位置改为状态提示芯片。 */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
-  Dots, IconArrowUp, IconAt, IconCheck, IconChevronDown, IconChevronRight, IconList, IconPaperclip, IconPlus, IconSpark, IconStop,
+  Dots, IconArrowRight, IconArrowUp, IconAt, IconCheck, IconChevronDown, IconChevronRight, IconClose, IconList, IconPaperclip, IconPlus, IconSpark, IconStop,
 } from '../icons';
 import { ControlTooltip } from '../ControlTooltip';
 import { Menu, MenuItem } from '../Menu';
@@ -27,6 +27,7 @@ import { MentionPalette } from './MentionPalette';
 import type { MentionItem } from './MentionPalette';
 import { searchFiles } from '../api';
 import { toast } from '../toast';
+import type { QueueItem } from '../types';
 
 /** 厂商标识：按模型 ID 前缀匹配（web.mjs 的 /vendor/ 白名单路由放行），接入新厂商时在此追加 */
 const VENDOR_MARKS: { match: string; icon: string }[] = [{ match: 'LongCat', icon: '/vendor/meituan.svg' }];
@@ -228,6 +229,10 @@ type Props = {
   planMode: boolean;
   /** 斜杠命令分发（/goal 家族走 onGoalCommand，其余命令走这里；技能调用由 App 直接发送） */
   onCommand?: (name: string, args: string) => void;
+  /** 消息队列（活跃 turn 期间提交、等待泵接力的消息）：位置 / 立即发送 / 移除 */
+  queue?: QueueItem[];
+  onQueuePromote?: (opId: string) => void;
+  onQueueRemove?: (opId: string) => void;
   skills: SkillRow[];
   sessionId: string | null;
   disabled: boolean;
@@ -240,6 +245,7 @@ type Props = {
 export function Composer({
   busy, onSend, onStop, models, modelStatus, model, onModel, providers, effort, onEffort, harnesses, harness, onHarness, disabled,
   permissionMode, onPermissionMode, titleMode, onTitleMode, planMode, onCommand, skills, sessionId, onGoalCommand, goalPrefill, focusNonce, pickerNonce,
+  queue = [], onQueuePromote, onQueueRemove,
 }: Props) {
   const [text, setText] = useState('');
   const [slashIdx, setSlashIdx] = useState(0);
@@ -320,7 +326,8 @@ export function Composer({
         }
       }
     }
-    if (busy) return;
+    // 生成中提交：入队等待前一条结算后由泵接力（本地化 #3212）——不再被「正在生成」挡回来
+    if (busy) { onSend(t); setText(''); return; }
     onSend(t);
     setText('');
   };
@@ -426,6 +433,35 @@ export function Composer({
           onClose={() => setMentionIdx(0)}
           onPick={insertMention}
         />
+      ) : null}
+      {queue.length ? (
+        <div className="composer-queue" role="status" aria-label={`消息队列，${queue.length} 条等待中`}>
+          <span className="composer-queue-t">队列 {queue.length}</span>
+          <ol className="composer-queue-list">
+            {queue.map((it, i) => (
+              <li className="composer-queue-item" key={it.opId}>
+                <span className="composer-queue-pos">{i + 1}</span>
+                <span className="composer-queue-text" title={it.text}>{it.text}</span>
+                <button
+                  type="button"
+                  className="iconbtn"
+                  aria-label={`立即发送：${it.text}`}
+                  onClick={() => onQueuePromote?.(it.opId)}
+                >
+                  <IconArrowRight size={13} />
+                </button>
+                <button
+                  type="button"
+                  className="iconbtn"
+                  aria-label={`移除：${it.text}`}
+                  onClick={() => onQueueRemove?.(it.opId)}
+                >
+                  <IconClose size={13} />
+                </button>
+              </li>
+            ))}
+          </ol>
+        </div>
       ) : null}
       <div className="composer-card">
         {slashOpen ? (

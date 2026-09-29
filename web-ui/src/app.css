@@ -600,6 +600,23 @@ html { font-size: var(--ui-font-size, 14px); }
 /* ---------- 输入区（排版复刻 ZCode ChatPromptEditor：壳 gap-3 / p-3 / rounded-2xl，
    工具栏 items-end gap-3，左组 flex-1 右组 ml-auto，入口统一 28px ghost 方钮） ---------- */
 .composer { padding:10px 20px 14px; }
+/* 消息队列条（#3212）：活跃 turn 期间提交的消息在输入区上方排队，可立即发送或移除 */
+.composer-queue {
+  max-width:840px; margin:0 auto 8px; display:flex; align-items:flex-start; gap:8px;
+  border:1px solid var(--line); border-radius:11px; background:var(--surface); padding:6px 8px;
+}
+.composer-queue-t {
+  flex:none; font-size:0.7857rem; color:var(--dim); padding:3px 6px; border-radius:7px;
+  background:var(--accent-soft); border:1px solid var(--accent-line);
+}
+.composer-queue-list { list-style:none; margin:0; padding:0; flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.composer-queue-item { display:flex; align-items:center; gap:7px; font-size:0.8571rem; }
+.composer-queue-pos {
+  flex:none; width:16px; height:16px; border-radius:5px; display:grid; place-items:center;
+  font-size:0.7143rem; color:var(--faint); background:var(--surface-hover);
+}
+.composer-queue-text { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--dim); }
+.composer-queue-item .iconbtn { flex:none; width:22px; height:22px; }
 .composer-card {
   position:relative;
   max-width:840px; margin:0 auto; background:var(--surface); border:1px solid var(--line-strong);
@@ -1085,6 +1102,40 @@ html[data-code-wrap="on"] .md pre { white-space:pre-wrap; overflow-x:visible; wo
   transition:color .15s var(--ease), border-color .15s var(--ease);
 }
 .pv-add:hover { color:var(--accent-hi); border-color:var(--accent-line); }
+.pv-addrow { display:flex; gap:8px; flex-wrap:wrap; }
+.pv-addrow .pv-add { flex:1; min-width:160px; }
+/* 提供方目录（provider-catalog.mjs）：左厂商右端点，未适配协议端点可见不可选 */
+.pv-cat { display:flex; gap:12px; align-items:flex-start; }
+.pv-cat-list {
+  list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:2px;
+  flex:1; min-width:0; max-height:320px; overflow-y:auto;
+}
+.pv-cat-item {
+  display:flex; flex-direction:column; gap:2px; width:100%; text-align:left; border:1px solid transparent;
+  border-radius:9px; background:none; color:var(--text); cursor:pointer; padding:8px 9px; font-family:inherit;
+  transition:background-color .15s var(--ease), color .15s var(--ease), border-color .15s var(--ease);
+}
+.pv-cat-item:hover { background:var(--surface); }
+.pv-cat-item.on { background:var(--accent-soft); border-color:var(--accent-line); }
+.pv-cat-nm { font-size:0.9286rem; font-weight:600; }
+.pv-cat-desc { color:var(--faint); font-size:0.7857rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pv-cat-eps { flex:1; min-width:0; display:flex; flex-direction:column; gap:6px; }
+.pv-cat-ep {
+  display:flex; align-items:center; gap:9px; padding:8px 9px; border:1px solid var(--line);
+  border-radius:9px; cursor:pointer; font-size:0.8571rem;
+  transition:border-color .15s var(--ease), background-color .15s var(--ease);
+}
+.pv-cat-ep:hover { border-color:var(--line-strong); }
+.pv-cat-ep.on { border-color:var(--accent-line); background:var(--accent-glow); }
+.pv-cat-ep.off { opacity:.55; cursor:not-allowed; }
+.pv-cat-ep input { accent-color:var(--accent); width:15px; height:15px; flex:none; }
+.pv-cat-ep-main { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
+.pv-cat-ep-label { display:flex; align-items:center; gap:6px; font-weight:600; font-size:0.9286rem; }
+.pv-cat-ep-main code {
+  color:var(--faint); font-size:0.7857rem; font-family:ui-monospace,Menlo,Consolas,monospace;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.pv-cat-models { color:var(--dim); font-size:0.7857rem; margin:2px 0 0; }
 /* MCP 管理面板（设置弹层） */
 .mcp-form {
   border:1px solid var(--accent-line); background:var(--accent-glow); border-radius:12px;
