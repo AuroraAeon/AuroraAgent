@@ -95,7 +95,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 | `npm run dev:web` | 前端开发态（vite 5173，`/api` 代理 8787） | 只动 `web-ui/` 时用 |
 | `npm run docs:dev` / `docs:build` / `docs:notes` | 文档站开发 / 构建 / 生成发布笔记 | 依赖例外仅 `docs-site/`，产物不提交 |
 | `npm run bench` / `bench:smoke` / `bench:full` | 性能基准（basic / smoke / full 套件） | 本地回归参考，不作 CI 门禁 |
-| `npm run build:web` | 构建前端产物到 `public/app/` | 改了 `web-ui/` 源码后必跑并提交产物 |
+| `npm run build:web` | 构建前端产物到 `public/app/` | 改了 `web-ui/` 源码后必跑并提交产物；源码修复 + 产物同一个常规提交直接落地，不必逐次询问用户 |
 | `npm run typecheck:web` | `web-ui` 类型检查（`tsc --noEmit`） | CI 不装 `web-ui` 依赖，故不入 `npm test`；本地改 `web-ui/` 后跑 |
 | `npm run chat` | 终端 Agent 会话 | 与网页共用 Loop / 会话 / 账本；斜杠命令含 `/plan` `/goal` `/btw` `/mcp` 与技能派生的 `/<技能名>` |
 | `npm run color` | 纯色识别测试 | 真实调用，按需 |

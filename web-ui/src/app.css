@@ -121,10 +121,17 @@ html { font-size: var(--ui-font-size, 14px); }
 
 /* 会话区（dsh regionArea + WorkspaceBrowser）：负外 margin 让滚动条溢出到栏边 */
 .sb-region { flex:1; min-height:0; display:flex; flex-direction:column; margin-left:-4px; margin-right:-12px; padding-left:4px; }
-.sb-sechead { height:36px; display:flex; align-items:center; justify-content:flex-end; gap:4px; margin:2px -4px 4px 0; padding-left:4px; border-radius:12px; color:var(--faint); flex:none; }
-.sb-seclabel { line-height:1.4286; white-space:nowrap; min-width:0; }
-.sb-search { display:flex; align-items:center; width:28px; height:28px; border-radius:50%; margin-left:auto; transition:width .18s var(--ease), border-color .18s var(--ease), background-color .18s var(--ease); }
-.sb-search.on { width:100%; height:30px; border:1px solid var(--line-strong); border-radius:10px; margin-inline:-2px; padding-right:4px; }
+/* 区头不是滚动区，左右都要回到栏体内容盒（12px 内边距那条边）：左 -4px + padding-left 4px
+   让「会话」标签与会话行左沿对齐；右 +12px 抵掉 .sb-region 的 margin-right:-12px（那是给
+   .sb-list 滚动条溢出到栏边用的，区头不参与）。写成 margin:2px -4px 4px 0 会把 -4px 落到右侧、
+   整行右探出栏边 4px，28px 圆钮直接被 .sb-panel 的 overflow:hidden 裁掉右边——搜索钮错位就是这么来的 */
+.sb-sechead { height:36px; display:flex; align-items:center; justify-content:flex-end; gap:4px; margin:2px 12px 4px -4px; padding-left:4px; border-radius:12px; color:var(--faint); flex:none; }
+.sb-seclabel { flex:none; line-height:1.4286; white-space:nowrap; min-width:0; }
+.sb-search { display:flex; align-items:center; width:28px; height:28px; border-radius:50%; margin-left:auto; flex:none; transition:width .18s var(--ease), border-color .18s var(--ease), background-color .18s var(--ease); }
+/* 展开态 width:100% 与「会话」标签同处一个 flex 行：标签必须 flex:none 不被压缩（否则中文被
+  挤窄、文字溢出压到输入框上），搜索框自己收缩补齐剩余宽度；也不做 margin-inline 负外探——
+   展开后左右沿与新建任务钮 / 会话行严格对齐，不再顶出栏边被裁 */
+.sb-search.on { flex:0 1 auto; width:100%; height:30px; border:1px solid var(--line-strong); border-radius:10px; padding-right:4px; }
 .sb-search-btn { width:28px; height:28px; border:0; border-radius:50%; background:none; color:inherit; display:grid; place-items:center; cursor:pointer; flex:none; }
 .sb-search-btn:hover { background:var(--sidebar-hover); }
 .sb-search.on .sb-search-btn { height:30px; }
