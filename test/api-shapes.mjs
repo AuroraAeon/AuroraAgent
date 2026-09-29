@@ -9,9 +9,10 @@
  */
 import { deepStrictEqual } from 'node:assert';
 import {
+  normalizeCatalogProviders,
   normalizeDiscoveredModels, normalizeErrorLogPage, normalizeFailoverQueue, normalizeFailoverSettings,
   normalizeFileSearch, normalizeHarnesses, normalizeHealthRows, normalizeModels, normalizeMcpServers,
-  normalizeProviderList, normalizeProviderRows, normalizeSessionDetail, normalizeSessionMetaResult,
+  normalizeProviderList, normalizeProviderRows, normalizeQueueItems, normalizeSessionDetail, normalizeSessionMetaResult,
   normalizeSessionResult, normalizeSessionRows, normalizeSessions, normalizeSettingsInfo, normalizeSideSession,
   normalizeTuiSaveResult, normalizeTuiSettings, normalizeUsageSummary,
 } from '../web-ui/src/api-shapes.mjs';
@@ -152,6 +153,42 @@ export async function runApiShapesTests(test, assert, eq) {
     eq(fo.failover.firstByteMs, 0, '负数超时钳为 0');
     eq(normalizeTuiSettings({ tui: { terminalTitle: 'state' } }).tui.terminalTitle.length, 0, 'terminalTitle 非数组回退空数组');
     // 崩点原式回放：旧形状响应过一遍归一化后，各面板的解引用表达式必须不抛
+    // 提供方目录（provider-catalog.mjs）：端点 / 模型必须是数组，supported 必须是布尔——
+    // ProvidersPanel 的 `p.endpoints.some(...)` 与 `.map` 直接吃这个响应
+    const cat = normalizeCatalogProviders([
+      { id: 'deepseek', name: 'DeepSeek', endpoints: [{ id: 'default', format: 'openai', supported: true, isDefault: true }], models: ['deepseek-v4-pro'] },
+      { id: 'bad', endpoints: 'x', models: 'y' },
+      null,
+    ]);
+    eq(cat.length, 2, 'catalog 非对象行剔除');
+    eq(cat[0].endpoints.length, 1, '端点数组保留');
+    eq(cat[0].endpoints[0].supported, true, 'supported 布尔保留');
+    eq(cat[0].models.length, 1, '模型数组保留');
+    eq(cat[1].endpoints.length, 0, 'endpoints 非数组回退空列表');
+    eq(cat[1].models.length, 0, 'models 非数组回退空列表');
+    eq(normalizeCatalogProviders(undefined).length, 0, '整个响应缺失回退空目录');
+    // 消息队列（util/agent/queue.mjs）：Composer 队列条直接 map items 并读 position / text
+    const q = normalizeQueueItems([
+      { opId: 'a', sessionId: 's1', text: '一', state: 'queued', at: 1 },
+      { opId: 'b', sessionId: 's1', text: '二', state: '怪状态', at: 'x' },
+      null,
+    ]);
+    eq(q.length, 2, '非对象行剔除');
+    eq(q[0].state, 'queued', '合法状态原样保留');
+    eq(q[1].state, 'queued', '未知状态回落 queued（不当成 running 吞掉）');
+    eq(q[1].at, 0, 'at 非数字回退 0');
+    eq(normalizeQueueItems(undefined).length, 0, '整个响应缺失回退空队列');
+    const renderQueue = () => {
+      const list = normalizeQueueItems({});
+      list.map((i, idx) => `${idx + 1}.${i.text}`) && list.map((i) => i.opId);
+    };
+    renderQueue();
+    const renderCat = () => {
+      const list = normalizeCatalogProviders({});
+      list.map((p) => p.endpoints.some((e) => e.supported && e.isDefault));
+      list.map((p) => p.models.map((m) => m.id));
+    };
+    renderCat();
     const render = () => {
       const s = normalizeSessions({});
       s.length && s.map((x) => x.name);

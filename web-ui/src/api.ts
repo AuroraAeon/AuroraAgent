@@ -1,13 +1,13 @@
 /** API 客户端：全部走 web.mjs 的同源 /api/*；turn 用 fetch 读 SSE（EventSource 不支持 POST） */
 import {
-  normalizeDiscoveredModels, normalizeErrorLogPage, normalizeFailoverQueue, normalizeFailoverSettings,
+  normalizeCatalogProviders, normalizeDiscoveredModels, normalizeErrorLogPage, normalizeFailoverQueue, normalizeFailoverSettings,
   normalizeFileSearch, normalizeHarnesses, normalizeHealthRows, normalizeModels, normalizeMcpServers, normalizeProviderList,
-  normalizeProviderRows, normalizeSessionDetail, normalizeSessionMetaResult, normalizeSessionResult,
+  normalizeProviderRows, normalizeQueueItems, normalizeSessionDetail, normalizeSessionMetaResult, normalizeSessionResult,
   normalizeSessions, normalizeSettingsInfo, normalizeSideSession, normalizeTuiSaveResult, normalizeTuiSettings,
   normalizeUsageSummary,
 } from './api-shapes.mjs';
 import { normalizeSkillRows } from './skill-rows.mjs';
-import type { AgentEvent, ErrorLogEntry, FailoverQueue, FailoverSettings, GoalState, UpdateInfo, Harness, McpServerRow, ModelInfo, ProviderRow, SessionMeta, SessionRecord, SettingsInfo, SkillRow, TuiSettings, UsageSummary, WorkspaceInfo } from './types';
+import type { AgentEvent, CatalogProvider, ErrorLogEntry, FailoverQueue, FailoverSettings, GoalState, UpdateInfo, Harness, McpServerRow, ModelInfo, ProviderRow, QueueItem, SessionMeta, SessionRecord, SettingsInfo, SkillRow, TuiSettings, UsageSummary, WorkspaceInfo } from './types';
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(path, {
@@ -40,6 +40,8 @@ export const reportErrorLog = (body: { kind: string; message: string; detail?: s
   api<{ ok: boolean; deduped?: boolean }>('/api/logs/errors', { method: 'POST', body: JSON.stringify(body) });
 // 响应形状可能在版本错配（后端进程旧于前端产物）或字段演进中漂移：边界归一化，缺字段走安全默认值
 export const listSkills = () => api<{ skills: SkillRow[] }>('/api/agent/skills').then((r) => normalizeSkillRows(r.skills));
+/** 提供方预设目录（只读；数据见 util/provider-catalog.mjs，协议门控在后端） */
+export const getProviderCatalog = () => api<{ providers: CatalogProvider[] }>('/api/providers/catalog').then((r) => normalizeCatalogProviders(r.providers));
 export const listHarnesses = () => api<{ harnesses: Harness[]; default: string }>('/api/agent/harnesses').then(normalizeHarnesses);
 export const listModels = () => api<{ models: ModelInfo[]; status: string }>('/api/models').then(normalizeModels);
 export const getSettings = () => api<SettingsInfo>('/api/settings').then(normalizeSettingsInfo);
@@ -126,8 +128,14 @@ export const goalAction = (sessionId: string, action: 'pause' | 'resume' | 'stop
 } = {}) =>
   api<{ goal: GoalState }>(`/api/agent/goal/${action}`, { method: 'POST', body: JSON.stringify({ sessionId, ...extra }) });
 
+export const getAgentQueue = (sessionId: string) =>
+  api<{ sessionId: string; items: QueueItem[] }>(`/api/agent/queue/${sessionId}`).then((r) => ({ sessionId: String(r.sessionId || ''), items: normalizeQueueItems(r.items) }));
+export const promoteQueueItem = (sessionId: string, opId: string) =>
+  api<{ ok: boolean }>('/api/agent/queue/promote', { method: 'POST', body: JSON.stringify({ sessionId, opId }) });
+export const removeQueueItem = (sessionId: string, opId: string) =>
+  api<{ ok: boolean }>('/api/agent/queue/remove', { method: 'POST', body: JSON.stringify({ sessionId, opId }) });
 /** 跑一个 turn：逐事件回调，流结束即 resolve */
-export async function runTurn(body: { sessionId: string; input: string; thinking?: boolean; model?: string; provider?: string; side?: boolean }, onEvent: (ev: AgentEvent) => void): Promise<void> {
+export async function runTurn(body: { sessionId: string; input: string; opId?: string; thinking?: boolean; model?: string; provider?: string; side?: boolean }, onEvent: (ev: AgentEvent) => void): Promise<void> {
   const resp = await fetch('/api/agent/turn', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

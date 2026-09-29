@@ -56,6 +56,35 @@ export function normalizeProviderRows(raw) {
   }));
 }
 
+/** 提供方预设目录行（CatalogProvider）：端点与模型保证是数组，协议门控标记保证是布尔 */
+export function normalizeCatalogProviders(raw) {
+  return rows(raw, (p) => ({
+    id: asString(p?.id),
+    name: asString(p?.name),
+    description: asString(p?.description),
+    endpoints: asArray(p?.endpoints).filter((e) => e && typeof e === 'object').map((e) => ({
+      id: asString(e.id),
+      baseUrl: asString(e.baseUrl),
+      format: asString(e.format),
+      label: asString(e.label),
+      isDefault: asBool(e.isDefault, false),
+      supported: asBool(e.supported, false),
+    })),
+    models: asStringArray(p?.models),
+  }));
+}
+
+/** 消息队列行（QueueItem）：文本与 opId 保证是字符串，state 归一（未知值回落 queued） */
+export function normalizeQueueItems(raw) {
+  return rows(raw, (i) => ({
+    opId: asString(i?.opId),
+    sessionId: asString(i?.sessionId),
+    text: asString(i?.text),
+    state: ['queued', 'running', 'held', 'done', 'failed'].includes(i?.state) ? i.state : 'queued',
+    at: asCount(i?.at),
+  }));
+}
+
 /** 会话行（SessionMeta）：rules / todos 保证是数组，计数字段保证是数字 */
 export function normalizeSessionRows(raw) {
   return rows(raw, (s) => ({

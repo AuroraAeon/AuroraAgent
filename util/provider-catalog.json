@@ -1,0 +1,708 @@
+{
+  "schema": 1,
+  "source": "OpenBitFun v1.0.2 src/shared/ai-provider-catalog/providers.json（剔除 openbitfun 自家网关；reasoning_catalog_bindings 未迁）",
+  "providers": [
+    {
+      "id": "deepseek",
+      "order": 10,
+      "region": "cn",
+      "name": {
+        "zh-CN": "DeepSeek",
+        "en-US": "DeepSeek",
+        "zh-TW": "DeepSeek"
+      },
+      "description": {
+        "zh-CN": "DeepSeek 系列模型",
+        "en-US": "DeepSeek series models",
+        "zh-TW": "DeepSeek 系列模型"
+      },
+      "endpoints": [
+        {
+          "id": "default",
+          "baseUrl": "https://api.deepseek.com/v1",
+          "format": "openai",
+          "default": true,
+          "label": {
+            "zh-CN": "OpenAI格式-默认",
+            "en-US": "OpenAI Format - Default",
+            "zh-TW": "OpenAI格式-默認"
+          }
+        },
+        {
+          "id": "anthropic",
+          "baseUrl": "https://api.deepseek.com/anthropic",
+          "format": "anthropic",
+          "label": {
+            "zh-CN": "Anthropic格式",
+            "en-US": "Anthropic Format",
+            "zh-TW": "Anthropic格式"
+          }
+        }
+      ],
+      "models": [
+        "deepseek-v4-flash",
+        "deepseek-v4-pro"
+      ]
+    },
+    {
+      "id": "zhipu",
+      "order": 20,
+      "region": "cn",
+      "name": {
+        "zh-CN": "智谱AI",
+        "en-US": "Zhipu AI",
+        "zh-TW": "智譜AI"
+      },
+      "description": {
+        "zh-CN": "智谱AI GLM 系列模型",
+        "en-US": "Zhipu AI GLM series models",
+        "zh-TW": "智譜AI GLM 系列模型"
+      },
+      "endpoints": [
+        {
+          "id": "default",
+          "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+          "format": "openai",
+          "default": true,
+          "label": {
+            "zh-CN": "国内-OpenAI格式-默认",
+            "en-US": "China - OpenAI Format - Default",
+            "zh-TW": "國內-OpenAI格式-默認"
+          }
+        },
+        {
+          "id": "anthropic",
+          "baseUrl": "https://open.bigmodel.cn/api/anthropic",
+          "format": "anthropic",
+          "label": {
+            "zh-CN": "国内-Anthropic格式",
+            "en-US": "China - Anthropic Format",
+            "zh-TW": "國內-Anthropic格式"
+          }
+        },
+        {
+          "id": "coding-plan",
+          "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
+          "format": "openai",
+          "label": {
+            "zh-CN": "国内-Coding Plan",
+            "en-US": "China - Coding Plan",
+            "zh-TW": "國內-Coding Plan"
+          }
+        },
+        {
+          "id": "international",
+          "baseUrl": "https://api.z.ai/api/paas/v4",
+          "format": "openai",
+          "label": {
+            "zh-CN": "国际站 · OpenAI 格式",
+            "en-US": "International - OpenAI Format",
+            "zh-TW": "國際站 - OpenAI 格式"
+          }
+        },
+        {
+          "id": "international-anthropic",
+          "baseUrl": "https://api.z.ai/api/anthropic",
+          "format": "anthropic",
+          "label": {
+            "zh-CN": "国际站 · Anthropic 格式",
+            "en-US": "International - Anthropic Format",
+            "zh-TW": "國際站 - Anthropic 格式"
+          }
+        },
+        {
+          "id": "international-coding-plan",
+          "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+          "format": "openai",
+          "label": {
+            "zh-CN": "国际站 · coding-plan",
+            "en-US": "International - coding-plan",
+            "zh-TW": "國際站 - coding-plan"
+          }
+        }
+      ],
+      "models": [
+        "glm-5.2",
+        "glm-5.1",
+        "glm-5"
+      ]
+    },
+    {
+      "id": "moonshot",
+      "order": 30,
+      "region": "cn",
+      "name": {
+        "zh-CN": "月之暗面",
+        "en-US": "Moonshot AI",
+        "zh-TW": "月之暗面"
+      },
+      "description": {
+        "zh-CN": "月之暗面 Kimi 系列模型",
+        "en-US": "Moonshot Kimi series models",
+        "zh-TW": "月之暗面 Kimi 系列模型"
+      },
+      "endpoints": [
+        {
+          "id": "default",
+          "baseUrl": "https://api.moonshot.cn/v1",
+          "format": "openai",
+          "default": true,
+          "label": {
+            "zh-CN": "国内-OpenAI格式-默认",
+            "en-US": "China - OpenAI Format - Default",
+            "zh-TW": "國內-OpenAI格式-默認"
+          }
+        },
+        {
+          "id": "anthropic",
+          "baseUrl": "https://api.moonshot.cn/anthropic",
+          "format": "anthropic",
+          "label": {
+            "zh-CN": "国内-Anthropic格式",
+            "en-US": "China - Anthropic Format",
+            "zh-TW": "國內-Anthropic格式"
+          }
+        },
+        {
+          "id": "international",
+          "baseUrl": "https://api.moonshot.ai/v1",
+          "format": "openai",
+          "label": {
+            "zh-CN": "国际站 · OpenAI 格式",
+            "en-US": "International - OpenAI Format",
+            "zh-TW": "國際站 - OpenAI 格式"
+          }
+        },
+        {
+          "id": "international-anthropic",
+          "baseUrl": "https://api.moonshot.ai/anthropic",
+          "format": "anthropic",
+          "label": {
+            "zh-CN": "国际站 · Anthropic 格式",
+            "en-US": "International - Anthropic Format",
+            "zh-TW": "國際站 - Anthropic 格式"
+          }
+        },
+        {
+          "id": "kimi-for-coding",
+          "baseUrl": "https://api.kimi.com/coding",
+          "format": "anthropic",
+          "label": {
+            "zh-CN": "Kimi For Coding 套餐（模型 k3 / kimi-for-coding）",
+            "en-US": "Kimi For Coding plan (models: k3 / kimi-for-coding)",
+            "zh-TW": "Kimi For Coding 套餐（模型 k3 / kimi-for-coding）"
+          }
+        }
+      ],
+      "models": [
+        "kimi-k3",
+        "kimi-k2.7-code",
+        "kimi-k2.6"
+      ]
+    },
+    {
+      "id": "minimax",
+      "order": 40,
+      "region": "cn",
+      "name": {
+        "zh-CN": "MiniMax",
+        "en-US": "MiniMax",
+        "zh-TW": "MiniMax"
+      },
+      "description": {
+        "zh-CN": "MiniMax 系列模型",
+        "en-US": "MiniMax series models",
+        "zh-TW": "MiniMax 系列模型"
+      },
+      "endpoints": [
+        {
+          "id": "default",
+          "baseUrl": "https://api.minimaxi.com/anthropic",
+          "format": "anthropic",
+          "default": true,
+          "label": {
+            "zh-CN": "国内-Anthropic格式-默认",
+            "en-US": "China - Anthropic Format - Default",
+            "zh-TW": "國內-Anthropic格式-默認"
+          }
+        },
+        {
+          "id": "openai",
+          "baseUrl": "https://api.minimaxi.com/v1",
+          "format": "openai",
+          "label": {
+            "zh-CN": "国内-OpenAI兼容格式",
+            "en-US": "China - OpenAI Compatible",
+            "zh-TW": "國內-OpenAI兼容格式"
+          }
+        },
+        {
+          "id": "international",
+          "baseUrl": "https://api.minimax.io/anthropic",
+          "format": "anthropic",
+          "label": {
+            "zh-CN": "国际站 · Anthropic 格式",
+            "en-US": "International - Anthropic Format",
+            "zh-TW": "國際站 - Anthropic 格式"
+          }
+        },
+        {
+          "id": "international-openai",
+          "baseUrl": "https://api.minimax.io/v1",
+          "format": "openai",
+          "label": {
+            "zh-CN": "国际站 · OpenAI 格式",
+            "en-US": "International - OpenAI Format",
+            "zh-TW": "國際站 - OpenAI 格式"
+          }
+        }
+      ],
+      "models": [
+        "MiniMax-M3",
+        "MiniMax-M2.7",
+        "MiniMax-M2.7-highspeed"
+      ]
+    },
+    {
+      "id": "qwen",
+      "order": 50,
+      "region": "cn",
+      "name": {
+        "zh-CN": "通义千问",
+        "en-US": "Qwen",
+        "zh-TW": "通義千問"
+      },
+      "description": {
+        "zh-CN": "阿里云百炼大模型平台",
+        "en-US": "Alibaba Cloud Bailian Model Platform",
+        "zh-TW": "阿里雲百鍊大模型平臺"
+      },
+      "endpoints": [
+        {
+          "id": "default",
+          "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "format": "openai",
+          "default": true,
+          "label": {
+            "zh-CN": "国内-OpenAI格式-默认",
+            "en-US": "China - OpenAI Format - Default",
+            "zh-TW": "國內-OpenAI格式-默認"
+          }
+        },
+        {
+          "id": "international",
+          "baseUrl": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+          "format": "openai",
+          "label": {
+            "zh-CN": "国际站 · OpenAI 格式",
+            "en-US": "International - OpenAI Format",
+            "zh-TW": "國際站 - OpenAI 格式"
+          }
+        },
+        {
+          "id": "coding-plan",
+          "baseUrl": "https://coding.dashscope.aliyuncs.com/v1",
+          "format": "openai",
+          "label": {
+            "zh-CN": "国内-Coding Plan",
+            "en-US": "China - Coding Plan",
+            "zh-TW": "國內-Coding Plan"
+          }
+        },
+        {
+          "id": "coding-plan-anthropic",
+          "baseUrl": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+          "format": "anthropic",
+          "label": {
+            "zh-CN": "国内-Coding Plan-Anthropic格式",
+            "en-US": "China - Coding Plan - Anthropic Format",
+            "zh-TW": "國內-Coding Plan-Anthropic格式"
+          }
+        },
+        {
+          "id": "international-coding-plan",
+          "baseUrl": "https://coding-intl.dashscope.aliyuncs.com/v1",
+          "format": "openai",
+          "label": {
+            "zh-CN": "国际站 · coding-plan",
+            "en-US": "International - coding-plan",
+            "zh-TW": "國際站 - coding-plan"
+          }
+        }
+      ],
+      "models": [
+        "qwen3.7-plus",
+        "qwen3.7-max",
+        "qwen3.6-flash"
+      ]
+    },
+    {
+      "id": "volcengine",
+      "order": 60,
+      "region": "cn",
+      "name": {
+        "zh-CN": "火山引擎",
+        "en-US": "Volcano Engine",
+        "zh-TW": "火山引擎"
+      },
+      "description": {
+        "zh-CN": "字节跳动火山引擎大模型平台",
+        "en-US": "ByteDance Volcano Engine Model Platform",
+        "zh-TW": "字節跳動火山引擎大模型平臺"
+      },
+      "endpoints": [
+        {
+          "id": "default",
+          "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+          "format": "openai",
+          "default": true,
+          "label": {
+            "zh-CN": "国内-默认",
+            "en-US": "China - Default",
+            "zh-TW": "國內-默認"
+          }
+        },
+        {
+          "id": "coding-plan",
+          "baseUrl": "https://ark.cn-beijing.volces.com/api/coding/v3",
+          "format": "openai",
+          "label": {
+            "zh-CN": "国内-Coding Plan",
+            "en-US": "China - Coding Plan",
+            "zh-TW": "國內-Coding Plan"
+          }
+        },
+        {
+          "id": "international",
+          "baseUrl": "https://ark.ap-southeast.bytepluses.com/api/v3",
+          "format": "openai",
+          "label": {
+            "zh-CN": "国际站 · OpenAI 格式",
+            "en-US": "International - OpenAI Format",
+            "zh-TW": "國際站 - OpenAI 格式"
+          }
+        }
+      ],
+      "models": [
+        "doubao-seed-2-1-pro-260628",
+        "doubao-seed-2-0-code-preview-260215",
+        "doubao-seed-2-0-pro-260215"
+      ]
+    },
+    {
+      "id": "xiaomi",
+      "order": 65,
+      "region": "cn",
+      "name": {
+        "zh-CN": "Xiaomi MiMo",
+        "en-US": "Xiaomi MiMo",
+        "zh-TW": "Xiaomi MiMo"
+      },
+      "description": {
+        "zh-CN": "小米 MiMo 系列模型，API 与 Token Plan 密钥不可混用。",
+        "en-US": "Xiaomi MiMo models. API and Token Plan keys are separate.",
+        "zh-TW": "小米 MiMo 系列模型，API 與 Token Plan 金鑰不可混用。"
+      },
+      "endpoints": [
+        {
+          "id": "default",
+          "baseUrl": "https://api.xiaomimimo.com/v1",
+          "format": "openai",
+          "default": true,
+          "label": {
+            "zh-CN": "API - OpenAI Chat Completions（默认）",
+            "en-US": "API - OpenAI Chat Completions - Default",
+            "zh-TW": "API - OpenAI Chat Completions（預設）"
+          }
+        },
+        {
+          "id": "responses",
+          "baseUrl": "https://api.xiaomimimo.com/v1/responses",
+          "format": "responses",
+          "label": {
+            "zh-CN": "API - OpenAI Responses",
+            "en-US": "API - OpenAI Responses",
+            "zh-TW": "API - OpenAI Responses"
+          }
+        },
+        {
+          "id": "anthropic",
+          "baseUrl": "https://api.xiaomimimo.com/anthropic",
+          "format": "anthropic",
+          "label": {
+            "zh-CN": "API - Anthropic Messages",
+            "en-US": "API - Anthropic Messages",
+            "zh-TW": "API - Anthropic Messages"
+          }
+        },
+        {
+          "id": "token-plan",
+          "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
+          "format": "openai",
+          "label": {
+            "zh-CN": "国内 - Token Plan - OpenAI",
+            "en-US": "China - Token Plan - OpenAI",
+            "zh-TW": "中國 - Token Plan - OpenAI"
+          }
+        },
+        {
+          "id": "token-plan-anthropic",
+          "baseUrl": "https://token-plan-cn.xiaomimimo.com/anthropic",
+          "format": "anthropic",
+          "label": {
+            "zh-CN": "国内 - Token Plan - Anthropic",
+            "en-US": "China - Token Plan - Anthropic",
+            "zh-TW": "中國 - Token Plan - Anthropic"
+          }
+        }
+      ],
+      "models": [
+        "mimo-v2.6-pro",
+        "mimo-v2.6-flash",
+        "mimo-v2.6-pro-ultraspeed",
+        "mimo-v2.5-pro",
+        "mimo-v2.5"
+      ]
+    },
+    {
+      "id": "gemini",
+      "order": 70,
+      "region": "global",
+      "name": {
+        "zh-CN": "Google Gemini",
+        "en-US": "Google Gemini",
+        "zh-TW": "Google Gemini"
+      },
+      "description": {
+        "zh-CN": "Google Gemini 系列模型",
+        "en-US": "Google Gemini series models",
+        "zh-TW": "Google Gemini 系列模型"
+      },
+      "endpoints": [
+        {
+          "id": "default",
+          "baseUrl": "https://generativelanguage.googleapis.com",
+          "format": "gemini",
+          "default": true,
+          "label": {
+            "zh-CN": "Gemini 格式 · 默认",
+            "en-US": "Gemini Format - Default",
+            "zh-TW": "Gemini 格式 - 默認"
+          }
+        }
+      ],
+      "models": [
+        "gemini-3.1-pro-preview",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite"
+      ]
+    },
+    {
+      "id": "anthropic",
+      "order": 80,
+      "region": "global",
+      "name": {
+        "zh-CN": "Anthropic Claude",
+        "en-US": "Anthropic Claude",
+        "zh-TW": "Anthropic Claude"
+      },
+      "description": {
+        "zh-CN": "Anthropic Claude 系列模型",
+        "en-US": "Anthropic Claude series models",
+        "zh-TW": "Anthropic Claude 系列模型"
+      },
+      "endpoints": [
+        {
+          "id": "default",
+          "baseUrl": "https://api.anthropic.com",
+          "format": "anthropic",
+          "default": true,
+          "label": {
+            "zh-CN": "Anthropic 格式 · 默认",
+            "en-US": "Anthropic Format - Default",
+            "zh-TW": "Anthropic 格式 - 默認"
+          }
+        }
+      ],
+      "models": [
+        "claude-opus-5",
+        "claude-fable-5",
+        "claude-sonnet-5",
+        "claude-haiku-4-5"
+      ]
+    },
+    {
+      "id": "siliconflow",
+      "order": 90,
+      "region": "cn",
+      "name": {
+        "zh-CN": "硅基流动",
+        "en-US": "SiliconFlow",
+        "zh-TW": "硅基流動"
+      },
+      "description": {
+        "zh-CN": "硅基流动大模型平台",
+        "en-US": "SiliconFlow Model Platform",
+        "zh-TW": "硅基流動大模型平臺"
+      },
+      "endpoints": [
+        {
+          "id": "default",
+          "baseUrl": "https://api.siliconflow.cn/v1",
+          "format": "openai",
+          "default": true,
+          "label": {
+            "zh-CN": "国内-OpenAI格式-默认",
+            "en-US": "China - OpenAI Format - Default",
+            "zh-TW": "國內-OpenAI格式-默認"
+          }
+        },
+        {
+          "id": "anthropic",
+          "baseUrl": "https://api.siliconflow.cn/v1/messages",
+          "format": "anthropic",
+          "label": {
+            "zh-CN": "国内-Anthropic格式",
+            "en-US": "China - Anthropic Format",
+            "zh-TW": "國內-Anthropic格式"
+          }
+        },
+        {
+          "id": "international",
+          "baseUrl": "https://api.siliconflow.com/v1",
+          "format": "openai",
+          "label": {
+            "zh-CN": "国际站 · OpenAI 格式",
+            "en-US": "International - OpenAI Format",
+            "zh-TW": "國際站 - OpenAI 格式"
+          }
+        }
+      ],
+      "models": [
+        "zai-org/GLM-5.2",
+        "deepseek-ai/DeepSeek-V4-Pro",
+        "deepseek-ai/DeepSeek-V4-Flash"
+      ]
+    },
+    {
+      "id": "nvidia",
+      "order": 100,
+      "region": "global",
+      "name": {
+        "zh-CN": "NVIDIA",
+        "en-US": "NVIDIA",
+        "zh-TW": "NVIDIA"
+      },
+      "description": {
+        "zh-CN": "NVIDIA NIM 大模型平台",
+        "en-US": "NVIDIA NIM Model Platform",
+        "zh-TW": "NVIDIA NIM 大模型平臺"
+      },
+      "endpoints": [
+        {
+          "id": "default",
+          "baseUrl": "https://integrate.api.nvidia.com/v1",
+          "format": "openai",
+          "default": true,
+          "label": {
+            "zh-CN": "OpenAI 格式 · 默认",
+            "en-US": "OpenAI Format - Default",
+            "zh-TW": "OpenAI 格式 - 默認"
+          }
+        }
+      ],
+      "models": []
+    },
+    {
+      "id": "openrouter",
+      "order": 110,
+      "region": "global",
+      "name": {
+        "zh-CN": "OpenRouter",
+        "en-US": "OpenRouter",
+        "zh-TW": "OpenRouter"
+      },
+      "description": {
+        "zh-CN": "OpenRouter 大模型平台",
+        "en-US": "OpenRouter Model Platform",
+        "zh-TW": "OpenRouter 大模型平臺"
+      },
+      "endpoints": [
+        {
+          "id": "default",
+          "baseUrl": "https://openrouter.ai/api/v1",
+          "format": "openai",
+          "default": true,
+          "label": {
+            "zh-CN": "OpenAI 格式 · 默认",
+            "en-US": "OpenAI Format - Default",
+            "zh-TW": "OpenAI 格式 - 默認"
+          }
+        }
+      ],
+      "models": []
+    },
+    {
+      "id": "tokendance",
+      "order": 120,
+      "region": "cn",
+      "name": {
+        "zh-CN": "词元跳动",
+        "en-US": "TokenDance",
+        "zh-TW": "詞元跳動"
+      },
+      "description": {
+        "zh-CN": "统一的大模型 API 网关",
+        "en-US": "Unified AI model gateway",
+        "zh-TW": "統一的大模型 API 閘道"
+      },
+      "endpoints": [
+        {
+          "id": "default",
+          "baseUrl": "https://tokendance.space/gateway/v1",
+          "format": "openai",
+          "default": true,
+          "label": {
+            "zh-CN": "OpenAI 格式 · 默认",
+            "en-US": "OpenAI Format - Default",
+            "zh-TW": "OpenAI 格式 - 默認"
+          }
+        }
+      ],
+      "models": [
+        "glm-5.2",
+        "deepseek-v4-flash",
+        "deepseek-v4-pro"
+      ]
+    },
+    {
+      "id": "opencode-go",
+      "order": 140,
+      "region": "any",
+      "name": {
+        "zh-CN": "OpenCode Go",
+        "en-US": "OpenCode Go",
+        "zh-TW": "OpenCode Go"
+      },
+      "description": {
+        "zh-CN": "OpenCode 推出的模型订阅套餐。",
+        "en-US": "A model subscription plan from OpenCode.",
+        "zh-TW": "OpenCode 推出的模型訂閱方案。"
+      },
+      "endpoints": [
+        {
+          "id": "default",
+          "baseUrl": "https://opencode.ai/zen/go/v1",
+          "format": "openai",
+          "default": true,
+          "label": {
+            "zh-CN": "OpenAI 格式 · 默认",
+            "en-US": "OpenAI Format - Default",
+            "zh-TW": "OpenAI 格式 - 默認"
+          }
+        }
+      ],
+      "models": []
+    }
+  ]
+}

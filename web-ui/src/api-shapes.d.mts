@@ -1,7 +1,7 @@
 /** api-shapes.mjs 的类型声明（实现是零依赖纯函数，Node 测试直接 import 同一份）。 */
 import type {
-  CircuitHealth, ErrorLogEntry, FailoverQueue, FailoverSettings, Harness, McpServerRow,
-  ModelInfo, ProviderRow, SessionMeta, SessionRecord, SettingsInfo, TuiSettings, UsageSummary,
+  CatalogProvider, CircuitHealth, ErrorLogEntry, FailoverQueue, FailoverSettings, Harness, McpServerRow,
+  ModelInfo, ProviderRow, QueueItem, SessionMeta, SessionRecord, SettingsInfo, TuiSettings, UsageSummary,
 } from './types';
 
 /** 模型目录行（ModelInfo） */
@@ -9,6 +9,10 @@ export declare function normalizeModelRows(raw: unknown): ModelInfo[];
 
 /** 提供方行（ProviderRow） */
 export declare function normalizeProviderRows(raw: unknown): ProviderRow[];
+export declare function normalizeCatalogProviders(raw: unknown): CatalogProvider[];
+
+/** 消息队列行（QueueItem） */
+export declare function normalizeQueueItems(raw: unknown): QueueItem[];
 
 /** 会话行（SessionMeta） */
 export declare function normalizeSessionRows(raw: unknown): SessionMeta[];

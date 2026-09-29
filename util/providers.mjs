@@ -7,6 +7,11 @@
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { catalogProviders, catalogPresetDraft, SUPPORTED_FORMATS } from './provider-catalog.mjs';
+
+// 提供方预设目录（数据迁移自 OpenBitFun v1.0.2 #3186）：目录只是端点 / 模型 ID 的预设数据，
+// 协议门控与 Token Plan 的「一家族一预设一密钥」映射都在 provider-catalog.mjs
+export { catalogProviders, catalogPresetDraft, SUPPORTED_FORMATS };
 
 /** 支持的线路协议（与 dsh 的质问能力对齐：OpenAI 兼容 + Anthropic Messages） */
 export const PROTOCOLS = [
@@ -539,6 +544,12 @@ export async function handleProviderApi(req, res, url, ctx) {
 
   if (req.method === 'GET' && url === '/api/providers') {
     json(res, 200, { ok: true, protocols: PROTOCOLS, providers: store.list() });
+    return true;
+  }
+
+  // 提供方预设目录（只读）：供设置页「从目录添加」预填端点 / 协议 / 模型 ID
+  if (req.method === 'GET' && url === '/api/providers/catalog') {
+    json(res, 200, { ok: true, supportedFormats: SUPPORTED_FORMATS, providers: catalogProviders() });
     return true;
   }
 

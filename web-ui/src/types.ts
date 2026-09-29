@@ -4,6 +4,7 @@ export type ToolPhase = 'started' | 'params_partial' | 'confirmation_needed' | '
 export type AgentEvent =
   | { type: 'session_renamed'; sessionId: string; name: string; mode?: 'local' | 'model' }
   | { type: 'turn_started'; sessionId: string; turnId: string; turnIndex: number; userInput: string; model: string; provider: string; harness: string }
+  | { type: 'turn_queued'; sessionId: string; opId: string; position: number; input: string; duplicate?: boolean }
   | { type: 'model_round_started'; sessionId: string; turnId: string; round: number }
   | { type: 'text_chunk'; sessionId: string; turnId: string; text: string }
   | { type: 'thinking_chunk'; sessionId: string; turnId: string; text: string }
@@ -88,6 +89,18 @@ export type ProviderRow = {
   builtin: boolean; hasKey: boolean; model: string; models: ModelInfo[]; price?: { input?: number; output?: number };
   /** 故障转移队列位置（-1 = 不在队列）；队列是用户编排的优先级，见 util/providers.mjs */
   failoverIndex?: number;
+};
+
+/** 提供方预设目录条目（数据迁移自 OpenBitFun v1.0.2 #3186，见 util/provider-catalog.mjs）：
+ *  supported=false 的端点（gemini / responses 格式）本地 wire 层未实现，只展示不可激活 */
+/** 消息队列项（util/agent/queue.mjs，本地化 #3212 / #3220）：活跃 turn 期间提交、等待泵接力 */
+export type QueueItem = { opId: string; sessionId: string; text: string; state: string; at: number };
+
+export type CatalogEndpoint = {
+  id: string; baseUrl: string; format: string; label: string; isDefault: boolean; supported: boolean;
+};
+export type CatalogProvider = {
+  id: string; name: string; description: string; endpoints: CatalogEndpoint[]; models: string[];
 };
 
 /** 熔断器三态（对齐 util/llm/circuit.mjs）：closed 正常 / open 开闸跳过 / half_open 放行探测 */
