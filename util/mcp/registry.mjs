@@ -29,14 +29,39 @@ export function saveMcpServers(dataDir, servers) {
   renameSync(tmp, join(dataDir, MCP_FILE));
 }
 
+/** 传输类型归一化（对齐 OpenBitFun v1.0.2 #3156 / #3164）：MCP 生态里 streamableHttp 是事实标准拼写，
+ *  大小写、连字符与下划线变体一律接受；无法识别返回 null，由调用方报「类型无法识别」而不是
+ *  静默当成 stdio 再报一句「缺启动命令」（那会把粘贴失误引向完全错误的方向）。
+ *  sse 归一到 http：本地 HTTP 传输本来就兼容「直接 JSON 或 SSE 流」两种响应形态。 */
+export function normalizeTransport(raw) {
+  const key = String(raw ?? '').trim().toLowerCase().replace(/[\s_-]/g, '');
+  if (!key) return null;
+  if (key === 'http' || key === 'streamablehttp' || key === 'sse') return 'http';
+  if (key === 'stdio') return 'stdio';
+  return null;
+}
+
+/** source 字段大小写归一化（#3164）：外部配置常写成 Source / SOURCE，落盘前统一成小写 */
+export function normalizeTransportSource(raw) {
+  const value = String(raw ?? '').trim().toLowerCase();
+  return value ? value.slice(0, 60) : '';
+}
+
 /** 草稿校验：返回 { ok, server?, errors: {字段: 中文原因} } */
 export function validateServerDraft(draft) {
   const errors = {};
   const id = String(draft.id || '').trim();
   if (!ID_RE.test(id)) errors.id = 'ID 只能用字母、数字与 . _ -，最长 48 字符';
   const name = String(draft.name || '').trim().slice(0, 60) || id;
-  const transport = draft.transport === 'http' ? 'http' : 'stdio';
+  const rawTransport = String(draft.transport ?? '').trim();
+  const want = normalizeTransport(rawTransport);
+  if (rawTransport && !want) {
+    errors.transport = `无法识别的传输类型：${rawTransport}（可用 stdio / http；streamableHttp、streamable-http 等变体也接受）`;
+  }
+  const transport = want || 'stdio';
   const server = { id, name, transport, enabled: draft.enabled !== false };
+  const source = normalizeTransportSource(draft.source);
+  if (source) server.source = source;
   if (transport === 'stdio') {
     const command = String(draft.command || '').trim();
     if (!command) errors.command = 'stdio 传输必须填写启动命令';

@@ -5,10 +5,10 @@ import {
   IconAlert, IconArrowDown, IconArrowUp, IconCheck, IconClose, IconKey, IconPlus, IconSearch,
 } from '../icons';
 import {
-  createProvider, deleteProvider, discoverModels, getFailoverQueue, listProviders, saveFailoverQueue, updateProvider,
+  createProvider, deleteProvider, discoverModels, getFailoverQueue, getProviderCatalog, listProviders, saveFailoverQueue, updateProvider,
 } from '../api';
-import type { ProviderRow } from '../types';
-import { ProviderEditor, draftToPayload, fmtCap, validateDraft, type Candidate, type Draft } from './ProviderEditor';
+import type { CatalogProvider, ProviderRow } from '../types';
+import { ProviderEditor, DEFAULT_CONTEXT_WINDOW, draftToPayload, fmtCap, validateDraft, type Candidate, type Draft } from './ProviderEditor';
 import { toast } from '../toast';
 
 const emptyDraft = (protocol = 'openai'): Draft => ({
@@ -35,6 +35,7 @@ type Props = {
 export function ProvidersPanel({ onProvidersChanged }: Props) {
   const pickRef = useRef<HTMLDialogElement>(null);
   const delRef = useRef<HTMLDialogElement>(null);
+  const catRef = useRef<HTMLDialogElement>(null);
 
   const [providers, setProviders] = useState<ProviderRow[]>([]);
   const [protocols, setProtocols] = useState<{ id: string; label: string }[]>([]);
@@ -47,6 +48,12 @@ export function ProvidersPanel({ onProvidersChanged }: Props) {
   const [discoverError, setDiscoverError] = useState('');
   const [picker, setPicker] = useState<{ models: Candidate[]; picked: Set<string>; q: string } | null>(null);
   const [delTarget, setDelTarget] = useState<{ id: string; name: string } | null>(null);
+  // 提供方目录（util/provider-catalog.mjs，迁移自 OBF #3186）：按厂商预填端点 / 协议 / 模型 ID
+  const [catOpen, setCatOpen] = useState(false);
+  const [catList, setCatList] = useState<CatalogProvider[]>([]);
+  const [catError, setCatError] = useState('');
+  const [catPick, setCatPick] = useState('');
+  const [catEp, setCatEp] = useState('');
   // 故障转移队列（providers.json 顶层 failoverQueue）：顺序即优先级，内置提供方亦可入队
   const [queue, setQueue] = useState<string[]>([]);
   const [queuePick, setQueuePick] = useState('');
@@ -68,6 +75,13 @@ export function ProvidersPanel({ onProvidersChanged }: Props) {
     if (picker && !p.open) p.showModal();
     if (!picker && p.open) p.close();
   }, [picker]);
+
+  useEffect(() => {
+    const d = catRef.current;
+    if (!d) return;
+    if (catOpen && !d.open) d.showModal();
+    if (!catOpen && d.open) d.close();
+  }, [catOpen]);
 
   useEffect(() => {
     const d = delRef.current;
@@ -129,10 +143,10 @@ export function ProvidersPanel({ onProvidersChanged }: Props) {
       const hit = next.find((m) => m.id === c.id);
       if (hit) {
         if (!hit.name && c.name) hit.name = c.name;
-        if (!hit.contextWindow && c.contextWindow) hit.contextWindow = fmtCap(c.contextWindow);
+        if (!hit.contextWindow) hit.contextWindow = c.contextWindow ? fmtCap(c.contextWindow) : DEFAULT_CONTEXT_WINDOW;
         if (!hit.maxTokens && c.maxTokens) hit.maxTokens = fmtCap(c.maxTokens);
       } else {
-        next.push({ id: c.id, name: c.name || '', contextWindow: fmtCap(c.contextWindow), maxTokens: fmtCap(c.maxTokens) });
+        next.push({ id: c.id, name: c.name || '', contextWindow: c.contextWindow ? fmtCap(c.contextWindow) : DEFAULT_CONTEXT_WINDOW, maxTokens: fmtCap(c.maxTokens) });
       }
     }
     setDraft({ ...draft, models: next });
@@ -169,6 +183,47 @@ export function ProvidersPanel({ onProvidersChanged }: Props) {
     }
   };
 
+  /** 打开目录：懒拉一次 catalog，默认选中首个可激活端点的提供方 */
+  const openCatalog = async () => {
+    setCatError('');
+    setCatOpen(true);
+    if (catList.length) return;
+    try {
+      const list = await getProviderCatalog();
+      setCatList(list);
+      pickCatalogProvider(list, list.find((p) => p.endpoints.some((e) => e.supported))?.id || '');
+    } catch (e) {
+      setCatError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  /** 选提供方时把端点选择切到它的默认可激活端点 */
+  const pickCatalogProvider = (list: CatalogProvider[], id: string) => {
+    setCatPick(id);
+    const p = list.find((x) => x.id === id);
+    const ep = p?.endpoints.find((e) => e.supported && e.isDefault) || p?.endpoints.find((e) => e.supported) || null;
+    setCatEp(ep ? ep.id : '');
+  };
+
+  /** 目录预设 → 新提供方草稿：每个激活端点一条独立预设（Token Plan 因此是独立 Key，非双 Key 字段） */
+  const applyCatalog = () => {
+    const p = catList.find((x) => x.id === catPick);
+    const ep = p?.endpoints.find((e) => e.id === catEp);
+    if (!p || !ep || !ep.supported) return;
+    const base = `${p.id}-${ep.id}`.replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || 'provider';
+    let id = base;
+    for (let n = 2; providers.some((x) => x.id === id); n += 1) id = `${base}-${n}`;
+    const variant = ep.id === 'default' || ep.isDefault ? '' : `（${ep.label}）`;
+    setDraft({
+      id, name: `${p.name}${variant}`.slice(0, 40), protocol: ep.format, baseUrl: ep.baseUrl, pathPrefix: '',
+      apiKey: '', inputPrice: '', outputPrice: '',
+      models: p.models.map((m) => ({ id: m, name: '', contextWindow: DEFAULT_CONTEXT_WINDOW, maxTokens: '' })),
+    });
+    setErrors({}); setFormError(''); setDiscoverError('');
+    setCard({ kind: 'add' });
+    setCatOpen(false);
+  };
+
   const kw = (picker?.q || '').trim().toLowerCase();
   const shown = picker ? picker.models.filter((m) => !kw || m.id.toLowerCase().includes(kw) || (m.name || '').toLowerCase().includes(kw)) : [];
 
@@ -203,10 +258,16 @@ export function ProvidersPanel({ onProvidersChanged }: Props) {
         ))}
       </div>
       {card ? null : (
-        <button type="button" className="pv-add" onClick={openAdd}>
-          <IconPlus size={14} />
-          添加自定义提供方
-        </button>
+        <div className="pv-addrow">
+          <button type="button" className="pv-add" onClick={openAdd}>
+            <IconPlus size={14} />
+            添加自定义提供方
+          </button>
+          <button type="button" className="pv-add" onClick={() => { void openCatalog(); }}>
+            <IconSearch size={14} />
+            从目录添加
+          </button>
+        </div>
       )}
 
       <div className="foq">
@@ -338,6 +399,69 @@ export function ProvidersPanel({ onProvidersChanged }: Props) {
             <span className="composer-flex" />
             <button type="button" className="btn" onClick={() => setPicker(null)}>取消</button>
             <button type="button" className="btn btn-accent" onClick={applyPicked}><IconCheck size={13} /> 添加所选</button>
+          </footer>
+        </div>
+      </dialog>
+
+      <dialog ref={catRef} className="dlg dlg-narrow" closedby="any" onClose={() => setCatOpen(false)} aria-label="从提供方目录添加">
+        <div className="dlg-panel">
+          <header className="dlg-head">
+            <h2>从目录添加提供方</h2>
+            <button type="button" className="iconbtn" aria-label="关闭" onClick={() => setCatOpen(false)}><IconClose size={15} /></button>
+          </header>
+          <div className="dlg-body">
+            <p className="pv-intro">选一家提供方与端点，baseUrl、协议与模型 ID 自动预填，只需贴 API 密钥。内置 LongCat 只读，不受影响。</p>
+            {catError ? <p className="pv-err" role="alert"><IconAlert size={12} /> {catError}</p> : null}
+            <div className="pv-cat">
+              <ul className="pv-cat-list" role="listbox" aria-label="提供方">
+                {catList.map((p) => (
+                  <li key={p.id}>
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={catPick === p.id}
+                      className={`pv-cat-item ${catPick === p.id ? 'on' : ''}`}
+                      onClick={() => pickCatalogProvider(catList, p.id)}
+                    >
+                      <span className="pv-cat-nm">{p.name}</span>
+                      <span className="pv-cat-desc">{p.description}</span>
+                    </button>
+                  </li>
+                ))}
+                {!catList.length && !catError ? <li className="mpick-status">目录为空</li> : null}
+              </ul>
+              <div className="pv-cat-eps">
+                {(catList.find((x) => x.id === catPick)?.endpoints || []).map((e) => (
+                  <label className={`pv-cat-ep ${e.supported ? '' : 'off'} ${catEp === e.id ? 'on' : ''}`} key={e.id}>
+                    <input
+                      type="radio"
+                      name="pv-cat-ep"
+                      value={e.id}
+                      checked={catEp === e.id}
+                      disabled={!e.supported}
+                      onChange={() => setCatEp(e.id)}
+                    />
+                    <span className="pv-cat-ep-main">
+                      <span className="pv-cat-ep-label">
+                        {e.label}
+                        {e.isDefault ? <span className="pv-badge">默认</span> : null}
+                        {e.supported ? null : <span className="pv-badge warn">协议未适配</span>}
+                      </span>
+                      <code>{e.baseUrl}</code>
+                    </span>
+                    <span className="pv-row-proto">{e.format === 'anthropic' ? 'Anthropic Messages' : e.format}</span>
+                  </label>
+                ))}
+                <p className="pv-cat-models">
+                  预填 {catList.find((x) => x.id === catPick)?.models.length || 0} 个模型，默认上下文窗口 300K
+                </p>
+              </div>
+            </div>
+          </div>
+          <footer className="dlg-foot">
+            <span className="composer-flex" />
+            <button type="button" className="btn" onClick={() => setCatOpen(false)}>取消</button>
+            <button type="button" className="btn btn-accent" disabled={!catEp} onClick={applyCatalog}><IconCheck size={13} /> 预填并继续</button>
           </footer>
         </div>
       </dialog>

@@ -16,6 +16,11 @@ const LEGAL_API_KEY = /^[\x21-\x7e]+$/;
 const ENV_LINE = /^[A-Z][A-Z0-9_]*=[^=]/;
 const BUILTIN_ID = 'longcat';
 const MAX_MODELS = 200;
+/** 新模型默认上下文窗口（对齐 OpenBitFun v1.0.2 #3125：长上下文模型实际配置普遍 300K，
+ *  新填 / 导入 / 目录预置的模型一律从 300K 起步，压缩触发才对得上预期工作窗口；
+ *  仅影响新草稿——已保存模型保留各自声明值，未声明窗口的压缩回退值也不动）。 */
+export const DEFAULT_CONTEXT_WINDOW = '300000';
+
 
 function isQuoted(value: string): boolean {
   const first = value[0];
@@ -160,7 +165,7 @@ export function ProviderEditor({
     const models = draft.models.map((m, i) => (i === idx ? { ...m, ...patch } : m));
     onChange({ models });
   };
-  const addModel = () => onChange({ models: [...draft.models, { id: '', name: '', contextWindow: '', maxTokens: '' }] });
+  const addModel = () => onChange({ models: [...draft.models, { id: '', name: '', contextWindow: DEFAULT_CONTEXT_WINDOW, maxTokens: '' }] });
   const delModel = (idx: number) => onChange({ models: draft.models.filter((_, i) => i !== idx) });
 
   return (
@@ -218,7 +223,7 @@ export function ProviderEditor({
           <div className="pv-mrow" key={idx}>
             <input value={m.id} spellCheck={false} autoComplete="off" aria-label={`模型 ID 第 ${idx + 1} 行`} onChange={(e) => setModel(idx, { id: e.target.value })} />
             <input value={m.name} autoComplete="off" aria-label={`显示名 第 ${idx + 1} 行`} onChange={(e) => setModel(idx, { name: e.target.value })} />
-            <input value={m.contextWindow} placeholder="128K" inputMode="text" autoComplete="off" aria-label={`上下文窗口 第 ${idx + 1} 行`} onChange={(e) => setModel(idx, { contextWindow: e.target.value })} />
+            <input value={m.contextWindow} placeholder="300K" inputMode="text" autoComplete="off" aria-label={`上下文窗口 第 ${idx + 1} 行`} onChange={(e) => setModel(idx, { contextWindow: e.target.value })} />
             <input value={m.maxTokens} placeholder="8K" inputMode="text" autoComplete="off" aria-label={`最大输出 第 ${idx + 1} 行`} onChange={(e) => setModel(idx, { maxTokens: e.target.value })} />
             <button type="button" className="iconbtn danger" title="删除该模型" aria-label={`删除模型第 ${idx + 1} 行`} onClick={() => delModel(idx)}>
               <IconTrash size={13} />

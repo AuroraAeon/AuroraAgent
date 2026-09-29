@@ -9,6 +9,12 @@ import { skillCatalogBlock } from './skills.mjs';
 
 const DEFAULT_WINDOW = 128000;
 
+/** 悬空 tool_call 的合成结果（对齐 OpenBitFun v1.0.2 #3148：fork 与中断恢复边界必须补齐完整工具交换）。
+ *  turn 在工具执行前被中止 / 异常时，转录里留下没有配对 tool_result 的 tool_call；不补这条，
+ *  消息序列以「带 tool_calls 的 assistant 消息」收尾，OpenAI 兼容上游直接 400，Anthropic 也会拒收，
+ *  派生与会话恢复后的第一轮必炸。 */
+const INTERRUPTED_TOOL_RESULT = '[工具执行被中断，未产生结果]';
+
 /** 提供方声明的上下文窗口；未声明或非法时回退 128k */
 export function contextWindowOf(provider) {
   const n = Number(provider?.capacity?.contextWindow);
@@ -45,9 +51,18 @@ export function assembleMessages({ harness, workspace, records = [], skills = []
   ].join('\n') + (catalog ? `\n\n${catalog}` : '') + (extraSystem ? `\n\n${extraSystem}` : '');
   const messages = [{ role: 'system', content: system }];
   const pending = [];
+  // 预扫：有真实 tool_result 的调用 id，其余即悬空调用（中断残留），flush 时补合成结果。
+  // 之所以预扫而非「见到结果就摘掉 pending」：真实结果记录排在 flush 之后，边扫边判会把正常配对误判成悬空。
+  const answered = new Set();
+  for (const r of records) if (r.t === 'tool_result') answered.add(r.id);
   const flushPending = () => {
     if (!pending.length) return;
-    messages.push({ role: 'assistant', content: '', tool_calls: pending.splice(0) });
+    const calls = pending.splice(0);
+    messages.push({ role: 'assistant', content: '', tool_calls: calls });
+    for (const call of calls) {
+      if (answered.has(call.id)) continue;
+      messages.push({ role: 'tool', tool_call_id: call.id, content: INTERRUPTED_TOOL_RESULT });
+    }
   };
   for (const r of records) {
     switch (r.t) {

@@ -15,6 +15,7 @@ import { splitMathSegments, takeDisplayMath, isDisplayMathStart, mathDisplay, MA
 import { normalizeThinkingText, resolveReasoningStreamingSummary, isReasoningSummaryOverflowing } from '../web-ui/src/reasoning.mjs';
 import { startMock } from './mock-longcat.mjs';
 import { ProviderStore, ProviderError, parseCapacity, formatCapacity, normalizeEndpoint, validateProviderDraft, chatUrl, modelsUrl, messagesUrl } from '../util/providers.mjs';
+import { catalogProviders, catalogProvider, catalogPresetDraft, catalogLabel, SUPPORTED_FORMATS } from '../util/provider-catalog.mjs';
 import { buildChatRequest, anthropicFrame } from '../util/wire.mjs';
 import { consumeAgentStream } from '../util/stream.mjs';
 import { agentEvent, sseFrame } from '../util/agent/events.mjs';
@@ -44,6 +45,8 @@ import { runApiShapesTests } from './api-shapes.mjs';
 import { runTitleTests } from './title.mjs';
 import { runGoalTests } from './goal.mjs';
 import { completePrefix, SideSession } from '../util/agent/side-session.mjs';
+import { TurnQueue, newOpId } from '../util/agent/queue.mjs';
+import { parseQueueArg, formatQueueLines, pickQueueItem } from '../util/agent/queue-cmd.mjs';
 import { searchWorkspaceFiles } from '../util/agent/files.mjs';
 import { readWorkspaceInfo, readGitBranch } from '../util/workspace.mjs';
 import { TITLE_MAX_TOKENS } from '../util/agent/title-model.mjs';
@@ -402,6 +405,69 @@ await test('ProviderStore 按模型 ID 反查提供方，找不到回退内置',
     eq(store.providerForModel('不存在的模型').id, 'longcat', '未知模型应回退内置');
     eq(store.providerForModel('').id, 'longcat');
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ---------- 单元测试: 提供方预设目录（迁移自 OBF #3186） ----------
+console.log('\n提供方目录单元测试');
+await test('catalog: 协议门控只放行已实现的两种协议', () => {
+  const formats = new Set();
+  for (const p of catalogProviders()) for (const e of p.endpoints) formats.add(e.format);
+  assert(formats.has('openai') && formats.has('anthropic'), '目录应同时含两种已实现协议');
+  const gemini = catalogProvider('gemini');
+  const unsupported = gemini.endpoints.filter((e) => !e.supported);
+  assert(unsupported.length > 0, 'gemini 格式端点应入数据但不激活');
+  assert(unsupported.every((e) => !SUPPORTED_FORMATS.includes(e.format)), '未激活端点必须落在未实现协议上');
+  const xiaomi = catalogProvider('xiaomi');
+  assert(xiaomi.endpoints.some((e) => e.supported), '同家族至少有一条可激活端点');
+  assert(xiaomi.endpoints.some((e) => !e.supported), 'responses 格式端点应入数据但不激活');
+  assert(catalogPresetDraft('gemini', 'default') === null, '未实现协议的端点不给预设草稿');
+  assert(catalogPresetDraft('xiaomi', 'responses') === null, 'responses 端点不给预设草稿');
+  eq(catalogProvider('google'), null, 'Google 在本地目录里的 id 是 gemini');
+});
+
+await test('catalog: 每个激活端点落成独立预设（Token Plan 是独立 Key，不是双 Key 字段）', () => {
+  const xiaomi = catalogProvider('xiaomi');
+  const a = catalogPresetDraft('xiaomi', 'default');
+  const b = catalogPresetDraft('xiaomi', 'token-plan');
+  assert(a && b, '两条端点都应给出草稿');
+  eq(a.protocol, 'openai', '端点协议随端点而非提供方');
+  assert(a.baseUrl !== b.baseUrl, '两条预设 baseUrl 必须不同');
+  assert(a.name !== b.name, '预设名要能区分端点');
+  assert(b.models.length > 0 && b.models.every((m) => m.contextWindow === 300000), '预置模型默认 300K 上下文窗口（对齐 #3125）');
+  // 草稿形状可直接进 validateProviderDraft
+  const v = validateProviderDraft({ ...a, id: 'xiaomi-default', apiKey: 'sk-test' }, []);
+  eq(v.ok, true, '目录草稿应能通过既有校验');
+  eq(v.value.models.length, a.models.length, '模型数量一致');
+  eq(v.value.models[0].contextWindow, 300000, '窗口值原样落库');
+  // 每个激活端点都能独立过校验（id 冲突时调用方负责改名，这里用不同 id 验证形状）
+  for (const e of xiaomi.endpoints.filter((x) => x.supported)) {
+    const d = catalogPresetDraft('xiaomi', e.id);
+    eq(validateProviderDraft({ ...d, id: `xiaomi-${e.id}`, apiKey: 'sk-test' }, []).ok, true, `端点 ${e.id} 的草稿应能过校验`);
+  }
+  assert(catalogPresetDraft('deepseek', 'anthropic').protocol === 'anthropic', 'Anthropic 端点落 anthropic 协议预设');
+  eq(catalogPresetDraft('不存在的厂商', 'default'), null, '未知提供方返回 null');
+});
+
+await test('catalog: 三语标签回落 zh-CN → en → ID', () => {
+  eq(catalogLabel({ 'zh-CN': '小米', 'en-US': 'Xiaomi' }), '小米', '首选 zh-CN');
+  eq(catalogLabel({ 'en-US': 'Xiaomi' }), 'Xiaomi', '缺 zh-CN 回落 en');
+  eq(catalogLabel({}, 'fallback-id'), 'fallback-id', '两者都缺回落传入 ID');
+  eq(catalogLabel(null, 'x'), 'x', '非对象不抛');
+  for (const p of catalogProviders()) {
+    assert(p.name && p.name.length > 0, `提供方 ${p.id} 必须解析出名称`);
+    for (const e of p.endpoints) assert(e.label && e.label.length > 0, `端点 ${p.id}/${e.id} 必须解析出标签`);
+  }
+});
+
+await test('catalog: 剔除上游自家网关，数据完整可读', () => {
+  const ids = catalogProviders().map((p) => p.id);
+  assert(!ids.includes('openbitfun'), 'OBF 自家托管网关不进本地目录');
+  assert(ids.length >= 10, '主流厂商应基本齐备');
+  const raw = JSON.parse(readFileSync(join(__dirname, '..', 'util', 'provider-catalog.json'), 'utf8'));
+  assert(!raw.providers.some((p) => p.id === 'openbitfun'), '数据文件本身也不含自家网关');
+  const hasBindingKey = (o) => o && typeof o === 'object' && Object.keys(o).some((k) => k === 'reasoning_catalog_bindings' || hasBindingKey(o[k]));
+  assert(!raw.providers.some((p) => hasBindingKey(p)), '推理目录绑定未迁（本地无此概念）');
+  assert(raw.providers.every((p) => p.endpoints.every((e) => e.label && typeof e.label === 'object')), '每个端点都必须带三语标签');
 });
 
 // ---------- 单元测试: 上游线路拼装与帧翻译 ----------
@@ -866,6 +932,43 @@ await test('上下文组装：记录投影为上游消息', () => {
   assert(withSummary[1].content.includes('摘要内容'), 'summary 应投影为系统消息');
 });
 
+await test('上下文组装：悬空 tool_call 补合成结果（中断 / 派生边界）', () => {
+  // 对齐 OpenBitFun v1.0.2 #3148：turn 在工具执行前被中止，转录留下没有配对结果的调用，
+  // 直接投影会让消息序列以带 tool_calls 的 assistant 消息收尾，上游一律 400
+  const cut = assembleMessages({ harness: getHarness('standard'), workspace: '/tmp/ws', records: [
+    { t: 'user', text: '跑一下' },
+    { t: 'tool_call', id: 'tc1', name: 'shell', args: { command: 'ls' } },
+  ] });
+  eq(cut.at(-1).role, 'tool', '悬空调用后必须补一条 tool 消息');
+  eq(cut.at(-1).tool_call_id, 'tc1', '合成结果要指回原调用');
+  assert(cut.at(-1).content.includes('中断'), '合成结果应说明工具未产生结果');
+  // 正常配对不受影响：不能叠出第二条 tool 消息
+  const paired = assembleMessages({ harness: getHarness('standard'), workspace: '/tmp/ws', records: [
+    { t: 'user', text: '跑一下' },
+    { t: 'tool_call', id: 'tc1', name: 'shell', args: { command: 'ls' } },
+    { t: 'tool_result', id: 'tc1', ok: true, output: 'a.txt' },
+  ] });
+  eq(paired.filter((m) => m.role === 'tool').length, 1, '有真实结果时不补合成结果');
+  eq(paired.at(-1).content, 'a.txt', '真实结果原样保留');
+  // 无配对的结果（异常数据）仍按既有规则丢弃，协议保持合法
+  const orphan = assembleMessages({ harness: getHarness('standard'), workspace: '/tmp/ws', records: [
+    { t: 'tool_result', id: 'ghost', ok: true, output: 'x' },
+  ] });
+  eq(orphan.length, 1, '孤儿 tool_result 应被丢弃（只剩系统消息）');
+  // 并行调用里只有一个出结果：另一个补合成结果，两个都保留在 assistant.tool_calls 里
+  const partial = assembleMessages({ harness: getHarness('standard'), workspace: '/tmp/ws', records: [
+    { t: 'tool_call', id: 'c1', name: 'shell', args: {} },
+    { t: 'tool_call', id: 'c2', name: 'shell', args: {} },
+    { t: 'tool_result', id: 'c1', ok: true, output: 'ok' },
+  ] });
+  const partialAssistant = partial.find((m) => Array.isArray(m.tool_calls));
+  eq(partialAssistant.tool_calls.length, 2, '两个调用都进 assistant.tool_calls');
+  const partialTools = partial.filter((m) => m.role === 'tool');
+  eq(partialTools.length, 2, '一个真实结果 + 一个合成结果');
+  assert(partialTools.some((m) => m.content === 'ok'), '真实结果保留');
+  assert(partialTools.some((m) => m.content.includes('中断')), '没结果的调用补合成结果');
+});
+
 await test('上下文组装：技能清单进系统提示、正文不进', () => {
   const skills = [{ name: 'demo', description: '演示技能', body: 'SECRET-BODY-不应出现' }];
   const msgs = assembleMessages({ harness: getHarness('standard'), workspace: '/tmp/ws', records: [], skills });
@@ -919,6 +1022,20 @@ await test('MCP 注册表：草稿校验与配置落盘', () => {
   assert(bad.errors.id && bad.errors.command, '应定位到 id 与 command 字段');
   const badUrl = validateServerDraft({ id: 'web', transport: 'http', url: 'ftp://x' });
   eq(badUrl.ok, false, 'HTTP 传输应拒绝非 http(s) 端点');
+  // 传输类型驼峰归一化（对齐 OpenBitFun v1.0.2 #3156）：粘贴来的 MCP 配置普遍写 streamableHttp
+  for (const raw of ['http', 'streamableHttp', 'STREAMABLE-HTTP', 'streamable_http', 'sse']) {
+    const r = validateServerDraft({ id: 'web', transport: raw, url: 'https://x/mcp' });
+    eq(r.ok, true, `${raw} 应归一为 http 并通过校验`);
+    eq(r.server.transport, 'http', `${raw} 应落到 http`);
+  }
+  eq(validateServerDraft({ id: 'web', transport: 'stdio', command: 'node' }).server.transport, 'stdio', 'stdio 保持 stdio');
+  const weird = validateServerDraft({ id: 'web', transport: 'grpc', url: 'https://x/mcp' });
+  eq(weird.ok, false, '无法识别的传输类型应拒绝');
+  assert(weird.errors.transport && weird.errors.transport.includes('无法识别'), '应报「传输类型无法识别」而非「缺启动命令」');
+  assert(weird.errors.command, '同时仍提示 stdio 缺命令（回落 stdio 的后果）');
+  // source 字段大小写归一化（#3164）
+  eq(validateServerDraft({ id: 'web', transport: 'http', url: 'https://x/mcp', source: 'Claude' }).server.source, 'claude', 'source 应归一为小写');
+  eq(validateServerDraft({ id: 'web', transport: 'http', url: 'https://x/mcp' }).server.source, undefined, '无 source 不落字段');
   const ok = validateServerDraft({ id: 'mock', name: 'Mock', transport: 'stdio', command: 'node', args: ['s.mjs'], env: { A: '1' } });
   eq(ok.ok, true, '合法 stdio 草稿应通过');
   eq(ok.server.args[0], 's.mjs', 'args 应保留');
@@ -1668,6 +1785,106 @@ await test('更新检查：走 GitHub latest、结果缓存 6 小时、失败不
   eq(refreshed.updateAvailable, false, '上游更低不误报有更新');
   eq(calls, 6);
   rmSync(dir, { recursive: true, force: true });
+});
+
+// ---------- 单元测试: 消息队列（本地化 #3212 / #3220） ----------
+console.log('\n消息队列单元测试');
+await test('queue: 每会话 FIFO、opId 幂等、终态剪掉', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-queue-'));
+  try {
+    const q = new TurnQueue(dir);
+    const a = q.enqueue('s1', { opId: 'a', text: '一', body: { input: '一' } });
+    eq(a.position, 1, '首条位置为 1');
+    eq(a.duplicate, false, '首次入队不重复');
+    q.enqueue('s1', { opId: 'b', text: '二' });
+    q.enqueue('s2', { opId: 'c', text: '别会话' });
+    eq(q.list('s1').map((i) => i.opId).join(','), 'a,b', '按会话隔离且保持入队序');
+    const dup = q.enqueue('s1', { opId: 'a', text: '一' });
+    eq(dup.duplicate, true, '同 opId 重复入队只认既有项');
+    eq(q.list('s1').length, 2, '重复入队不增长队列');
+    eq(q.shift('s1').opId, 'a', 'shift 取队首');
+    eq(q.list('s1').find((i) => i.opId === 'a').state, 'running', '摘牌后标记 running');
+    eq(q.shift('s1').opId, 'b', '第二条可续摘');
+    eq(q.shift('s1'), null, '队列空了返回 null');
+    q.finish('s1', 'a', 'done');
+    eq(q.list('s1').some((i) => i.opId === 'a'), false, '终态项从队列视图剪掉');
+    eq(q.find('s1', 'a').state, 'done', '终态在内存里仍可查（供回执）');
+    eq(newOpId().length > 10, true, 'opId 生成可用');
+    const empty = new TurnQueue(join(dir, '不存在'));
+    eq(empty.list('x').length, 0, '数据目录缺失按空队列处理');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+await test('queue: 落盘恢复——running 回落 queued、held 保留、损坏文件静默回退', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-queue-'));
+  try {
+    const q = new TurnQueue(dir);
+    q.enqueue('s1', { opId: 'run', text: '半路' });
+    q.enqueue('s1', { opId: 'hold', text: '挂起' });
+    q.enqueue('s1', { opId: 'gone', text: '终态' });
+    q.shift('s1');
+    q.setState('s1', 'hold', 'held');
+    q.finish('s1', 'gone', 'done');
+    const back = new TurnQueue(dir);
+    eq(back.list('s1').map((i) => i.opId).join(','), 'run,hold', '重启后只剩未完结的项');
+    eq(back.list('s1').find((i) => i.opId === 'run').state, 'queued', '进程被杀在半路的 running 回落 queued 由泵重跑');
+    eq(back.list('s1').find((i) => i.opId === 'hold').state, 'held', '用户显式挂起的原样保留');
+    eq(back.hasPending('s1'), true, '回落成 queued 的项应被泵看见');
+    back.setState('s1', 'hold', 'queued');
+    eq(back.shift('s1').opId, 'run', '恢复后按原队序续跑');
+    // 损坏文件：不能因为 queue.json 坏掉挡住用户发言
+    writeFileSync(join(dir, 'queue.json'), '{ 坏 JSON');
+    const broken = new TurnQueue(dir);
+    eq(broken.list('s1').length, 0, '损坏文件按空队列处理');
+    broken.enqueue('s1', { opId: 'new', text: '还能说话' });
+    eq(broken.list('s1').length, 1, '损坏后仍可正常入队并自愈落盘');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+await test('queue-cmd: /queue 参数解析与展示行', () => {
+  eq(parseQueueArg('').action, 'list', '无参列出');
+  eq(parseQueueArg('  ').action, 'list', '空白按无参处理');
+  eq(parseQueueArg('send 2').action, 'send', 'send 子命令');
+  eq(parseQueueArg('send 2').index, 1, '序号转 0 based 索引');
+  eq(parseQueueArg('drop 1').action, 'drop', 'drop 子命令');
+  eq(parseQueueArg('rm 3').action, 'drop', 'rm 是 drop 的同义');
+  eq(parseQueueArg('remove 3').action, 'drop', 'remove 是 drop 的同义');
+  eq(parseQueueArg('SEND 2').action, 'send', '大小写不敏感');
+  eq(parseQueueArg('clear').action, 'clear', 'clear 清空');
+  eq(parseQueueArg('send').action, 'error', '缺序号报错');
+  eq(parseQueueArg('send x').action, 'error', '非数字序号报错');
+  eq(parseQueueArg('send 0').action, 'error', '序号从 1 开始');
+  eq(parseQueueArg('bogus').action, 'error', '未知子命令报错');
+  assert(parseQueueArg('send').message.includes('用法'), '报错应带用法');
+  eq(formatQueueLines([])[0].includes('队列为空'), true, '空队列给可操作提示');
+  const lines = formatQueueLines([{ text: '甲' }, { text: '乙' }]);
+  eq(lines.length, 2, '一行一项');
+  assert(lines[0].includes('1. 甲') && lines[1].includes('2. 乙'), '序号从 1 起且带文本');
+  eq(pickQueueItem([{ text: '甲' }], 0).item.text, '甲', '按序号取项');
+  assert(pickQueueItem([], 0).error.includes('队列为空'), '空队列取项报错');
+  assert(pickQueueItem([{ text: '甲' }], 5).error.includes('超出范围'), '越界取项报错');
+});
+
+await test('queue: promote / remove / setState 语义', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-queue-'));
+  try {
+    const q = new TurnQueue(dir);
+    q.enqueue('s1', { opId: 'a', text: '一' });
+    q.enqueue('s1', { opId: 'b', text: '二' });
+    q.enqueue('s1', { opId: 'c', text: '三' });
+    q.promote('s1', 'c');
+    eq(q.list('s1').map((i) => i.opId).join(','), 'c,a,b', 'promote 把选中项挪到队首');
+    eq(q.shift('s1').opId, 'c', 'promote 后下一个就被泵接走');
+    eq(q.list('s1').map((i) => i.opId).join(','), 'c,a,b', 'running 与 queued 都仍在队列视图里');
+    q.finish('s1', 'c', 'done');
+    eq(q.remove('s1', 'b'), true, 'remove 移除成功');
+    eq(q.remove('s1', 'b'), false, '重复 remove 返回 false');
+    eq(q.list('s1').map((i) => i.opId).join(','), 'a', '移除后只剩未跑的那条');
+    eq(q.setState('s1', 'a', 'held').state, 'held', 'setState 可挂起');
+    eq(q.hasPending('s1'), false, 'held 不算待跑');
+    eq(q.setState('s1', 'nope', 'held'), null, '未知 opId 返回 null');
+    eq(q.promote('s1', 'nope'), null, '未知 opId promote 返回 null');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 // ---------- e2e ----------
@@ -2756,8 +2973,9 @@ try {
     assert(composerSrc.includes('Enter 不拦截，落到下方统一提交'), '技能调色板无匹配时不应吞掉 /goal 命令的 Enter');
     assert(composerSrc.includes('onlyIfEmpty'), 'Composer 回填应支持 onlyIfEmpty（失败保留不覆盖新输入）');
     const goalCmdIdx = composerSrc.indexOf('/^\\/goal(\\s|$)/.test(t) && onGoalCommand');
-    const busyGuardIdx = composerSrc.indexOf('if (busy) return;');
+    const busyGuardIdx = composerSrc.indexOf('if (busy) {');
     assert(goalCmdIdx >= 0 && busyGuardIdx > goalCmdIdx, 'Composer 应放行 /goal 命令穿越 busy（对齐 MiniMax：catalog 命令在 turn 运行中直接 dispatch）');
+    assert(composerSrc.includes('composer-queue') && composerSrc.includes('onQueuePromote'), 'Composer 应渲染消息队列条（#3212）');
     // 底部那行长提示已按要求整行移除；「生成中可管目标」改由斜杠命令目录发现
     assert(!composerSrc.includes('composer-hint'), 'Composer 底部提示行应已移除（用户明确要求删掉）');
     const slashSrc = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'slash-commands.ts'), 'utf8');
@@ -4783,7 +5001,7 @@ await test('Agent turn：空输入 400、未知会话 404', async () => {
   eq(noSess.status, 404);
 });
 
-await test('Agent turn：权限等待期间并发发起返回 409', async () => {
+await test('Agent turn：权限等待期间并发提交入队而非 409（#3212）', async () => {
   const s = await createAgentSession();
   const resp = await fetch(`${AGENT}/turn`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -4796,14 +5014,27 @@ await test('Agent turn：权限等待期间并发发起返回 409', async () => 
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sessionId: s.id, input: '第二个' }),
   });
-  eq(second.status, 409, '已有活跃 turn 时应 409');
-  // 收尾：拒绝权限让第一个 turn 跑完，再正常结束流
+  eq(second.status, 200, '活跃 turn 期间的新提交不再 409，改入队等待');
+  const secondStream = openAgentStream(second);
+  const ack = await drainAgentStream(secondStream, { until: (ev) => ev.type === 'turn_queued' });
+  eq(ack.find((e) => e.type === 'turn_queued').position, 1, '回执应带队列位置');
+  // 侧边对话仍与主对话互斥：409 语义不因队列松动
+  const sideBusy = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: '侧边插队', side: true }),
+  });
+  eq(sideBusy.status, 409, '主 turn 活跃时侧边提交仍应 409');
+  // 收尾：拒绝权限让第一个 turn 跑完，泵接力第二条
   await fetch(`${AGENT}/permission`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ requestId: head.find((e) => e.phase === 'confirmation_needed').requestId, decision: 'deny' }),
   });
   const tail = await drainAgentStream(stream);
   assert(tail.some((e) => e.type === 'turn_completed'), '拒绝后第一个 turn 应收尾');
+  const relayed = await drainAgentStream(secondStream);
+  assert(relayed.some((e) => e.type === 'turn_completed'), '队列里的第二条应由泵接力跑完');
+  const empty = await (await fetch(`${AGENT}/queue/${s.id}`)).json();
+  eq(empty.items.length, 0, '跑完后队列应清空');
 });
 
 // ---------- 侧边对话（/btw）：内存门面 turn、主 / 侧互斥、不派发子代理 ----------
@@ -4906,6 +5137,129 @@ await test('Agent turn：中断保留已生成内容且会话可继续', async (
   });
   eq(again.status, 200, '中断后会话应可继续');
   await drainAgentStream(openAgentStream(again));
+});
+
+// ---------- 消息队列（本地化 #3212 / #3220）：入队 / 幂等 / 接力 / 取消 / 侧边不入队 ----------
+await test('消息队列：重复 opId 只入队一次且不开第二条流', async () => {
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_TOOL_WRITE 占位' }),
+  });
+  const stream = openAgentStream(resp);
+  const head = await drainAgentStream(stream, { until: (ev) => ev.type === 'tool_event' && ev.phase === 'confirmation_needed' });
+  assert(head.some((e) => e.phase === 'confirmation_needed'), '应进入权限等待');
+  const post = (opId) => fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: '排队甲', opId }),
+  });
+  const first = openAgentStream(await post('op-dup'));
+  const ack1 = await drainAgentStream(first, { until: (ev) => ev.type === 'turn_queued' });
+  eq(ack1.find((e) => e.type === 'turn_queued').duplicate, false, '首次入队不是重复');
+  const second = await post('op-dup');
+  eq(second.status, 200, '重复 opId 仍是 200（不开第二条流）');
+  const ack2 = await drainAgentStream(openAgentStream(second), { until: (ev) => ev.type === 'turn_queued' });
+  const dup = ack2.find((e) => e.type === 'turn_queued');
+  eq(dup.duplicate, true, '重复 opId 回执应标记 duplicate');
+  eq(dup.opId, 'op-dup', '重复 opId 回执应指回同一条');
+  const list = await (await fetch(`${AGENT}/queue/${s.id}`)).json();
+  eq(list.items.length, 1, '队列里只应有一条');
+  // 收尾：放行权限让第一条跑完，队列里那一条被泵接力
+  await fetch(`${AGENT}/permission`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId: head.find((e) => e.phase === 'confirmation_needed').requestId, decision: 'deny' }),
+  });
+  await drainAgentStream(stream);
+  await drainAgentStream(first);
+  const empty = await (await fetch(`${AGENT}/queue/${s.id}`)).json();
+  eq(empty.items.length, 0, '接力跑完后队列清空');
+});
+
+await test('消息队列：取消等待中的消息后不被泵接力', async () => {
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_TOOL_WRITE 占位' }),
+  });
+  const stream = openAgentStream(resp);
+  const head = await drainAgentStream(stream, { until: (ev) => ev.type === 'tool_event' && ev.phase === 'confirmation_needed' });
+  const queued = openAgentStream(await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: '待取消', opId: 'op-cancel' }),
+  }));
+  await drainAgentStream(queued, { until: (ev) => ev.type === 'turn_queued' });
+  const rm = await (await fetch(`${AGENT}/queue/remove`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, opId: 'op-cancel' }),
+  })).json();
+  eq(rm.ok, true, '移除等待中的消息应成功');
+  const gone = await (await fetch(`${AGENT}/queue/${s.id}`)).json();
+  eq(gone.items.length, 0, '移除后队列为空');
+  const cancelled = await drainAgentStream(queued);
+  assert(cancelled.some((e) => e.type === 'turn_cancelled'), '被移除的流应收到 turn_cancelled');
+  await fetch(`${AGENT}/permission`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId: head.find((e) => e.phase === 'confirmation_needed').requestId, decision: 'deny' }),
+  });
+  await drainAgentStream(stream);
+  const after = await (await fetch(`${AGENT}/sessions/${s.id}`)).json();
+  assert(!after.records.some((r) => r.text === '待取消'), '取消掉的消息不应进转录');
+});
+
+await test('消息队列：promote 把选中项挪到队首', async () => {
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_TOOL_WRITE 占位' }),
+  });
+  const stream = openAgentStream(resp);
+  const head = await drainAgentStream(stream, { until: (ev) => ev.type === 'tool_event' && ev.phase === 'confirmation_needed' });
+  for (const [opId, text] of [['op-1', '先来'], ['op-2', '后到']]) {
+    const st = openAgentStream(await fetch(`${AGENT}/turn`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: s.id, input: text, opId }),
+    }));
+    await drainAgentStream(st, { until: (ev) => ev.type === 'turn_queued' });
+  }
+  const before = await (await fetch(`${AGENT}/queue/${s.id}`)).json();
+  eq(before.items.map((i) => i.opId).join(','), 'op-1,op-2', '按入队序排列');
+  const pr = await (await fetch(`${AGENT}/queue/promote`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, opId: 'op-2' }),
+  })).json();
+  eq(pr.ok, true, 'promote 应成功');
+  const after = await (await fetch(`${AGENT}/queue/${s.id}`)).json();
+  eq(after.items.map((i) => i.opId).join(','), 'op-2,op-1', '选中项应被挪到队首');
+  await fetch(`${AGENT}/permission`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId: head.find((e) => e.phase === 'confirmation_needed').requestId, decision: 'deny' }),
+  });
+  await drainAgentStream(stream);
+  await new Promise((r) => setTimeout(r, 400));
+  const detail = await (await fetch(`${AGENT}/sessions/${s.id}`)).json();
+  const texts = detail.records.filter((r) => r.t === 'user').map((r) => r.text);
+  eq(texts.indexOf('后到') < texts.indexOf('先来'), true, '被提升的那条应先跑');
+});
+
+await test('消息队列：侧边对话不入队也不接力', async () => {
+  const s = await createAgentSession();
+  const side = openAgentStream(await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_TOOL_WRITE 占位', side: true }),
+  }));
+  const head = await drainAgentStream(side, { until: (ev) => ev.type === 'tool_event' && ev.phase === 'confirmation_needed' });
+  const main = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: '主对话', opId: 'op-side' }),
+  });
+  eq(main.status, 409, '侧边 turn 活跃时主对话仍 409，不进队列');
+  const list = await (await fetch(`${AGENT}/queue/${s.id}`)).json();
+  eq(list.items.length, 0, '侧边活跃期间队列应为空');
+  await fetch(`${AGENT}/permission`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId: head.find((e) => e.phase === 'confirmation_needed').requestId, decision: 'deny' }),
+  });
+  await drainAgentStream(side);
 });
 
 await test('Agent 权限：未知 requestId 返回 ok:false', async () => {
