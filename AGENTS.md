@@ -70,6 +70,9 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 | `web-ui/src/math-split.mjs` | 公式分段纯函数（零依赖，Node 测试直接 import 同一份）：识别 `$...$` / `\(...\)` / `$$...$$` / `\[...\]` / 裸 `\begin{env}`，代码段与货币区间假阳性防护；`.d.mts` 供 TS 取类型 |
 | `web-ui/src/md-table.mjs` | Markdown 表格块解析纯函数（零依赖，Node 测试直接 import 同一份）：GFM 子集（表头 + 分隔行 + 对齐 + 数据行），列数不匹配 / 裸 `---` 不成表；渲染（thead/tbody/滚动包裹层）在 `markdown.tsx`，`.d.mts` 供 TS 取类型 |
 | `web-ui/src/reasoning.mjs` | 思考过程纯函数（零依赖，Node 测试直接 import 同一份，复刻 ZCode `ReasoningTrigger` 助手）：`normalizeThinkingText` 剥开头空行（模型常吐 `\n\n` 导致展开后首行空白）、`resolveReasoningStreamingSummary` 取流式文本最后一个非空行作单行摘要、`isReasoningSummaryOverflowing` 1px 容差溢出判定；组件 `Message.tsx` 的 `ThinkingBlock` 消费，`.d.mts` 供 TS 取类型 |
+| `web-ui/src/skill-rows.mjs` | 技能目录行归一化纯函数（零依赖，Node 测试直接 import 同一份）：`/api/agent/skills` 响应过边界时补全 `resources` / `allowedTools` / `warnings` 等集合字段，`SkillsPanel` 的 `s.allowedTools.length` 不再因字段缺席把整站打进错误边界；`.d.mts` 供 TS 取类型 |
+| `web-ui/src/coerce.mjs` | API 边界归一化共用的强制转换原语（零依赖纯函数）：`asString` / `asStringArray` / `asBool` / `asCount` / `asNumber` / `asOptionalNumber` / `asObject` / `asArray`——必填字段给安全默认值、可选字段类型不对落回 undefined 不伪造 0、非对象行剔除；`.d.mts` 供 TS 取类型 |
+| `web-ui/src/api-shapes.mjs` | API 响应形状归一化纯函数层（零依赖，Node 测试直接 import 同一份）：19 个 `normalize*` 在 `api.ts` 边界把全部列表 / 对象端点的响应当规整为声明形状——后端返回正确形状时恒等映射（不加工显示）、未知扩展字段原样保留（向前兼容）；**版本错配教训**：LaunchAgent 常驻进程跨部署不重启、`public/app/` 却按请求读盘，后端进程会旧于前端产物，响应字段集体缺席，前端任何零容差解引用（`.length` / `.map` / `protocols[0]` / `localeCompare`）都直接把面板打进错误边界白屏——API 边界一律当不可信输入规整，别信「同源就同版本」；`.d.mts` 供 TS 取类型 |
 | `public/app/` | web-ui 构建产物（随仓库提交）：`/` 与 `/app/` 同一份 index.html，哈希资产长缓存 |
 | `public/icon.svg` `public/vendors/` | 品牌标识 / 各接入厂商标识（`/vendor/` 白名单路由） |
 | `test/` | e2e 测试：mock 上游 + 真实 socket（见第 7 节）；子套件（llm / tui / highlight / config / pick / skills / guards）经 import 聚合；`guards.mjs` 仓库守卫入套 |
