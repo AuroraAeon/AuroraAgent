@@ -2,6 +2,22 @@
 
 本文件记里程碑版本（Keep a Changelog 格式，中文）。逐提交的发布笔记由 `npm run docs:notes` 从 git 历史生成，进文档站 `release-notes` 页。
 
+## [7.3.0](https://github.com/AuroraAeon/AuroraAgent/compare/v7.2.0...v7.3.0) (2026-09-29)
+
+
+### Features
+
+* **agent:** 技能系统引入 Agent Skills 三层渐进式披露——L3 附属资源、只读白名单根与目录预算治理 ([a4be825](https://github.com/AuroraAeon/AuroraAgent/commit/a4be8258ec9ddaf73434f456bd88e73ff54f7b79))
+* **web-ui:** 工具调用改 ZCode ToolSummaryRow 紧缩摘要行，加号菜单删说明项 ([a25f950](https://github.com/AuroraAeon/AuroraAgent/commit/a25f950d3ec187a41530789aa1e28464be4120a6))
+* **web-ui:** 浮层箭头改后退/前进会话导航，输入区复刻 ZCode ChatPromptEditor 排版并加添加上下文菜单，侧栏会话行运行态加载圈 ([0b5bda3](https://github.com/AuroraAeon/AuroraAgent/commit/0b5bda3a9ddf26fc65d964be21b2204cf0a04be0))
+* **web-ui:** 消息行改 ZCode 无头像形态——用户消息右对齐、思考过程复刻 Reasoning 紧缩行 ([417bb80](https://github.com/AuroraAeon/AuroraAgent/commit/417bb8084d82a8ba770d9db1cf88a3e0be1b2a22))
+
+
+### Bug Fixes
+
+* **guard:** README 去掉硬编码版本号，守卫改为校验版本机制标注，解除发布 PR 的 CI 死锁 ([ff55bdf](https://github.com/AuroraAeon/AuroraAgent/commit/ff55bdfb1ab4c078e72de25f45845b1fea1e4c5c))
+* **web-ui:** 思考行默认收起、换 lucide brain 图标并修展开首行空白 ([b8c6de2](https://github.com/AuroraAeon/AuroraAgent/commit/b8c6de2ae374aeb7a3407cd07f5680737cf77fea))
+
 ## [7.2.0](https://github.com/AuroraAeon/AuroraAgent/compare/v7.1.0...v7.2.0) (2026-09-28)
 
 
