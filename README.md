@@ -203,7 +203,7 @@ Bundle 结构：
 │   │   ├── app/             # React 工作台构建产物（/app/ 服务，哈希资产长缓存）
 │   │   ├── icon.svg         # AuroraAgent 品牌标识（App 图标同款）
 │   │   └── vendors/         # 各接入厂商的标识（meituan.svg …）
-│   ├── test/                # mock 上游 + 319 个测试
+│   ├── test/                # mock 上游 + 409 个测试
 │   └── tools/               # color-test / install-service / build-app
 ├── Resources/docs/          # figures/（学术图与原始数据）+ figure-work/（图表脚本）
 ├── AppIcon.icns
