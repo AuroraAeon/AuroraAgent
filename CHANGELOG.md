@@ -2,6 +2,14 @@
 
 本文件记里程碑版本（Keep a Changelog 格式，中文）。逐提交的发布笔记由 `npm run docs:notes` 从 git 历史生成，进文档站 `release-notes` 页。
 
+## [7.3.2](https://github.com/AuroraAeon/AuroraAgent/compare/v7.3.1...v7.3.2) (2026-09-29)
+
+
+### Bug Fixes
+
+* **update:** 更新检查缓存按本地版本号作 key，版本一变旧结论作废 ([5440a34](https://github.com/AuroraAeon/AuroraAgent/commit/5440a3432b795e734c63740dff52b18e30ed929b))
+* **web-ui:** 修侧栏搜索钮错位与点击展开溢出两处布局缺陷 ([6e2fbb5](https://github.com/AuroraAeon/AuroraAgent/commit/6e2fbb5922528d9c0529a9dd62f9cc034b188e05))
+
 ## [7.3.1](https://github.com/AuroraAeon/AuroraAgent/compare/v7.3.0...v7.3.1) (2026-09-29)
 
 
