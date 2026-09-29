@@ -212,7 +212,7 @@ Bundle 结构：
 
 ## 自动发布（GitHub Actions）
 
-仓库接入 `.github/workflows/release.yml`：每次 push 到 `master`（含 PR）先由 GitHub Actions 跑 `npm test`；push 场景测试全绿后，[release-please](https://github.com/googleapis/release-please) 按常规提交信息（`feat` / `fix` 前缀，主题分隔冒号须半角 `:`——全角 `：` 会致 release-please 解析失败、该条不进发布说明）自动开或更新一个「发布 PR」——内含版本号提升（只动 `package.json`）与按提交分组的发布说明。合并该发布 PR 即自动打 tag 并创建 GitHub Release，无需手动操作（版本基线锚点为 tag `v7.0.0`；仓库需允许 GitHub Actions 创建 PR，且工作流默认权限为 write）。文档站的发布笔记页仍由本地 `npm run docs:notes` 生成后随仓库提交。
+仓库接入 `.github/workflows/release.yml`：每次 push 到 `master`（含 PR）先由 GitHub Actions 跑 `npm test`；push 场景测试全绿后，[release-please](https://github.com/googleapis/release-please) 按常规提交信息（`feat` / `fix` 前缀，主题分隔冒号须半角 `:`——全角 `：` 会致 release-please 解析失败、该条不进发布说明）自动开或更新一个「发布 PR」——内含版本号提升（只动 `package.json`）与按提交分组的发布说明。合并该发布 PR 即自动打 tag 并创建 GitHub Release，无需手动操作（版本基线锚点为 tag `v7.0.0`；仓库需允许 GitHub Actions 创建 PR，且工作流默认权限为 write）。发布分支由 secret `RELEASE_PLEASE_TOKEN`（classic PAT，`repo` scope；未配置则回退 `GITHUB_TOKEN`）推送——用 `GITHUB_TOKEN` 时 GitHub 把 `github-actions[bot]` 判为「首次贡献者」，发布 PR 上的 CI 会停在 `action_required` 等人工审批而永不执行，换用有写权限的 PAT 属主即恢复。文档站的发布笔记页仍由本地 `npm run docs:notes` 生成后随仓库提交。
 
 ## 自定义提供方（接任意上游）
 

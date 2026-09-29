@@ -76,7 +76,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 | `tools/install-service.mjs` | LaunchAgent 安装 / 卸载 / 状态（plist 生成规则与 `web.mjs` 内置逻辑保持一致） |
 | `tools/build-app.mjs` | 打包 `.app`（含自保护，见第 5 节） |
 | `tools/color-test.mjs` | 纯色识别回归测试工具（结论沉淀在 `docs/`） |
-| `.github/workflows/release.yml` | CI + 自动发布：push `master` 先跑 `npm test`，全绿后 release-please 按常规提交开发布 PR，合并即打 tag 建 GitHub Release |
+| `.github/workflows/release.yml` | CI + 自动发布：push `master` 先跑 `npm test`，全绿后 release-please 按常规提交开发布 PR，合并即打 tag 建 GitHub Release；release-please 用 `RELEASE_PLEASE_TOKEN`（classic PAT，未配则回退 `GITHUB_TOKEN`）推送发布分支——用 `GITHUB_TOKEN` 会让发布 PR 的 CI 因 `github-actions[bot]` 的「首次贡献者」判定停在 `action_required` 永不执行 |
 | `tools/gen-release-notes.mjs` | 发布笔记生成：git 历史按 feat/fix/... 分组，幂等注入文档站发布笔记页标记区（`npm run docs:notes`） |
 | `docs/` | 测试结论与学术图表（PNG / SVG / PDF + CSV；**TIFF 永不再进仓库**）；终端设计规范已迁入文档站 `docs-site/zh/reference/tui-design.md`（单一真值源） |
 | `docs-site/` | VitePress 文档站（中文为主 + 英文镜像）：`zh/` `en/` 的 guides / reference / release-notes；写作规约见 `docs-site/AGENTS.md`；发布笔记由 `tools/gen-release-notes.mjs` 从 git 历史生成 |
@@ -105,7 +105,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 
 调试：`LOG_LEVEL=debug npm run web`；常驻服务日志在 `~/Library/Logs/com.auroraagent.app.log`。
 
-发布：push 到 `master` 触发 `.github/workflows/release.yml`——先跑 `npm test`（Linux runner 需补装 `zsh`，Node 固定 24），全绿后 release-please 按常规提交（`feat` → 次版本、`fix` → 修订号，`docs` / `chore` 等不触发）开或更新「发布 PR」（版本号只动 `package.json` 一处 + 生成 `CHANGELOG.md`）；合并发布 PR 即打 tag 并创建 GitHub Release。版本基线锚点为 tag `v7.0.0`（commit `86e2276`）；仓库须开启 「Allow GitHub Actions to create and approve pull requests」且 workflow 默认权限为 write，否则 release-please 建不了 PR。文档站发布笔记仍走本地 `npm run docs:notes`。提交主题的分隔冒号须用半角 `:`（规约见第 11 节）——release-please 解析不了全角 `：`，那条提交会不进发布说明。
+发布：push 到 `master` 触发 `.github/workflows/release.yml`——先跑 `npm test`（Linux runner 需补装 `zsh`，Node 固定 24），全绿后 release-please 按常规提交（`feat` → 次版本、`fix` → 修订号，`docs` / `chore` 等不触发）开或更新「发布 PR」（版本号只动 `package.json` 一处 + 生成 `CHANGELOG.md`）；合并发布 PR 即打 tag 并创建 GitHub Release。版本基线锚点为 tag `v7.0.0`（commit `86e2276`）；仓库须开启 「Allow GitHub Actions to create and approve pull requests」且 workflow 默认权限为 write，否则 release-please 建不了 PR。发布分支由 `RELEASE_PLEASE_TOKEN`（classic PAT，`repo` scope；未配则回退 `GITHUB_TOKEN`，不阻断发布）推送——`GITHUB_TOKEN` 推送的分支触发 `pull_request` 事件时，GitHub 把 `github-actions[bot]` 当「首次贡献者」（无任何贡献历史），run 停在 `action_required` 等人工审批、CI 永不执行；换成有写权限的 PAT 属主即恢复。该审批策略无「关闭」档，`approval_policy` 最松仅 `first_time_contributors_new_to_github`（`GET /repos/{owner}/{repo}/actions/permissions/fork-pr-contributor-approval`）。文档站发布笔记仍走本地 `npm run docs:notes`。提交主题的分隔冒号须用半角 `:`（规约见第 11 节）——release-please 解析不了全角 `：`，那条提交会不进发布说明。
 
 ## 3. 数据目录与配置
 

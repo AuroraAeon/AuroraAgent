@@ -36,5 +36,9 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # 优先用 classic PAT（secret RELEASE_PLEASE_TOKEN）：GITHUB_TOKEN 推送的发布分支会被
+          # GitHub 判定为「首次贡献者」（github-actions[bot] 无任何贡献历史），发布 PR 上的 CI 会
+          # 停在 action_required 等人工审批，永远跑不起来。PAT 属主有写权限，CI 才能正常执行。
+          # 未配置该 secret 时回退 GITHUB_TOKEN，行为与改造前一致（不阻断发布）。
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           release-type: node
