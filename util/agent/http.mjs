@@ -81,7 +81,16 @@ export function createAgentApi(deps) {
 
     if (req.method === 'GET' && url === '/api/agent/skills') {
       return json(res, 200, {
-        skills: skills.map(({ name, description, source }) => ({ name, description, source })),
+        // L1 目录 + L3 资源索引：正文仍按需加载，这里只给元数据与附属文件名
+        skills: skills.map((s) => ({
+          name: s.name, description: s.description, source: s.source,
+          resources: s.files.map((f) => f.path),
+          implicit: s.implicit,
+          compatibility: s.compatibility,
+          allowedTools: s.allowedTools,
+          bodyLines: s.bodyLines,
+          warnings: s.warnings,
+        })),
       });
     }
 
@@ -364,6 +373,7 @@ export function createAgentApi(deps) {
       const skillCmd = /^\/([A-Za-z0-9._-]+)[ \t]*([\s\S]*)$/.exec(raw);
       const hit = skillCmd ? findSkill(skills, skillCmd[1]) : null;
       const input = hit ? skillInvocationText(hit, skillCmd[2]) : raw;
+      const inputSkill = hit ? hit.name : ''; // 供 Loop 标记用户记录（压缩期保护技能规范）
       const cfg = loadConfig();
       const model = pickModel(body.model, got.meta.model || cfg.model);
       const provider = resolveChatProvider(body.provider || got.meta.provider, model);
@@ -395,7 +405,7 @@ export function createAgentApi(deps) {
       };
       try {
         await runAgentTurn({
-          store, usage, session: sessionMeta, input, provider, model, harness,
+          store, usage, session: sessionMeta, input, inputSkill, provider, model, harness,
           builtinPrice, skills,
           gen: { maxTokens: cfg.maxTokens, temperature: cfg.temperature, thinkingOn: body.thinking !== false },
           emit, controller, permissionMode, planMode, titleMode, extraTools: mcpTools(),

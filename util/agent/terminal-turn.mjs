@@ -21,7 +21,7 @@ const SWITCH_REASON_LABELS = { rate_limit: '上游限流', server: '上游故障
  * notifier（util/tui/notify.mjs）可选：完成 / 失败 / 授权 / 提问四类事件按 tui.notifications
  * 配置发系统通知（unfocused 时先尽力探测焦点，失败按未聚焦通知——宁可多响不漏响）。
  */
-export async function runTerminalTurn({ store, usage, session, input, provider, model, harness, cfg, painter, ask, onUsage, onSession, hooks, extraTools = [], goalStore = null, notifier = null, failoverCandidates = null, providerFailover = true, providerFailoverMaxAttempts,
+export async function runTerminalTurn({ store, usage, session, input, inputSkill = '', provider, model, harness, cfg, painter, ask, onUsage, onSession, hooks, extraTools = [], goalStore = null, notifier = null, failoverCandidates = null, providerFailover = true, providerFailoverMaxAttempts,
   failoverState = null, failoverTimeouts = null, failoverQueue = null }) {
   const started = Date.now();
   let phase = 'idle'; // idle -> think -> text
@@ -203,7 +203,7 @@ export async function runTerminalTurn({ store, usage, session, input, provider, 
   phase = 'idle';
   try {
     await runAgentTurn({
-      store, usage, session, input, provider, model, harness, builtinPrice: PRICE,
+      store, usage, session, input, inputSkill, provider, model, harness, builtinPrice: PRICE,
       gen: { maxTokens: cfg.maxTokens, temperature: cfg.temperature, thinkingOn: cfg.thinking },
       emit, controller: turnController, extraTools, goalStore, goalCfg: cfg.goal,
       permissionMode: cfg.permissionMode,

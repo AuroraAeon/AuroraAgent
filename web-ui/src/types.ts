@@ -114,7 +114,16 @@ export type FailoverSettings = {
 /** 故障转移队列（providers.json 顶层字段）：整队列替换 / 增删移，后端返回最新队列与提供方列表 */
 export type FailoverQueue = { ok: boolean; queue: string[]; providers: ProviderRow[] };
 
-export type SkillRow = { name: string; description: string; source: string };
+/** 技能行（L1 目录 + L3 资源索引；正文仍按需加载，接口只给元数据与附属文件名） */
+export type SkillRow = {
+  name: string; description: string; source: string;
+  resources: string[];        // 附属文件相对路径（references/ scripts/ assets/ …）
+  implicit: boolean;          // false = 仅允许 /<名称> 显式调用，不进模型可见目录
+  compatibility: string;      // 环境要求（frontmatter compatibility）
+  allowedTools: string[];     // 激活后本 turn 放行的工具（frontmatter allowed-tools）
+  bodyLines: number;          // 正文行数（>500 行建议拆分）
+  warnings: string[];         // 宽松校验告警（超限 / name 与目录不一致）
+};
 
 export type McpServerRow = {
   id: string; name: string; transport: 'stdio' | 'http';

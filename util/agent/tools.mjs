@@ -1,6 +1,7 @@
 /**
- * Agent 工具集：六个内置工具，全部经 JSON Schema 描述参数。
- * 安全边界（v1，文档如实说明）：文件工具经 resolveInside 禁锢在会话工作目录；
+ * Agent 工具集：十一个内置工具，全部经 JSON Schema 描述参数。
+ * 安全边界（文档如实说明）：写类文件工具经 resolveInside 禁锢在会话工作目录；读类工具
+ * 额外放开「已加载技能目录」这一只读白名单根，供模型读取技能附属的 references / scripts / assets；
  * shell 以工作目录为 cwd 执行、带超时与输出截断，但无 OS 级沙箱——
  * 真正的门控是 policy.mjs 的权限决策与前端确认流。
  */
@@ -9,7 +10,7 @@ import { spawn } from 'node:child_process';
 import { resolve, sep, dirname, join, relative } from 'node:path';
 import { toOpenAIFunction, toAnthropicTool } from '../llm/tool.mjs';
 import { proxyFetch } from '../proxy.mjs';
-import { findSkill } from './skills.mjs';
+import { findSkill, renderSkillContent, skillDirs, SKILL_FOLLOWUP } from './skills.mjs';
 
 const MAX_OUTPUT = 32 * 1024;   // 单次工具回给模型的文本上限
 const MAX_FETCH = 64 * 1024;    // web_fetch 正文上限
@@ -22,13 +23,27 @@ export class ToolError extends Error {
   }
 }
 
-/** 把用户/模型给的路径解析到工作目录内，越界即拒（防 .. 穿越与绝对路径逃逸） */
-export function resolveInside(root, p) {
+/** 把用户/模型给的路径解析到工作目录内，越界即拒（防 .. 穿越与绝对路径逃逸）；
+ *  extraRoots 是只读白名单根（已加载技能的绝对目录），让模型能读技能附属的
+ *  references / scripts / assets——只有读类工具会传它，写类工具一律只认工作目录 */
+export function resolveInside(root, p, extraRoots = []) {
   const abs = resolve(root, String(p || ''));
-  if (abs !== root && !abs.startsWith(root + sep)) {
-    throw new ToolError(`路径越界：${p} 不在工作目录内（文件工具只能访问工作目录）`, 'path_escape');
+  if (abs === root || abs.startsWith(root + sep)) return abs;
+  for (const r of extraRoots || []) {
+    if (r && (abs === r || abs.startsWith(r + sep))) return abs;
   }
-  return abs;
+  throw new ToolError(`路径越界：${p} 不在工作目录或已加载的技能目录内`, 'path_escape');
+}
+
+/** 读类工具的允许根集合：会话工作目录 + 已加载技能目录（写类工具不放开） */
+function readRoots(ctx) {
+  return ctx?.skills ? skillDirs(ctx.skills) : [];
+}
+
+/** 展示路径：工作目录内用相对路径，白名单根内（技能附属文件）用绝对路径，便于回传给 read_file */
+function displayPath(ctx, abs) {
+  const rel = relative(ctx.workspace, abs);
+  return rel && !rel.startsWith('..') ? rel.split(sep).join('/') : abs.split(sep).join('/');
 }
 
 function truncate(text, limit = MAX_OUTPUT) {
@@ -147,7 +162,7 @@ export const TOOLS = [
       required: ['path'],
     },
     run(args, ctx) {
-      const abs = resolveInside(ctx.workspace, args.path);
+      const abs = resolveInside(ctx.workspace, args.path, readRoots(ctx));
       let st;
       try { st = statSync(abs); } catch { throw new ToolError(`文件不存在：${args.path}`, 'not_found'); }
       if (st.isDirectory()) throw new ToolError(`${args.path} 是目录，请改用 list_dir`, 'is_dir');
@@ -170,7 +185,7 @@ export const TOOLS = [
       properties: { path: { type: 'string', description: '相对工作目录的目录路径，省略则为工作目录根' } },
     },
     run(args, ctx) {
-      const abs = resolveInside(ctx.workspace, args.path || '.');
+      const abs = resolveInside(ctx.workspace, args.path || '.', readRoots(ctx));
       let st;
       try { st = statSync(abs); } catch { throw new ToolError(`目录不存在：${args.path}`, 'not_found'); }
       if (!st.isDirectory()) throw new ToolError(`${args.path} 不是目录，请改用 read_file`, 'not_dir');
@@ -318,7 +333,7 @@ export const TOOLS = [
     run(args, ctx) {
       let re;
       try { re = new RegExp(String(args.pattern || '')); } catch (e) { throw new ToolError(`正则无效：${e.message}`, 'bad_args'); }
-      const root = resolveInside(ctx.workspace, args.path || '.');
+      const root = resolveInside(ctx.workspace, args.path || '.', readRoots(ctx));
       const nameRe = args.glob ? fileGlobRe(args.glob) : null;
       const cap = Math.min(200, Math.max(1, Number(args.max_results) || 50));
       const hits = [];
@@ -329,7 +344,7 @@ export const TOOLS = [
         const text = readTextFile(abs);
         if (text == null) return;
         scanned++;
-        const rel = relative(ctx.workspace, abs) || '.';
+        const rel = displayPath(ctx, abs);
         const lines = text.split('\n');
         for (let i = 0; i < lines.length && hits.length < cap; i++) {
           if (re.test(lines[i])) hits.push(`${rel}:${i + 1}: ${lines[i].trimEnd().slice(0, 300)}`);
@@ -355,7 +370,7 @@ export const TOOLS = [
     run(args, ctx) {
       const pattern = String(args.pattern || '').trim();
       if (!pattern) throw new ToolError('pattern 不能为空', 'bad_args');
-      const root = resolveInside(ctx.workspace, args.path || '.');
+      const root = resolveInside(ctx.workspace, args.path || '.', readRoots(ctx));
       const hasSlash = pattern.includes('/');
       const re = globToRegExp(pattern);
       const out = [];
@@ -363,7 +378,7 @@ export const TOOLS = [
         if (out.length >= 500) return;
         const rel = relative(root, abs).split(sep).join('/');
         const target = hasSlash ? rel : rel.split('/').pop();
-        if (re.test(target)) out.push(relative(ctx.workspace, abs).split(sep).join('/'));
+        if (re.test(target)) out.push(displayPath(ctx, abs));
       });
       out.sort();
       if (!out.length) return `未匹配到 ${pattern}`;
@@ -413,7 +428,7 @@ export const TOOLS = [
   },
   {
     name: 'skill',
-    description: '加载一个技能的完整指令。当用户请求与系统提示技能目录里某个技能的描述匹配时调用；返回的文本是本次任务必须遵循的规范',
+    description: '加载一个技能的完整指令。当用户请求与系统提示技能目录里某个技能的描述匹配时调用；返回的文本是本次任务必须遵循的规范，并带出该技能的绝对目录与附属资源清单（references / scripts / assets，按需读取）',
     action: 'skill',
     parameters: {
       type: 'object',
@@ -427,7 +442,12 @@ export const TOOLS = [
         const names = skills.map((s) => s.name).join('、') || '（无）';
         throw new ToolError(`技能不存在：${args.name}。可用技能：${names}`, 'not_found');
       }
-      return `[技能：${skill.name}]\n${skill.body}\n[技能结束]\n请按照上述技能规范处理用户请求。`;
+      // 同一轮内重复激活：指令已在上下文里，短回执替代整篇正文，避免重复占额
+      if (ctx?.skillsLoaded?.has(skill.name)) {
+        return `[技能：${skill.name}] 已在本轮加载过，指令仍在上下文中，直接遵循即可，不要重复加载。`;
+      }
+      ctx?.skillsLoaded?.add(skill.name);
+      return `${renderSkillContent(skill)}\n${SKILL_FOLLOWUP}`;
     },
   },
   {

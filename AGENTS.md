@@ -19,7 +19,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 - 可打包为独立 macOS Application（`~/Applications/AuroraAgent.app`，显示名 AuroraAgent），由 LaunchAgent `com.auroraagent.app` 常驻
 - 当前接入厂商：美团 LongCat-2.5-Preview。Base URL / 模型目录 / Key 全部是配置项——**代码不绑定厂商**，接入新厂商不改架构
 - 自定义 Provider：设置页可加任意 OpenAI 兼容 / Anthropic Messages 上游（存储、校验、发现、路由在 `util/providers.mjs` + `util/wire.mjs`，前端在 `web-ui/src/components/ProviderEditor.tsx`）；内置提供方只读，请求载荷保持历史形态；多提供方故障转移：429 / 5xx / 网络失败 / 超时 / HTTP 200 的错误 envelope 时连接期自动切换到提供同模型的其它提供方重试（判定与配置在 `util/llm/failover.mjs`，编排在 `util/llm/provider.mjs`，跨请求熔断器在 `util/llm/circuit.mjs`、运行时状态落 `util/llm/failover-state.mjs`，turn 内粘性与记账归属在 `util/agent/loop.mjs`；候选按用户编排的故障转移队列优先，转移成功后同模型热切换偏好优先，用户无感知、失败尝试不记账）
-- Agent 能力面（6.0.0 起对齐 kimi-code 能力模型，7.0.0 起对齐 MiniMax-code goal 能力，全部零依赖自实现）：Goal 目标模式（一会话一目标、六态状态机、三维预算 + 双熔断、evaluator / subagent 独立验证、轮内自动续跑、`/goal` 与 GoalBar 双端操作（网页 Composer 在生成中亦接受 `/goal` 家族命令，直走 goal REST，异步回调带会话归属校验防串会话））、技能（`skills/` 内置 + `<数据目录>/skills/` 用户，frontmatter 目录常驻系统提示，`/<技能名>` 斜杠命令与 `skill` 工具按需加载正文）、子代理（`task` 工具派发受限子 turn）、计划模式（先出计划、批准才执行）、权限三档（`always_ask` / `ask_when_needed` / `never_ask`）、MCP 客户端（stdio / HTTP 双传输，`AURORAAGENT_EXPERIMENTAL_MCP=1` 门控，默认关）
+- Agent 能力面（6.0.0 起对齐 kimi-code 能力模型，7.0.0 起对齐 MiniMax-code goal 能力，全部零依赖自实现）：Goal 目标模式（一会话一目标、六态状态机、三维预算 + 双熔断、evaluator / subagent 独立验证、轮内自动续跑、`/goal` 与 GoalBar 双端操作（网页 Composer 在生成中亦接受 `/goal` 家族命令，直走 goal REST，异步回调带会话归属校验防串会话））、技能（`skills/` 内置 + `<数据目录>/skills/` 用户，三层渐进式披露：name + description 常驻系统提示且受 token 预算治理、`SKILL.md` 正文被触发时整篇加载、`references/` `scripts/` `assets/` 附属文件经只读白名单根按需读取；`implicit: false` 仅允许显式调用；激活内容免上下文压缩；`/<技能名>` 斜杠命令与 `skill` 工具按需加载正文）、子代理（`task` 工具派发受限子 turn）、计划模式（先出计划、批准才执行）、权限三档（`always_ask` / `ask_when_needed` / `never_ask`）、MCP 客户端（stdio / HTTP 双传输，`AURORAAGENT_EXPERIMENTAL_MCP=1` 门控，默认关）
 
 ## 1. 架构地图
 
@@ -52,7 +52,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 | `util/agent/terminal.mjs` | 终端 REPL 协调器：readline + 声明式斜杠命令表（`defineCommands`，含 `/goal` 家族与 `/btw`）+ footer 状态条 + 可搜索选择器；OSC 标题实时改写（挂起经不可捕获 SIGSTOP 真正停下）、系统通知接线；`Ctrl+/` 主 / 侧边对话切换；`-p` 单次提问；行数预算内拆出下面两个模块 |
 | `util/agent/terminal-turn.mjs` | 终端 turn 渲染器：AgentEvent → 思考流 / 工具单行 / 权限 y/n/a / 用量脚注；Ctrl+C 经 rl 'SIGINT' 事件中转中断（raw mode 下无真信号） |
 | `util/agent/terminal-format.mjs` | 终端渲染纯助手：工具标签、截断、费用格式化、输出缩进（coordinator 与 turn 渲染器共用；标签与费用已转置到 `transcript.mjs` 同源） |
-| `util/agent/skills.mjs` | 技能系统：frontmatter（name + description）解析、内置 + 用户双目录、目录清单注入系统提示、`/<技能名>` 斜杠命令与 `skill` 工具按需加载正文 |
+| `util/agent/skills.mjs` | 技能系统（对齐 Agent Skills 规范的三层渐进式披露）：frontmatter（name / description 必填，license / compatibility / metadata / allowed-tools / implicit 可选）宽松解析、内置 + 用户双目录、附属资源索引（`references/` `scripts/` `assets/`，只记路径不读内容）、L1 目录块带 4000 token 预算治理、L2 结构化激活包裹（正文 + 技能绝对目录 + 资源清单）、`skillDirs` 只读白名单根、`/<技能名>` 斜杠命令与 `skill` 工具按需加载正文（同轮去重） |
 | `util/agent/plan.mjs` | 计划模式：计划轮只读 / 检索 / 待办工具白名单（单点定义）、批准后作为既定契约注入执行轮、驳回以 `plan_rejected` 收尾 |
 | `util/agent/swarm.mjs` | 子代理：`task` 工具派发受限子 turn（真实子会话透明可查、嵌套深度封顶 2 层、单次上限 4 个、父中止级联），终稿经工具结果聚合回父模型 |
 | `util/agent/goal/` | Goal 目标模式（语义对齐 MiniMax-code thread-goal，一会话一目标）：`types.mjs` 六态状态机 + statusReason 闭集 + 读路径归一化；`store.mjs` 原子落盘 + CAS 纪元严格推进；`tools.mjs` create_goal / update_goal / get_goal（名字与 schema 对齐 codex，混合模式拒绝）；`budget.mjs` 三维预算（token / 轮次 / 活跃秒数）触顶与收尾轮 + 用量芯片；`breaker.mjs` 回复指纹 + 无工具双熔断；`config.mjs` goal 段解析（单叶容错 + 钳制）；`verification.mjs` evaluator / subagent 验证与结算；`continuation.mjs` 轮内自动续跑；`runtime.mjs` 编排入口；`actions.mjs` 用户面操作单一事实源（REST 与终端共用）；`bus.mjs` 进程内事件总线（REST 变更按 sessionId 扇出给 SSE 订阅方，对齐 MiniMax 全局事件投影） |

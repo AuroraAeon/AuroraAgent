@@ -11,7 +11,7 @@
 - **权限门控**（`util/agent/policy.mjs`）：只读工具默认放行，写文件 / 编辑 / 执行命令必须经你确认；「总是允许」沉淀为会话级规则，不是全局放行
 - **上下文压缩**（`util/agent/context.mjs`）：token 估算超过窗口阈值（默认 128k 的 70%）时，把早期对话经一轮模型调用总结为 summary 记录，保留近期尾部原文
 - **三档 Harness 模式**（`util/agent/harness.mjs`）：模式决定任务怎么被完成——系统提示、可用工具、轮次上限、压缩阈值都随模式变化
-- **技能与扩展**：`skills/` 内置 + `<数据目录>/skills/` 用户技能（frontmatter 目录常驻系统提示，`/<技能名>` 斜杠命令与 `skill` 工具按需加载正文）；`task` 工具派发子代理并行处理相互独立的子任务并聚合结果；MCP 客户端（实验特性，stdio / HTTP 双传输）把外部服务器工具接入同一套工具接口
+- **技能与扩展**：`skills/` 内置 + `<数据目录>/skills/` 用户技能，三层渐进式披露（名称与描述常驻且受 token 预算治理、`SKILL.md` 正文按需整篇加载、`references/` `scripts/` `assets/` 附属文件经只读白名单根按需读取，激活内容免上下文压缩）；`/<技能名>` 斜杠命令与 `skill` 工具按需加载正文；`task` 工具派发子代理并行处理相互独立的子任务并聚合结果；MCP 客户端（实验特性，stdio / HTTP 双传输）把外部服务器工具接入同一套工具接口
 - **Goal 目标模式**（`util/agent/goal/`）：给会话挂一个跨轮次存续的目标——模型自主推进、独立验证、自动续跑，直到完成、受阻或预算耗尽；六态状态机 + 三维预算（token / 轮次 / 活跃时长）+ 无进展双熔断，你随时可暂停 / 恢复 / 改预算（`/goal`、GoalBar、`POST /api/agent/goal/*`）
 - **按轮记账**：每一轮模型请求经 `util/usage.mjs` 按提供方单价结算，会话内可看到每轮输入 / 输出与费用
 - **事件协议**（`util/agent/events.mjs`）：`turn_started` / `model_round_started` / `text_chunk` / `thinking_chunk` / `tool_event` / `token_usage_updated` / `context_compression_*` / `turn_completed|cancelled|failed`，统一 SSE 帧封装，终端与网页共用
@@ -48,7 +48,7 @@ npm run web       # 网页工作台 http://localhost:8787
 | `grep` | 工作目录内正则检索（文件名 + 行号 + 命中行，预算截断） | 放行 |
 | `glob` | 按 glob 模式找文件（大小写敏感、忽略 `node_modules`） | 放行 |
 | `todo` | 规划清单维护（增项 / 更新状态，随会话持久化） | 放行 |
-| `skill` | 按名称加载技能正文（frontmatter 目录常驻系统提示） | 放行 |
+| `skill` | 按名称加载技能正文（L1 目录常驻系统提示；返回正文 + 技能绝对目录 + 附属资源清单） | 放行 |
 | `task` | 派发子代理：受限子 turn 并行处理自含子任务并聚合结果 | 放行 |
 | `create_goal` | 建立跨轮次目标（仅 Standard / Ultimate；已存在未完成目标时失败） | 放行 |
 | `update_goal` | 提案 complete / blocked；用户显式要求时带新鲜快照改 token 预算（CAS 纪元校验） | 放行 |
@@ -135,7 +135,7 @@ Agent 运行时（`/api/agent/*`，单活跃 turn：已有 turn 在跑时返回 
 | `POST /api/agent/abort` | 中止当前 turn，保留已生成内容 |
 | `POST /api/agent/permission` | 权限决策回传：`{requestId, decision: 'allow'\|'deny'\|'always'}` |
 | `POST /api/agent/plan` | 计划决策回传：`{sessionId, requestId, approve: true\|false}` |
-| `GET /api/agent/skills` | 技能目录（内置 + 用户，name + description + 来源） |
+| `GET /api/agent/skills` | 技能目录（内置 + 用户：name / description / 来源 / 附属资源清单 / implicit / compatibility / allowedTools / 正文行数 / 告警；不含正文） |
 | `GET /api/agent/harnesses` | 三档模式契约 |
 | `GET /api/agent/goal/:id` | 读会话目标（无目标回 `{ goal: null }`） |
 | `POST /api/agent/goal` | 创建目标（未完成目标已存在时 409 `GOAL_STATUS_CONFLICT`） |
@@ -235,7 +235,7 @@ npm run docs:dev    # 本地起文档站
 
 - `npm test` 397/397 通过（mock 上游，不花额度，含仓库守卫：零 emoji / TUI 颜色单一真值源 / 对比度 / 行数预算 / 过渡动画纪律 / 文档站结构 / 文档新鲜度 / 架构地图覆盖）；`npm run check` 真实 API 连通（Key 有效 + 模型目录 + 测试请求）
 - 性能基准：`npm run bench`（basic 套件：startup / upstream-100 / history-300 三场景，采样 wall / CPU / peak-RSS），方法论与本地基线见 `docs/perf-baseline.md`，只作回归参考不作门禁
-- Agent e2e 覆盖：会话 CRUD；完整 turn（工具调用 → 权限允许 → workspace 落盘 → 二轮出终稿）；权限拒绝后循环继续；路径穿越拒绝；shell 执行与超时；turn 中途 abort；harness 列表；上下文压缩触发；每轮用量记账；技能斜杠注入与 skill 工具加载；todo 维护；edit_file diff 回传；计划批准 / 驳回两阶段；首条消息自动总结会话标题（默认名才套用、事件推送、落元信息；local 本地推导与 model 调模型两路，模型失败回退本地、成本记 purpose=title 账）；task 派发子代理并汇总（子会话可查）；MCP 注册与工具调用（实验）；Goal 全链路（create_goal → 提案完成 / 预算触顶转 budget_limited + 收尾轮 / 空转续跑 / evaluator 裁决 met 与 not_met 连击两条路径）；Goal REST 冲突与纪元边界；`/goal` 命令解析单测（预算 K/M 后缀、clear 同义词、旧式空格、edit/clear/help、错误分支）与 edit / clear 动作与 REST e2e（改写 trim、空白 400、无目标 404、已完成 409、clear 幂等）；会话派生逐条一致复制；`@` 提及时文件搜索与 404；终端偏好读写与坏值 400；多提供方故障转移（主提供方 429 自动换路并记账到新提供方、候选耗尽报最后一次真实错误、`/api/chat` 换路、401 不转移、故障转移偏好读写）
+- Agent e2e 覆盖：会话 CRUD；完整 turn（工具调用 → 权限允许 → workspace 落盘 → 二轮出终稿）；权限拒绝后循环继续；路径穿越拒绝；shell 执行与超时；turn 中途 abort；harness 列表；上下文压缩触发；每轮用量记账；技能斜杠注入与 skill 工具加载（结构化包裹 + 技能绝对目录 + 附属资源清单、同轮重复激活去重）；模型经只读白名单根读技能 `references/` 附属文件；技能内容免上下文压缩；todo 维护；edit_file diff 回传；计划批准 / 驳回两阶段；首条消息自动总结会话标题（默认名才套用、事件推送、落元信息；local 本地推导与 model 调模型两路，模型失败回退本地、成本记 purpose=title 账）；task 派发子代理并汇总（子会话可查）；MCP 注册与工具调用（实验）；Goal 全链路（create_goal → 提案完成 / 预算触顶转 budget_limited + 收尾轮 / 空转续跑 / evaluator 裁决 met 与 not_met 连击两条路径）；Goal REST 冲突与纪元边界；`/goal` 命令解析单测（预算 K/M 后缀、clear 同义词、旧式空格、edit/clear/help、错误分支）与 edit / clear 动作与 REST e2e（改写 trim、空白 400、无目标 404、已完成 409、clear 幂等）；会话派生逐条一致复制；`@` 提及时文件搜索与 404；终端偏好读写与坏值 400；多提供方故障转移（主提供方 429 自动换路并记账到新提供方、候选耗尽报最后一次真实错误、`/api/chat` 换路、401 不转移、故障转移偏好读写）
 - 网页工作台经浏览器实测完整 turn：权限卡允许 → 写文件 → 二轮终稿 → 按轮分组的思考 / 工具 / 用量脚注
 - 终端实测：权限 y/n 两条路径、`/help` `/sessions` `/new` `/model` `/harness`、拒绝后续跑均正常；OSC 标题设置 / 清除、`/goal` 家族命令与状态栏目标芯片、`/btw` 侧边对话与 `Ctrl+/` 切换均经 PTY 实测
 - 自定义提供方：设置页可接任意 OpenAI 兼容网关或 Anthropic Messages 上游；账本按提供方单价计价（只填一侧时另一侧回退内置价）；内置 LongCat 请求载荷与接入前逐字节一致（有专门测试守着）

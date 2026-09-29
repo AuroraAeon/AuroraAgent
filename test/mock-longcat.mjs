@@ -4,6 +4,11 @@
  * 同时复刻一个「自定义提供方」端点 /v1/models，供自定义 Provider 的质问与路由测试使用。
  */
 import http from 'node:http';
+import { join } from 'node:path';
+import { builtinSkillsDir } from '../util/agent/skills.mjs';
+
+/** L3 附属资源读取夹具：模型经只读白名单根读内置技能的 references 文件 */
+const SKILL_REF_FILE = join(builtinSkillsDir(), 'auroraagent-ops', 'references', 'commands.md');
 
 export function startMock(port = 18901) {
   const state = { requests: [], lastChatBody: null, lastChatMeta: null, flakyDone: false, toolCallSeq: 0 };
@@ -76,7 +81,9 @@ export function startMock(port = 18901) {
         // Agent 工具轮：USE_TOOL 且尚无工具结果时先要一次 read_file；带回结果后原文复述（供测试断言回填）
         const hasToolResult = Array.isArray(j.messages) && j.messages.some((m) => m.role === 'tool');
         const toolEcho = hasToolResult ? j.messages.filter((m) => m.role === 'tool').map((m) => (typeof m.content === 'string' ? m.content : '')).join(' | ') : '';
-        const isSkillRound = lastText.includes('USE_SKILL') && !hasToolResult;
+        const isSkillRound = lastText.includes('USE_SKILL') && !lastText.includes('USE_SKILL_REF') && !hasToolResult;
+        // USE_SKILL_REF：模型读技能附属文件（L3 只读白名单根），路径用绝对技能目录
+        const isSkillRefRound = lastText.includes('USE_SKILL_REF') && !hasToolResult;
         const isTodoRound = lastText.includes('USE_TODO') && !hasToolResult;
         const isEditRound = lastText.includes('USE_EDIT') && !hasToolResult;
         // 计划模式两轮：计划轮（USE_PLAN 且未见批准注入）只回计划文本不调工具；批准后执行轮回终稿
@@ -123,7 +130,7 @@ export function startMock(port = 18901) {
           || (body.includes('【目标验证未通过') && lastToolText.includes('已记录'))
           || isGoalTurn2Proposal
         );
-        const isToolRound = (((lastText.includes('USE_TOOL') || isSkillRound || isTodoRound || isEditRound || isSwarmRound || isMcpRound) && !hasToolResult) || isGoalCreateRound || isGoalTurn2Read || isGoalProposalRound);
+        const isToolRound = (((lastText.includes('USE_TOOL') || isSkillRound || isSkillRefRound || isTodoRound || isEditRound || isSwarmRound || isMcpRound) && !hasToolResult) || isGoalCreateRound || isGoalTurn2Read || isGoalProposalRound);
         // 会话标题生成请求（titleMode=model）：系统提示带【会话标题生成】标记，回一个固定标题供断言
         const isTitleRound = body.includes('【会话标题生成】');
         const toolName = isGoalCreateRound ? 'create_goal' : isGoalProposalRound ? 'update_goal' : isSkillRound ? 'skill' : isTodoRound ? 'todo' : isEditRound ? 'edit_file' : isSwarmRound ? 'task' : isMcpRound ? 'mcp__mock__echo' : lastText.includes('USE_TOOL_WRITE') ? 'write_file' : 'read_file';
@@ -133,6 +140,7 @@ export function startMock(port = 18901) {
         const toolArgs = isGoalCreateRound ? { objective: createObjective, ...(isGoalBudgetRound ? { token_budget: 10 } : {}) }
           : isGoalProposalRound ? { mode: 'status', status: 'complete', summary: body.includes('USE_GOAL_VERIFY_MET') ? 'VERIFY_MET 已改写 README 安装章节并通过自检' : body.includes('USE_GOAL_VERIFY_RETRY') ? 'VERIFY_RETRY 已改写 README 安装章节' : body.includes('USE_GOAL_VERIFY') ? 'VERIFY_NOTMET 已改写 README 安装章节' : 'README 安装章节已改写并通过自检' }
           : isSkillRound ? { name: 'code-review' }
+          : isSkillRefRound ? { path: SKILL_REF_FILE }
           : isTodoRound ? { action: 'add', item: 'mock 待办事项' }
           : isEditRound ? { path: 'edit_me.txt', old_string: 'old', new_string: 'new' }
           : isSwarmRound ? { tasks: ['子任务甲：统计工作目录文件数', '子任务乙：读取 README 前 20 行'] }

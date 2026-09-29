@@ -404,7 +404,7 @@ export async function runTerminal({ argv = [] } = {}) {
   const skillCommands = skills.map((s) => ({
     name: s.name,
     summary: `[技能] ${s.description}`,
-    run: async (arg) => { await runTurn(skillInvocationText(s, arg)); },
+    run: async (arg) => { await runTurn(skillInvocationText(s, arg), false, s.name); },
   }));
   const commands = defineCommands([...baseCommands, ...skillCommands]);
 
@@ -421,13 +421,13 @@ export async function runTerminal({ argv = [] } = {}) {
   });
 
   // side=true 跑侧边对话：内存门面 store、不接管 goal、用量仍记真实账本
-  const runTurn = (input, side = false) => {
+  const runTurn = (input, side = false, skill = '') => {
     const target = side ? btw.meta : meta;
     return runTerminalTurn({
       extraTools: mcp ? mcp.tools : [],
       goalStore: side ? null : goals,
       store: side ? btw : store,
-      usage, session: target, input, skills,
+      usage, session: target, input, inputSkill: skill, skills,
       provider: providers.get(target.provider) || providers.providerForModel(target.model || cfg.model),
       model: target.model || cfg.model,
       harness: getHarness(target.harness),

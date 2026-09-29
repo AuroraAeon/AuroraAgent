@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { openChatStream } from '../llm/provider.mjs';
 import { consumeAgentStream, primeUpstreamStream } from '../stream.mjs';
 import { resolveTool, toolResource } from './tools.mjs';
+import { findSkill } from './skills.mjs';
 import { PermissionPolicy, defaultRules } from './policy.mjs';
 import { createSpawner } from './swarm.mjs';
 import { deriveTitle } from './title.mjs';
@@ -37,7 +38,7 @@ function settlePrice(provider, builtinPrice) {
  * 跑一个 turn。
  * @param ctx {
  *   store, usage, session, input, provider, model, harness, builtinPrice,
- *   gen: { maxTokens, temperature, thinkingOn }, skills = [],
+ *   gen: { maxTokens, temperature, thinkingOn }, skills = [], inputSkill = '',
  *   emit(type, payload), controller: AbortController,
  *   requestPermission({ toolId, toolName, params, resource }) => 'allow'|'deny'|'always',
  *   requestPlanDecision({ plan }) => 'approve'|'reject'（计划模式必传；缺省即不走计划阶段）,
@@ -49,7 +50,7 @@ function settlePrice(provider, builtinPrice) {
 export async function runAgentTurn(ctx) {
   const {
     store, usage, session, input, provider, model, harness, builtinPrice,
-    gen = {}, skills = [], extraTools = [], emit, controller, requestPermission, requestPlanDecision,
+    gen = {}, skills = [], extraTools = [], inputSkill = '', emit, controller, requestPermission, requestPlanDecision,
     permissionMode = 'ask_when_needed', planMode = false, titleMode = DEFAULT_TITLE_MODE, depth = 0,
     agentProxy = '', goalStore = null, goalCfg = null, log = () => {},
     // 多提供方故障转移：candidates 由 HTTP 面按模型目录注入（直连 Loop 的旧调用方不传即不转移）
@@ -102,7 +103,8 @@ export async function runAgentTurn(ctx) {
     },
   });
 
-  store.append(sessionId, { t: 'user', text: input });
+  // 斜杠技能注入的用户记录带 skill 标记：压缩期据此完整保留技能规范，不当普通对话摘掉
+  store.append(sessionId, { t: 'user', text: input, ...(inputSkill ? { skill: inputSkill } : {}) });
   store.patch(sessionId, { turns: (session.turns || 0) + 1 });
 
   let totIn = 0, totOut = 0, totCost = 0;
@@ -233,6 +235,19 @@ export async function runAgentTurn(ctx) {
       .catch(() => { controller.signal.removeEventListener('abort', onAbort); goalRt?.wait(null); resolve('reject'); });
   });
 
+  // 技能激活去重（本 turn 内）+ allowed-tools 授权：grantAlways 直接改 policy.rules（当轮即生效），
+  // 同步进 sessionRules 只是让派发的子代理继承同一授权；两处都不 store.patch，故不落会话 meta
+  const skillsLoaded = new Set();
+  const grantSkillTools = (skillName) => {
+    const skill = findSkill(skills, skillName);
+    if (!skill?.allowedTools?.length) return;
+    for (const tool of skill.allowedTools) {
+      const exists = sessionRules.some((r) => r.action === tool && r.resource === '*' && r.effect === 'allow');
+      if (!exists) sessionRules.push(policy.grantAlways(tool, '*'));
+    }
+  };
+  if (inputSkill) { skillsLoaded.add(inputSkill); grantSkillTools(inputSkill); }
+
   let messages = assembleMessages({ harness, workspace: session.workspace, records, skills });
   let round = 0;
   let finalText = '';
@@ -327,11 +342,12 @@ export async function runAgentTurn(ctx) {
         }
         if (ok) {
           try {
-            const res = await tool.run(safeArgs(call.arguments), { workspace: session.workspace, skills, todoStore, spawn, proxy: agentProxy });
+            const res = await tool.run(safeArgs(call.arguments), { workspace: session.workspace, skills, todoStore, spawn, proxy: agentProxy, skillsLoaded });
             // 工具可返回字符串或 { output, extra }：extra 是结构化负载（diff / todos），
             // 进转录与 tool_event 供两端渲染，但不进模型消息（模型只看 output 文本）
             if (res && typeof res === 'object') { output = String(res.output ?? ''); extra = res.extra; }
             else { output = String(res ?? ''); }
+            if (call.name === 'skill') grantSkillTools(safeArgs(call.arguments).name);
           } catch (e) { ok = false; output = `工具执行失败：${e.message}`; }
         }
       }

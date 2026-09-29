@@ -35,7 +35,7 @@ export function needsCompaction(messages, { windowTokens = DEFAULT_WINDOW, ratio
  * summary 记录投影为系统消息（早期摘要）；thinking / usage 不回填（省 token 且不污染上下文）。
  */
 export function assembleMessages({ harness, workspace, records = [], skills = [], extraSystem = '' }) {
-  const catalog = skillCatalogBlock(skills);
+  const catalog = skillCatalogBlock(skills); // L1 目录：带 token 预算，超预算的技能只留 /<名称> 显式入口
   const system = [
     harness.systemPrompt,
     '',
@@ -94,15 +94,21 @@ export function planCompaction(records = [], keepTurns = 4) {
   return { head: records.slice(0, cut), tail: records.slice(cut) };
 }
 
-/** 总结用的消息序列（无工具、纯文本） */
+/** 总结用的消息序列（无工具、纯文本）。
+ *  技能内容是必须持续遵循的规范，压缩时完整保留、不按通用上限截断：
+ *  skill 工具结果与带 skill 标记的用户记录（/<技能名> 斜杠注入）都不许被摘丢。 */
 export function compactionMessages(head = []) {
   const transcript = head.map((r) => {
     if (r.t === 'tool_call') return `[调用工具 ${r.name}] ${JSON.stringify(r.args || {})}`;
-    if (r.t === 'tool_result') return `[工具结果] ${String(r.output || '').slice(0, 500)}`;
+    if (r.t === 'tool_result') {
+      if (r.name === 'skill') return `[技能规范 ${r.name}] ${String(r.output || '')}`;
+      return `[工具结果] ${String(r.output || '').slice(0, 500)}`;
+    }
+    if (r.t === 'user' && r.skill) return `[用户 /${r.skill} 技能调用] ${String(r.text || '')}`;
     return `[${r.t}] ${String(r.text || '').slice(0, 1000)}`;
   }).join('\n');
   return [
-    { role: 'system', content: '你是对话压缩器。把下面的早期对话记录压缩成一份摘要，保留：关键事实与决定、涉及的文件路径、工具执行的结论、未解决的问题。用中文，300 字以内，不要客套。' },
+    { role: 'system', content: '你是对话压缩器。把下面的早期对话记录压缩成一份摘要，保留：关键事实与决定、涉及的文件路径、工具执行的结论、未解决的问题。带 [技能规范 ...] 或 [用户 /<技能名> 技能调用] 的内容是本次会话必须持续遵循的技能规范，摘要里要原样延续其要点，不得丢弃或改写。用中文，300 字以内，不要客套。' },
     { role: 'user', content: transcript },
   ];
 }

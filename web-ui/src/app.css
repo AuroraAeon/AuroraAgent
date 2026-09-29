@@ -1002,6 +1002,16 @@ html[data-code-wrap="on"] .md pre { white-space:pre-wrap; overflow-x:visible; wo
 }
 .pv-row-proto { color:var(--faint); }
 .pv-row-acts { display:flex; gap:2px; flex:none; }
+/* 技能面板：附属文件展开入口与文件名芯片（L3 资源清单，只列名不载正文） */
+.pv-link {
+  display:inline-flex; align-items:center; gap:4px; font-size:0.8214rem; color:var(--dim);
+  background:none; border:0; padding:0; cursor:pointer; font-family:inherit;
+}
+.pv-link:hover { color:var(--text); }
+.pv-chip {
+  display:inline-flex; align-items:center; gap:4px; font-size:0.7857rem; color:var(--faint);
+  font-family:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+}
 /* 故障转移队列（providers.json 顶层 failoverQueue）：顺序即优先级，上移 / 下移 / 移出 + 加入 */
 .foq { display:flex; flex-direction:column; gap:8px; }
 .foq-head { display:flex; flex-direction:column; gap:2px; }

@@ -735,7 +735,9 @@ await test('skill 工具：schema 形状与默认免确认', () => {
   eq(p.evaluate('skill', 'code-review'), 'allow', 'skill 只读默认放行');
   const tool = getTool('skill');
   const out = tool.run({ name: 'demo' }, { skills: [{ name: 'demo', body: 'B' }] });
-  assert(out.includes('[技能：demo]') && out.includes('B'), 'run 返回技能正文');
+  assert(out.includes('<skill_content name="demo">') && out.includes('B'), 'run 返回技能正文（结构化包裹）');
+  const again = tool.run({ name: 'demo' }, { skills: [{ name: 'demo', body: 'B' }], skillsLoaded: new Set(['demo']) });
+  assert(again.includes('已在本轮加载过') && !again.includes('<skill_content'), '重复激活只回短回执');
   let threw = false;
   try { tool.run({ name: 'x' }, { skills: [] }); } catch { threw = true; }
   assert(threw, '未知技能应抛 ToolError');
@@ -889,6 +891,18 @@ await test('上下文压缩：阈值判定与头尾切分', () => {
   const cm = compactionMessages(plan.head);
   eq(cm[0].role, 'system');
   assert(cm[1].content.includes('问题0'), '总结输入应含早期对话');
+  // 技能规范免压缩：skill 工具结果与带 skill 标记的用户记录都完整进总结输入
+  const skillBody = '技'.repeat(3000);
+  const withSkill = compactionMessages([
+    { t: 'user', text: `${skillBody}`, skill: 'code-review' },
+    { t: 'tool_result', name: 'skill', ok: true, output: `${skillBody}` },
+    { t: 'tool_result', name: 'read_file', ok: true, output: `${skillBody}` },
+  ]);
+  assert(withSkill[1].content.includes(skillBody), '技能正文完整进总结输入（不截断）');
+  assert(withSkill[1].content.includes('[用户 /code-review 技能调用]'), '斜杠技能注入带标记');
+  assert(withSkill[0].content.includes('原样延续'), '压缩系统提示要求延续技能规范');
+  const plain = compactionMessages([{ t: 'tool_result', name: 'read_file', ok: true, output: `${skillBody}` }]);
+  assert(!plain[1].content.includes(skillBody), '普通工具结果仍按上限截断');
   eq(contextWindowOf({}), 128000, '未声明窗口回退 128k');
   eq(contextWindowOf({ capacity: { contextWindow: 262144 } }), 262144, '应读取提供方声明窗口');
 });
@@ -3737,6 +3751,13 @@ await test('技能目录：GET /api/agent/skills 返回内置技能', async () =
   const codeReview = r.skills.find((s) => s.name === 'code-review');
   assert(codeReview && codeReview.description && codeReview.source === 'builtin', '内置技能字段完整');
   assert(!('body' in codeReview), '目录不泄底技能正文');
+  // L1 元数据 + L3 资源索引：附属文件名可见、正文不可见
+  assert(Array.isArray(codeReview.resources) && Array.isArray(codeReview.warnings), '资源索引与告警在位');
+  eq(codeReview.implicit, true, '缺省允许模型隐式调用');
+  assert(typeof codeReview.bodyLines === 'number' && codeReview.bodyLines > 0, '正文行数');
+  const ops = r.skills.find((s) => s.name === 'auroraagent-ops');
+  assert(ops.resources.includes('references/commands.md'), '附属资源清单含 references/ 文件');
+  assert(ops.resources.every((p) => p !== 'SKILL.md'), 'SKILL.md 自身不算附属资源');
 });
 
 await test('Agent turn：/技能名 斜杠命令经服务端解析为技能注入（与终端同源）', async () => {
@@ -3750,8 +3771,9 @@ await test('Agent turn：/技能名 斜杠命令经服务端解析为技能注�
   assert(done, '应以 turn_completed 收尾');
   const detail = await (await fetch(`${AGENT}/sessions/${s.id}`)).json();
   const userRec = detail.records.find((x) => x.t === 'user');
-  assert(userRec && String(userRec.text).includes('[技能：code-review]'), '斜杠命令应展开为技能注入文本');
+  assert(userRec && String(userRec.text).includes('<skill_content name="code-review">'), '斜杠命令应展开为技能注入文本');
   assert(String(userRec.text).includes('看看这段代码'), '技能参数应拼在注入文本');
+  eq(userRec.skill, 'code-review', '用户记录带 skill 标记（压缩期保护技能规范）');
 });
 
 await test('Agent turn：模型调用 skill 工具加载技能指令并回填', async () => {
@@ -3769,7 +3791,25 @@ await test('Agent turn：模型调用 skill 工具加载技能指令并回填', 
   const detail = await (await fetch(`${AGENT}/sessions/${s.id}`)).json();
   const result = detail.records.find((x) => x.t === 'tool_result' && x.name === 'skill');
   assert(result && result.ok, '工具结果应落转录');
-  assert(result.output.includes('[技能：code-review]') && result.output.includes('代码审查技能') && result.output.includes('按严重级分级'), '结果应含技能正文');
+  assert(result.output.includes('<skill_content name="code-review">') && result.output.includes('代码审查技能') && result.output.includes('按严重级分级'), '结果应含技能正文');
+  assert(result.output.includes('Skill directory: '), '激活结果带出技能绝对目录（供 L3 资源读取）');
+});
+
+await test('Agent turn：模型读取技能附属文件（L3 只读白名单根）', async () => {
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_SKILL_REF 读一下技能里的命令清单' }),
+  });
+  const all = await drainAgentStream(openAgentStream(resp));
+  assert(all.at(-1).type === 'turn_completed', '应以 turn_completed 收尾');
+  assert(!all.some((e) => e.type === 'turn_failed'), '不应有 turn_failed');
+  const detail = await (await fetch(`${AGENT}/sessions/${s.id}`)).json();
+  const result = detail.records.find((x) => x.t === 'tool_result' && x.name === 'read_file');
+  assert(result && result.ok, 'read_file 应执行成功（技能目录作为只读白名单根放行）');
+  assert(result.output.includes('npm test'), '应读到 skills/auroraagent-ops/references/commands.md 的内容');
+  const call = detail.records.find((x) => x.t === 'tool_call' && x.name === 'read_file');
+  assert(String(call.args.path).includes('references/commands.md'), '调用参数指向技能附属文件');
 });
 
 await test('Agent turn：todo 工具维护清单并持久化到会话', async () => {
