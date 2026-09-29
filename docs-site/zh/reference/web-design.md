@@ -111,7 +111,7 @@ Header 常驻 `48px`（ZCode `h-12`）：内行 `p-2` / `gap-2` / `justify-betwe
 - **「添加上下文」加号菜单**：左组第一枚（复用零依赖 `Menu`：portal 单例 root、ARIA 键盘全集、Esc / Tab / 点外关闭）。两项：**上传文件**——读本机文本文件，以 `<file name="…">…</file>` 块插入输入框（后端没有附件存储，插入内容即「添加上下文」的落地形态，模型当场能读到；单文件上限 `200KB`、一次最多 `5` 个，二进制 / 超限说清原因并给出下一步，不静默丢弃）；**引用工作目录文件**——在文末补一个 `@`，唤起既有提及调色板（与 `@` 提及时同一套只读文件搜索）。
 - **窄屏收纳**：工具栏超宽时整组收成图标钮（隐藏文字标签、钮保持方形），不放宽、不换行——输入框宽度稳定，不随标签显隐跳动（ZCode `useComposerToolbarFit` 首档语义）。
 
-## 12. 工具调用摘要（复刻 ZCode `ToolSummaryRow`）
+## 12. 对话时间线密度（复刻 ZCode 消息行 / Reasoning / ToolSummaryRow）
 
 流式期间一排工具调用不应是一叠卡片。摘要行是**无框内联行**：`align-self:flex-start` + `width:fit-content` Hug 内容宽度，`gap:8px` 单行排「图标（14px，dim）+ 类别（500 字重）+ 资源（等宽、截断、无底无边）+ 状态词」，垂直内距 `3px`——一次调用只占一行高。
 
@@ -120,6 +120,10 @@ Header 常驻 `48px`（ZCode `h-12`）：内行 `p-2` / `gap-2` / `justify-betwe
 - **语义边框只挂展开面板**：授权态（ask）强调色、失败 / 拒绝态危险色；收起态由状态词颜色承载，不给整行描边。
 - **运行中**：状态词内联「执行中」（动画点 + 文字），不加行不加框；失败原因走状态词 hover 提示（ZCode `statusTooltip` 语义）。
 - 子代理缩进 `18px` + 左侧 `2px` 强调色细线标记层级，不另起卡片。
+
+**消息行**（复刻 ZCode `Message` / `MessageContent`）：**无头像**——用户与助手都不渲染头像，层级靠对齐方式与底色建立，不靠装饰件。用户消息整行 `justify-end` 推右，气泡 `width:fit-content` Hug 内容（`max-width:min(640px,82%)` 封顶）、圆角 `8px`、`--surface-hover` 底、内距 `10px 16px`、四角同圆（不要气泡尾）；助手消息左对齐铺列（`w-fit` 由内容自然撑开），思考 / 工具 / 正文按发生顺序交错。系统提示（压缩）与通知行走弱化条形态，不抢对话层级。
+
+**思考过程**（复刻 ZCode `Reasoning` / `ReasoningTrigger`）：与工具摘要行同一套密度语言——无框内联行：brain 图标 `16px`（ZCode `size-4`）+ 「正在思考 / 思考」标签（`500` 字重、faint 色、hover 整行提亮），整行 `gap:8px`；流式且收起时标签颜色扫光（只动颜色，`prefers-reduced-motion` 下定色），标签后一个 `·` 分隔，右侧挂**最后一个非空行**的单行滚动摘要（视口恒宽、新 token 增长把视口推到末尾、只在溢出时挂左右各 `16px` 渐隐——保证最新思考始终可见；ZCode `resolveReasoningStreamingSummary` + `getReasoningSummaryMaskStyle`）；`16px` chevron 静止透明、hover 才显、展开态转向 `90°`。展开内容：左侧 `1px` 导线 + `14px` 缩进、限高 `240px` 内部滚动、**纯文本渲染**（不走 Markdown——流式 chunk 反复解析长思考会掉帧，ZCode 同取舍）。默认收起；流式结束自动收起，用户手动展开过则不打扰（ZCode `autoCollapse` 语义）。摘要取值与溢出判定抽在纯函数层 `web-ui/src/reasoning-summary.mjs`（Node 测试直 import 同一份）。耗时文案（「思考 · N 秒」）**不移植**：投影层不记录思考起止时间，编造秒数等于造假，故只留「思考」标签。
 
 ## 13. 外观设置页
 

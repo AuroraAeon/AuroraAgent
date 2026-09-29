@@ -12,6 +12,7 @@ import { sidebarToggleLabel, newSessionLabel, isAppleKeyboardPlatform } from '..
 import { buildTurnNavItems, normalizePreviewText, resolveBarVisualState, resolveActiveItemIndex, resolveVisibleRange, resolveRailScrollTopForActive } from '../web-ui/src/turn-nav.mjs';
 import { createNavHistory, pushNav, goBack, goForward, canGoBack, canGoForward, removeNav, NAV_HISTORY_MAX } from '../web-ui/src/nav-history.mjs';
 import { splitMathSegments, takeDisplayMath, isDisplayMathStart, mathDisplay, MATH_ENVIRONMENTS } from '../web-ui/src/math-split.mjs';
+import { resolveReasoningStreamingSummary, isReasoningSummaryOverflowing } from '../web-ui/src/reasoning-summary.mjs';
 import { startMock } from './mock-longcat.mjs';
 import { ProviderStore, ProviderError, parseCapacity, formatCapacity, normalizeEndpoint, validateProviderDraft, chatUrl, modelsUrl, messagesUrl } from '../util/providers.mjs';
 import { buildChatRequest, anthropicFrame } from '../util/wire.mjs';
@@ -2261,6 +2262,55 @@ try {
     assert(css.includes('.toolcard.tc-ask > details > .tc-body { border-color:var(--accent-line); }'), '授权态语义边框应改挂到展开面板');
     // 运行时状态词仍在摘要行内联展示（流式期间不额外占行）
     assert(tool.includes("case 'running': return { cls: 'run'") && tool.includes('执行中'), '运行中状态应内联在摘要行');
+  });
+  await test('思考过程流式摘要纯函数：取最后一个非空行、溢出判定（复刻 ZCode ReasoningTrigger）', () => {
+    eq(resolveReasoningStreamingSummary(''), '');
+    eq(resolveReasoningStreamingSummary('\n\n   \n'), '');
+    eq(resolveReasoningStreamingSummary('先想一遍\n再想一遍'), '再想一遍');
+    eq(resolveReasoningStreamingSummary('先想一遍\n\n  \n'), '先想一遍');
+    eq(resolveReasoningStreamingSummary('a\r\nb\r\n'), 'b');
+    eq(resolveReasoningStreamingSummary('a\n  行尾带空白   '), '行尾带空白');
+    assert(!isReasoningSummaryOverflowing(200, 200), '恰好等于视口不算溢出');
+    assert(!isReasoningSummaryOverflowing(200, 201), '1px 容差内不算溢出');
+    assert(isReasoningSummaryOverflowing(200, 240), '超出 1px 容差应判溢出（该挂渐隐遮罩）');
+  });
+  await test('消息行与思考过程 ZCode 化源码契约：无头像、用户右对齐、Reasoning 紧缩行', () => {
+    const msg = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Message.tsx'), 'utf8');
+    const chat = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ChatView.tsx'), 'utf8');
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    // 无头像（ZCode Message / MessageContent 不带 avatar，层级靠对齐与底色）
+    assert(!msg.includes('avatar') && !chat.includes('avatar'), '消息行不应再渲染头像（用户与助手都不要）');
+    assert(!css.includes('.avatar'), '头像样式应彻底移除');
+    assert(msg.includes('className="row row-user hist is-user"') && msg.includes('className="row row-ai hist is-assistant"'), '消息行应带 ZCode is-user / is-assistant 状态类');
+    assert(chat.includes('className="row row-ai is-assistant"'), '流式行同样去头像并带 is-assistant');
+    // 用户消息右对齐 + w-fit 气泡（ZCode is-user：ml-auto justify-end + rounded-lg bg-secondary px-4 py-3）
+    const rowUser = /\.row-user \{[^}]*\}/.exec(css)?.[0] || '';
+    assert(rowUser.includes('justify-content:flex-end'), '用户消息整行应推右（ZCode justify-end）');
+    const bubble = /\.bubble-user \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['width:fit-content', 'border-radius:8px', 'background:var(--surface-hover)', 'padding:10px 16px']) {
+      assert(bubble.includes(decl), `用户气泡应按 ZCode is-user 变体声明 ${decl}`);
+    }
+    // 思考过程（ZCode Reasoning）：无框内联行 + 左侧导线展开内容 + 限高滚动
+    const think = /^\.think \{[^}]*\}/m.exec(css)?.[0] || '';
+    assert(think.includes('align-self:flex-start') && !think.includes('border:'), '思考摘要行应无框 Hug 内容（与工具摘要行同一密度语言）');
+    const head = /\.think-head \{[^}]*\}/.exec(css)?.[0] || '';
+    assert(head.includes('display:inline-flex') && head.includes('gap:8px'), '思考触发器是 inline-flex 内联行（ZCode gap-2）');
+    assert(css.includes('.think-label.stream { animation:think-shimmer'), '流式「正在思考」应扫光（只动颜色）');
+    assert(css.includes('.think-label.stream { animation:none; color:var(--text); }'), '减少动效时扫光应定色');
+    const body = /\.think-body \{[^}]*\}/.exec(css)?.[0] || '';
+    for (const decl of ['border-left:1px solid var(--line)', 'max-height:240px', 'padding-left:14px']) {
+      assert(body.includes(decl), `思考展开内容应按 ZCode ml-2 border-l pl-3.5 + max-h-60 声明 ${decl}`);
+    }
+    assert(/if \(!streaming && !interacted\.current\) setOpen\(false\);/.test(msg), '流式结束应自动收起思考（用户手动展开过则不打扰）');
+    assert(msg.includes("from '../reasoning-summary.mjs'"), '思考摘要应接入纯函数层 reasoning-summary.mjs');
+    assert(msg.includes('streaming && !open ? resolveReasoningStreamingSummary(text)'), '摘要只在流式且收起时出现（ZCode isStreaming && !isOpen）');
+    assert(msg.includes('isReasoningSummaryOverflowing(el.clientWidth, el.scrollWidth)') && msg.includes('el.scrollLeft = el.scrollWidth'), '溢出重测并把单行视口推到末尾（ZCode syncSummaryViewport + scrollReasoningSummaryToEnd）');
+    assert(msg.includes("{streaming ? '正在思考' : '思考'}"), '标签用「正在思考 / 思考」（ZCode chat.reasoning.thinking / thought）');
+    assert(msg.includes('<IconBulb size={16} />') && msg.includes('<IconChevronRight size={16} className="think-chev" />'), 'brain 与 chevron 都用 16px（ZCode size-4）');
+    const chev = /\.think-chev \{[^}]*\}/.exec(css)?.[0] || '';
+    assert(chev.includes('opacity:0') && css.includes('.think-head:hover .think-chev { opacity:1; }') && css.includes('.think.open .think-chev { transform:rotate(90deg); opacity:1; }'), 'chevron 静止透明、hover 显、展开转向 90°（ZCode opacity-0 group-hover + rotate-90）');
+    assert(css.includes('.think-dot') && msg.includes('className="think-dot"'), '摘要前有 · 分隔（ZCode streamingSummary 前的 shrink-0 间隔点）');
+    assert(css.includes('.think-summary.over {') && css.includes('linear-gradient(90deg, transparent 0, #000 16px'), '摘要溢出才挂左右 16px 渐隐（ZCode getReasoningSummaryMaskStyle）');
   });
   await test('更新检查源码契约：设置页入口、路由与缓存语义', () => {
     const general = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'GeneralPanel.tsx'), 'utf8');

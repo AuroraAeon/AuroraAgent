@@ -97,7 +97,7 @@ html { font-size: var(--ui-font-size, 14px); }
   font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .ct-kbd.apple { font-family:-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; }
-@media (prefers-reduced-motion: reduce) { .ct-tip { transition:none; } }
+@media (prefers-reduced-motion: reduce) { .ct-tip { transition:none; } .think-label.stream { animation:none; color:var(--text); } }
 
 /* 新建任务钮（ZCode NewTaskButtonGroup 像素级）：w-full h-8 rounded-lg ghost，
    pl-2.5 pr-2.5 gap-2 overflow-hidden hover:bg-surface-hover；内容 = MessageCirclePlus 16px
@@ -302,16 +302,15 @@ html { font-size: var(--ui-font-size, 14px); }
 .row { display:flex; gap:12px; }
 /* 历史消息行延迟渲染（移植 ZCode 时间线做法）：视口外跳过绘制，auto 记住上次高度防滚动条跳 */
 .row.hist { content-visibility:auto; contain-intrinsic-size:auto 160px; }
-.avatar {
-  width:30px; height:30px; border-radius:9px; flex:none; display:grid; place-items:center; margin-top:2px;
-}
-.avatar-user { background:var(--surface-hover); color:var(--dim); border:1px solid var(--line); }
-.avatar-ai { background:var(--accent-soft); color:var(--accent-hi); border:1px solid var(--accent-line); }
 .col-ai { flex:1; min-width:0; display:flex; flex-direction:column; gap:10px; }
+/* 用户消息（复刻 ZCode MessageContent is-user 变体）：整行 justify-end 推右，
+   气泡 width:fit-content Hug 内容（max-width 82% 封顶）、rounded-lg 8px、secondary 底
+   （--surface-hover）、px-4 py-3；无头像、无气泡尾——层级靠对齐与底色，不靠装饰。 */
+.row-user { justify-content:flex-end; }
 .bubble-user {
-  background:var(--surface); border:1px solid var(--line); border-radius:12px 12px 12px 4px;
-  padding:10px 14px; font-size:1.0357rem; line-height:1.7; white-space:pre-wrap; word-break:break-word;
-  max-width:min(640px, 82%);
+  width:fit-content; max-width:min(640px, 82%);
+  background:var(--surface-hover); border:1px solid var(--line); border-radius:8px;
+  padding:10px 16px; font-size:1.0357rem; line-height:1.7; white-space:pre-wrap; word-break:break-word;
 }
 .row-system {
   display:flex; align-items:center; gap:7px; color:var(--think); font-size:0.8929rem;
@@ -337,17 +336,40 @@ html { font-size: var(--ui-font-size, 14px); }
 @keyframes blink { 0%, 60%, 100% { opacity:.25; } 30% { opacity:1; } }
 
 /* ---------- 思考块 ---------- */
-.think { border:1px solid var(--line); border-radius:10px; background:var(--think-soft); overflow:hidden; }
+/* 思考过程（复刻 ZCode Reasoning / ReasoningTrigger）：无框内联摘要行——brain 16px +
+   「正在思考 / 思考」标签（medium、subtlest 色，hover 整行提亮），流式且收起时右侧一个 ·
+   分隔加最后一个非空行的单行滚动摘要（视口恒宽、推到尾端、溢出才渐隐）；
+   16px chevron 静止透明、hover 才显、展开态转向 90°。展开内容带左侧导线 + 缩进 + 限高滚动，
+   纯文本渲染（不走 Markdown——流式 chunk 反复解析长思考会掉帧，ZCode 同取舍）。 */
+.think { align-self:flex-start; max-width:100%; }
 .think-head {
-  display:flex; align-items:center; gap:7px; width:100%; padding:7px 11px;
-  background:none; border:0; color:var(--think); font-size:0.8929rem; cursor:pointer; text-align:left;
+  display:inline-flex; align-items:center; gap:8px; max-width:100%; padding:3px 0;
+  background:none; border:0; color:var(--faint); font-size:0.8929rem; cursor:pointer; text-align:left;
+  transition:color .15s var(--ease);
 }
 .think-head:hover { color:var(--text); }
-.think-len { color:var(--faint); }
-.think-live { font-size:0.7857rem; color:var(--think); }
+.think-label { font-weight:500; color:var(--faint); flex:none; white-space:nowrap; }
+.think-head:hover .think-label { color:var(--text); }
+/* 流式「正在思考」：颜色扫光（只动颜色，合规）；减少动效时定色 */
+.think-label.stream { animation:think-shimmer 1.6s ease-in-out infinite; }
+@keyframes think-shimmer { 0%, 100% { color:var(--faint); } 50% { color:var(--text); } }
+.think-dot { flex:none; color:var(--faint); }
+.think-summary {
+  flex:1 1 0; min-width:0; overflow:hidden; white-space:nowrap;
+  color:var(--dim); font-size:0.8571rem;
+}
+/* 只在溢出时挂左右各 16px 渐隐（ZCode getReasoningSummaryMaskStyle：不溢出不遮罩） */
+.think-summary.over {
+  mask-image:linear-gradient(90deg, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%);
+}
+.think-chev { flex:none; opacity:0; transition:transform .15s var(--ease), opacity .15s var(--ease); }
+.think-head:hover .think-chev { opacity:1; }
+.think.open .think-chev { transform:rotate(90deg); opacity:1; }
 .think-body {
-  padding:2px 12px 11px; color:var(--dim); font-size:0.9286rem; line-height:1.75;
-  white-space:pre-wrap; word-break:break-word; border-top:1px solid var(--line);
+  margin-top:6px; margin-left:6px; padding-left:14px; border-left:1px solid var(--line);
+  max-height:240px; overflow:auto;
+  color:var(--dim); font-size:0.9286rem; line-height:1.75;
+  white-space:pre-wrap; word-break:break-word;
 }
 
 /* ---------- Markdown ---------- */

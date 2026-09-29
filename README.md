@@ -233,7 +233,7 @@ npm run docs:dev    # 本地起文档站
 
 ## 当前状态（实测打通）
 
-- `npm test` 407/407 通过（mock 上游，不花额度，含仓库守卫：零 emoji / TUI 颜色单一真值源 / 对比度 / 行数预算 / 过渡动画纪律 / 文档站结构 / 文档新鲜度 / 架构地图覆盖）；`npm run check` 真实 API 连通（Key 有效 + 模型目录 + 测试请求）
+- `npm test` 409/409 通过（mock 上游，不花额度，含仓库守卫：零 emoji / TUI 颜色单一真值源 / 对比度 / 行数预算 / 过渡动画纪律 / 文档站结构 / 文档新鲜度 / 架构地图覆盖）；`npm run check` 真实 API 连通（Key 有效 + 模型目录 + 测试请求）
 - 性能基准：`npm run bench`（basic 套件：startup / upstream-100 / history-300 三场景，采样 wall / CPU / peak-RSS），方法论与本地基线见 `docs/perf-baseline.md`，只作回归参考不作门禁
 - Agent e2e 覆盖：会话 CRUD；完整 turn（工具调用 → 权限允许 → workspace 落盘 → 二轮出终稿）；权限拒绝后循环继续；路径穿越拒绝；shell 执行与超时；turn 中途 abort；harness 列表；上下文压缩触发；每轮用量记账；技能斜杠注入与 skill 工具加载（结构化包裹 + 技能绝对目录 + 附属资源清单、同轮重复激活去重）；模型经只读白名单根读技能 `references/` 附属文件；技能内容免上下文压缩；todo 维护；edit_file diff 回传；计划批准 / 驳回两阶段；首条消息自动总结会话标题（默认名才套用、事件推送、落元信息；local 本地推导与 model 调模型两路，模型失败回退本地、成本记 purpose=title 账）；task 派发子代理并汇总（子会话可查）；MCP 注册与工具调用（实验）；Goal 全链路（create_goal → 提案完成 / 预算触顶转 budget_limited + 收尾轮 / 空转续跑 / evaluator 裁决 met 与 not_met 连击两条路径）；Goal REST 冲突与纪元边界；`/goal` 命令解析单测（预算 K/M 后缀、clear 同义词、旧式空格、edit/clear/help、错误分支）与 edit / clear 动作与 REST e2e（改写 trim、空白 400、无目标 404、已完成 409、clear 幂等）；会话派生逐条一致复制；`@` 提及时文件搜索与 404；终端偏好读写与坏值 400；多提供方故障转移（主提供方 429 自动换路并记账到新提供方、候选耗尽报最后一次真实错误、`/api/chat` 换路、401 不转移、故障转移偏好读写）
 - 网页工作台经浏览器实测完整 turn：权限卡允许 → 写文件 → 二轮终稿 → 按轮分组的思考 / 工具 / 用量脚注

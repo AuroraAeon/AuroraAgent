@@ -32,8 +32,7 @@ function LiveRow({ live, onDecide, onDecidePlan }: { live: LiveTurn; onDecide?: 
   const empty = !live.parts.length && !live.thinking && !live.plan;
   const elapsed = useElapsed(live.startedAt);
   return (
-    <div className="row row-ai">
-      <div className="avatar avatar-ai" title="AuroraAgent"><IconSpark size={15} /></div>
+    <div className="row row-ai is-assistant">
       <div className="col-ai">
         {live.thinking ? <ThinkingBlock text={live.thinking} defaultOpen streaming /> : null}
         {live.plan ? <PlanCard plan={live.plan} onDecide={onDecidePlan} /> : null}
