@@ -388,31 +388,42 @@ html { font-size: var(--ui-font-size, 14px); }
 .md .math-err { border-style:dashed; color:var(--dim); }
 
 /* ---------- 工具卡片 ---------- */
-.toolcard { border:1px solid var(--line); border-radius:11px; background:var(--surface); overflow:hidden; }
+/* 工具调用摘要行（复刻 ZCode ToolSummaryRow 紧缩形态）：无框、无底、宽度 Hug 内容，
+   图标 + 类别 + 资源 + 状态挤在同一行——流式期间一排工具调用不再是一叠卡片；
+   完整内容（参数 / 输出 / diff）默认收起，点开才以面板形态落到行下方。
+   ZCode 规格：inline-flex max-w-full items-center gap-2 self-start，箭头 hover 才现。 */
+.toolcard { align-self:flex-start; max-width:100%; }
+.toolcard > details { width:fit-content; max-width:100%; }
 .toolcard > details > summary {
-  display:flex; align-items:center; gap:8px; padding:8px 12px; cursor:pointer; list-style:none;
-  font-size:0.9286rem; color:var(--text);
+  display:flex; align-items:center; gap:8px; padding:3px 0; cursor:pointer; list-style:none;
+  font-size:0.9286rem; color:var(--dim); width:fit-content; max-width:100%;
 }
 .toolcard > details > summary::-webkit-details-marker { display:none; }
 .toolcard > details > summary::after {
   content:''; width:5px; height:5px; border-right:1.5px solid var(--faint); border-bottom:1.5px solid var(--faint);
-  transform:rotate(45deg); margin-left:auto; flex:none; transition:transform .15s var(--ease);
+  transform:rotate(45deg); margin-left:2px; flex:none; opacity:0;
+  transition:transform .15s var(--ease), opacity .15s var(--ease);
 }
-.toolcard > details[open] > summary::after { transform:rotate(225deg); }
+.toolcard > details > summary:hover::after { opacity:1; }
+.toolcard > details[open] > summary::after { transform:rotate(225deg); opacity:1; }
 .tc-icon { color:var(--dim); display:grid; place-items:center; }
-.tc-name { font-weight:600; }
+.tc-name { font-weight:500; color:var(--text); flex:none; }
 .tc-res {
-  font-family:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace; font-size:0.8214rem;
-  color:var(--dim); background:var(--code-bg); border-radius:6px; padding:1px 7px;
+  font-family:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace; font-size:0.8571rem;
+  color:var(--dim); min-width:0;
   max-width:340px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
 }
 .tc-status { display:inline-flex; align-items:center; gap:5px; font-size:0.8571rem; color:var(--dim); flex:none; }
 .tc-status.ok { color:var(--ok-ink); }
 .tc-status.bad { color:var(--danger-ink); }
 .tc-status.ask { color:var(--accent-hi); }
-.toolcard.tc-ask { border-color:var(--accent-line); }
-.toolcard.tc-failed, .toolcard.tc-rejected { border-color:var(--danger-line); }
-.tc-body { border-top:1px solid var(--line); padding:10px 12px; display:flex; flex-direction:column; gap:10px; }
+.toolcard.tc-ask > details > .tc-body { border-color:var(--accent-line); }
+.toolcard.tc-failed > details > .tc-body, .toolcard.tc-rejected > details > .tc-body { border-color:var(--danger-line); }
+.tc-body {
+  margin-top:6px; width:fit-content; min-width:min(420px,100%); max-width:100%;
+  border:1px solid var(--line); border-radius:10px; background:var(--surface);
+  padding:10px 12px; display:flex; flex-direction:column; gap:10px;
+}
 .tc-sec { display:flex; flex-direction:column; gap:5px; }
 .tc-sec-t { color:var(--faint); font-size:0.8214rem; font-weight:600; letter-spacing:.4px; }
 .tc-pre {

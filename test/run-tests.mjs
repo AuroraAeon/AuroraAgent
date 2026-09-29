@@ -2233,6 +2233,35 @@ try {
     }
     assert(com.includes('<IconArrowUp size={16} />') && com.includes('sendbtn-stop'), '发送用 ArrowUp，生成中换方形停止钮');
   });
+  await test('工具卡紧缩形态源码契约：ZCode ToolSummaryRow 无框摘要行 + 加号菜单净化', () => {
+    const tool = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'ToolCard.tsx'), 'utf8');
+    const com = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Composer.tsx'), 'utf8');
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    // 加号菜单：只剩上传文件与引用工作目录文件两项——说明性 disabled 行与分隔线已删
+    assert(!com.includes('MenuSeparator'), '加号菜单不应再引入分隔线（只剩两项）');
+    assert(!com.includes('disabled>斜杠命令'), '加号菜单不应有指示斜杠输入的说明行（用户点名毫无意义）');
+    assert(!com.includes('技能调用随输入展开'), '说明行文案应彻底移除');
+    // 紧缩摘要行：无框、无底、Hug 宽度（ZCode inline-flex self-start gap-2）
+    const card = /\.toolcard \{[^}]*\}/.exec(css)?.[0] || '';
+    assert(card.includes('align-self:flex-start') && card.includes('max-width:100%'), '摘要行应 Hug 内容宽度（align-self:flex-start）');
+    assert(!card.includes('border:1px') && !card.includes('background:'), '摘要行不应有边框与底色（不再是框起来的卡片）');
+    const summary = /\.toolcard > details > summary \{[^}]*\}/.exec(css)?.[0] || '';
+    assert(summary.includes('gap:8px'), '行内元素间距应对齐 ZCode gap-2');
+    assert(/padding:3px 0/.test(summary), '摘要行垂直内距应收敛到 3px（一行文本的高度）');
+    const chevron = /\.toolcard > details > summary::after \{[^}]*\}/.exec(css)?.[0] || '';
+    assert(chevron.includes('opacity:0'), '展开箭头应默认隐藏（ZCode：hover 才现）');
+    assert(css.includes('.toolcard > details > summary:hover::after { opacity:1; }'), 'hover 时应显出箭头');
+    assert(css.includes('.toolcard > details[open] > summary::after { transform:rotate(225deg); opacity:1; }'), '展开态箭头常显并转向');
+    const res = /\.tc-res \{[^}]*\}/.exec(css)?.[0] || '';
+    assert(!res.includes('background:') && !res.includes('border-radius'), '资源（命令 / URL）应是纯截断文本，不是chip');
+    const body = /^\.tc-body \{[^}]*\}/m.exec(css)?.[0] || '';
+    for (const decl of ['border:1px solid var(--line)', 'border-radius:10px', 'background:var(--surface)']) {
+      assert(body.includes(decl), `展开后的内容应收成面板（ZCode 展开态 rounded-xl border bg-panel）：${decl}`);
+    }
+    assert(css.includes('.toolcard.tc-ask > details > .tc-body { border-color:var(--accent-line); }'), '授权态语义边框应改挂到展开面板');
+    // 运行时状态词仍在摘要行内联展示（流式期间不额外占行）
+    assert(tool.includes("case 'running': return { cls: 'run'") && tool.includes('执行中'), '运行中状态应内联在摘要行');
+  });
   await test('更新检查源码契约：设置页入口、路由与缓存语义', () => {
     const general = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'GeneralPanel.tsx'), 'utf8');
     assert(general.includes('checkUpdate(true)') && general.includes('检查更新'), '设置页应有检查更新入口');

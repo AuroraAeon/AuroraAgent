@@ -17,7 +17,7 @@ import {
   Dots, IconArrowUp, IconAt, IconCheck, IconChevronDown, IconChevronRight, IconList, IconPaperclip, IconPlus, IconSpark, IconStop,
 } from '../icons';
 import { ControlTooltip } from '../ControlTooltip';
-import { Menu, MenuItem, MenuSeparator } from '../Menu';
+import { Menu, MenuItem } from '../Menu';
 import type { Harness, ModelInfo, ProviderRow, SkillRow } from '../types';
 import { buildRows, findEntry, rowImmediate, rowName } from '../slash-commands';
 import type { SlashRow } from '../slash-commands';
@@ -520,8 +520,6 @@ export function Composer({
               >
                 <MenuItem icon={<IconPaperclip size={16} />} onSelect={() => fileRef.current?.click()}>上传文件</MenuItem>
                 <MenuItem icon={<IconAt size={16} />} shortcut="@" onSelect={openMention}>引用工作目录文件</MenuItem>
-                <MenuSeparator />
-                <MenuItem icon={<IconList size={16} />} disabled>斜杠命令 / 与技能调用随输入展开</MenuItem>
               </Menu>
               <HarnessPicker harnesses={harnesses} harness={harness} onHarness={onHarness} openNonce={pickerNonce} />
               <PermPicker mode={permissionMode} onMode={onPermissionMode} />
