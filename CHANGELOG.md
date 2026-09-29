@@ -2,6 +2,13 @@
 
 本文件记里程碑版本（Keep a Changelog 格式，中文）。逐提交的发布笔记由 `npm run docs:notes` 从 git 历史生成，进文档站 `release-notes` 页。
 
+## [7.3.1](https://github.com/AuroraAeon/AuroraAgent/compare/v7.3.0...v7.3.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* **guard:** 版本机制守卫逐处扫描 README 全部标注，多处硬编码不再漏检 ([6f27072](https://github.com/AuroraAeon/AuroraAgent/commit/6f270725d6cefe1e9cc5c793bc29ad1fdb74022e))
+
 ## [7.3.0](https://github.com/AuroraAeon/AuroraAgent/compare/v7.2.0...v7.3.0) (2026-09-29)
 
 
