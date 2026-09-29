@@ -172,14 +172,15 @@ export function guardDocsSite() {
     if (!pkg.scripts[s]) throw new Error(`package.json 应提供 ${s} 脚本`);
   }
 }
-/** 文档新鲜度守卫：release-please 只改 package.json，README 的版本标注会静默过期 */
+/** 版本机制守卫：README 只声明「版本随 package.json」的取数机制，不硬编码具体版本号。
+ *  release-please 的发布 PR 只动 package.json 与 CHANGELOG.md，README 里的硬编码数字会让
+ *  发布 PR 的 CI 必然红，且合并后 master 持续红；版本唯一真值源是 package.json */
 export function guardDocsFreshness() {
-  const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
   const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
-  const m = readme.match(/版本随 package\.json（([0-9][^）]*)）/);
-  if (!m) throw new Error('README.md 缺少「版本随 package.json（X.Y.Z）」标注');
-  if (m[1] !== pkg.version) {
-    throw new Error(`README 版本标注（${m[1]}）与 package.json（${pkg.version}）不一致：合并发布 PR 后应同步 README`);
+  const m = readme.match(/版本随 package\.json(（[^）]*）)?/);
+  if (!m) throw new Error('README.md 缺少「版本随 package.json」版本机制标注');
+  if (m[1] && /[0-9]/.test(m[1])) {
+    throw new Error(`README 不得在「版本随 package.json」后硬编码版本号${m[1]}：版本唯一真值源是 package.json，硬编码会让发布 PR 的 CI 必然失败`);
   }
 }
 
@@ -211,7 +212,7 @@ export const GUARDS = [
   ['新模块行数预算 ≤500', guardLineBudget],
   ['过渡动画禁 transition:all（只动颜色/透明度/变换）', guardNoTransitionAll],
   ['文档站结构契约（中英对应 / 标记 / 依赖例外）', guardDocsSite],
-  ['文档新鲜度（package.json 版本 ↔ README 标注）', guardDocsFreshness],
+  ['README 版本机制标注（不硬编码版本号）', guardDocsFreshness],
   ['架构地图覆盖 util/ 与 util/agent/ 模块', guardArchitectureMap],
 ];
 
