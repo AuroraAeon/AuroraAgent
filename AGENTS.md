@@ -34,7 +34,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 | `util/wire.mjs` | 协议适配：OpenAI 兼容与 Anthropic Messages 的 URL 拼接、请求拼装（含 `tools` / `tool_choice`）、Anthropic SSE 帧翻译成 OpenAI 帧（含 `tool_use` / `input_json_delta`） |
 | `util/stream.mjs` | SSE 透传 / 翻译泵（逐帧转发 + 用量累计 + 背压 pause/resume，供 `/api/chat`）；`consumeAgentStream` 增量累积 `tool_calls` delta 供 Loop 使用；`primeUpstreamStream` 预读（缓冲至首个产出帧或语义失败帧，返回可重放 reader，把「200 错误 envelope」与首包超时变成连接期可换路错误），三条泵路共用首包 / 空闲超时（`idleMs`，kind=timeout） |
 | `util/usage.mjs` | 用量账本：逐行追加 + 汇总出口 + `stats()` 统计视图（近 30 天逐日补零、按模型 / 提供方 / 用途 / 会话构成，供设置页用量面板） |
-| `util/update.mjs` | 版本更新检查：查 GitHub Releases latest 比对本地版本（三段语义、忽略 v 前缀与预发布后缀），结果缓存 6 小时（`<数据目录>/update-check.json`），失败不缓存、不抛错；只告知不自动安装，`GET /api/update/check`（`?force=1` 强制重查） |
+| `util/update.mjs` | 版本更新检查：查 GitHub Releases latest 比对本地版本（三段语义、忽略 v 前缀与预发布后缀），结果缓存 6 小时（`<数据目录>/update-check.json`，按本地版本号作 key——版本一变旧结论作废），失败不缓存、不抛错；只告知不自动安装，`GET /api/update/check`（`?force=1` 强制重查）。注意版本号是进程启动时读一次（`web.mjs` 的 `VERSION` 常量），升级后必须重启服务才对得上 |
 | `util/errorlog.mjs` | 错误日志：`<数据目录>/logs/errors.log` JSON Lines 环形保留（200 行）、kind 白名单归一、detail 截断 4KB、写失败静默，写入前经 `sanitizeSecrets` 脱敏（Authorization / api_key / token 键值、URL 查询串与 userinfo、sk- 密钥，幂等，移植 ZCode error-sanitizer）；`POST/GET/DELETE /api/logs/errors` 供前端全局捕获上报与设置页查看清空，同 kind+message 30 秒去重 |
 | `util/service.mjs` | LaunchAgent 生命周期：plist 生成 / 安装 / 卸载 / 状态 |
 | `util/agent/events.mjs` | AgentEvent 协议（OpenBitFun AgenticEvent 精简子集）+ SSE 帧封装；`session_renamed` 供两端实时刷新自动总结出的标题；`provider_switched` 故障转移换路提示（from / to / reason / attempt）；`goal_created` / `goal_status_changed` / `goal_usage_updated` / `goal_wait_changed` / `goal_cleared` 五类 goal 事件 |

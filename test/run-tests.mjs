@@ -1656,6 +1656,15 @@ await test('更新检查：走 GitHub latest、结果缓存 6 小时、失败不
   assert(!failed.ok && failed.error, '失败应返回错误文案且不抛');
   const afterFail = await checkUpdate({ current: '7.0.0', dataDir: dir, fetchImpl: ok('v7.2.0'), now: () => 1000 + 15 * 3600 * 1000 });
   eq(afterFail.latest, '7.2.0', '失败不写缓存，下次仍真实查询');
+  // 本地版本号一变（升级 / 回滚 / 换代码重启），旧结论立刻作废
+  const staleForNew = await checkUpdate({ current: '9.9.9', dataDir: dir, fetchImpl: fail, now: () => 1000 + 15 * 3600 * 1000 });
+  eq(staleForNew.cached, false, '缓存 current 与本次不一致时不得命中');
+  eq(calls, 5, '版本变化应重新请求上游');
+  const refreshed = await checkUpdate({ current: '9.9.9', dataDir: dir, fetchImpl: ok('v9.9.8'), now: () => 1000 + 15 * 3600 * 1000 + 60_000 });
+  eq(refreshed.cached, false, '重新查到新结论');
+  eq(refreshed.latest, '9.9.8');
+  eq(refreshed.updateAvailable, false, '上游更低不误报有更新');
+  eq(calls, 6);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -2339,6 +2348,7 @@ try {
     const upd = readFileSync(join(__dirname, '..', 'util', 'update.mjs'), 'utf8');
     assert(upd.includes('CACHE_TTL_MS') && upd.includes('releases/latest'), '应有 6 小时缓存与 GitHub latest 查询');
     assert(upd.includes('FETCH_TIMEOUT_MS'), '查询应带超时，别让界面干等');
+    assert(upd.includes('readCache(cachePath, current)') && upd.includes('j.current !== current'), '缓存必须按本地版本号作 key：本地版本一变，旧 latest 结论立刻作废');
   });
   await test('设置弹层分级导航源码契约：左分类轨、懒挂载缓存与壳承担 section 标题', () => {
     const settings = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SettingsDialog.tsx'), 'utf8');

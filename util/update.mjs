@@ -7,6 +7,8 @@
  *
  * 结果缓存：内存 + <数据目录>/update-check.json（6 小时 TTL），避免每次打开设置都打
  * GitHub API（未认证限流 60 次/小时）。任何失败都静默返回错误文案，绝不影响主流程。
+ * 缓存按本地版本号作 key：current 与 latest 是成对写进去的，本地版本一变（升级 / 回滚 /
+ * 换代码重启）旧结论立刻作废——否则重启后会拿旧 latest 继续提示，或把已装的版本说成有更新。
  */
 import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
@@ -34,10 +36,13 @@ export function hasUpdate(current, latest) {
   return false;
 }
 
-function readCache(path) {
+function readCache(path, current) {
   try {
     const j = JSON.parse(readFileSync(path, 'utf8'));
-    return j && typeof j.checkedAt === 'number' ? j : null;
+    if (!j || typeof j.checkedAt !== 'number') return null;
+    // 本地版本号与缓存结论不匹配：跨版本不吃旧结论
+    if (j.current !== current) return null;
+    return j;
   } catch { return null; }
 }
 
@@ -69,7 +74,7 @@ export async function checkUpdate({
   if (!current) return { ...base, ok: false, error: '未读到本地版本号' };
   const cachePath = dataDir ? join(dataDir, 'update-check.json') : null;
   if (!force && cachePath) {
-    const hit = readCache(cachePath);
+    const hit = readCache(cachePath, current);
     if (hit && now() - hit.checkedAt < CACHE_TTL_MS) return { ...hit, cached: true };
   }
 
