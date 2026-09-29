@@ -1,4 +1,5 @@
 /** API 客户端：全部走 web.mjs 的同源 /api/*；turn 用 fetch 读 SSE（EventSource 不支持 POST） */
+import { normalizeSkillRows } from './skill-rows.mjs';
 import type { AgentEvent, ErrorLogEntry, FailoverQueue, FailoverSettings, GoalState, UpdateInfo, Harness, McpServerRow, ModelInfo, ProviderRow, SessionMeta, SessionRecord, SettingsInfo, SkillRow, TuiSettings, UsageSummary, WorkspaceInfo } from './types';
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -30,7 +31,8 @@ export const listErrorLogs = (limit = 50) => api<{ ok: boolean; entries: ErrorLo
 export const clearErrorLogs = () => api<{ ok: boolean; cleared: number }>('/api/logs/errors', { method: 'DELETE' });
 export const reportErrorLog = (body: { kind: string; message: string; detail?: string }) =>
   api<{ ok: boolean; deduped?: boolean }>('/api/logs/errors', { method: 'POST', body: JSON.stringify(body) });
-export const listSkills = () => api<{ skills: SkillRow[] }>('/api/agent/skills').then((r) => r.skills);
+// 响应形状可能在版本错配（后端进程旧于前端产物）或字段演进中漂移：边界归一化，缺字段走安全默认值
+export const listSkills = () => api<{ skills: SkillRow[] }>('/api/agent/skills').then((r) => normalizeSkillRows(r.skills));
 export const listHarnesses = () => api<{ harnesses: Harness[]; default: string }>('/api/agent/harnesses');
 export const listModels = () => api<{ models: ModelInfo[]; status: string }>('/api/models');
 export const getSettings = () => api<SettingsInfo>('/api/settings');

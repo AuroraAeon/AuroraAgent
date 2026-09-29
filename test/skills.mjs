@@ -10,6 +10,7 @@ import {
   parseSkillSource, loadSkills, skillCatalogBlock, skillInvocationText, findSkill,
   builtinSkillsDir, renderSkillContent, skillDirs, SKILL_FOLLOWUP,
 } from '../util/agent/skills.mjs';
+import { normalizeSkillRows } from '../web-ui/src/skill-rows.mjs';
 import { resolveInside, ToolError } from '../util/agent/tools.mjs';
 
 const VALID = `---\nname: demo\ndescription: 演示技能\n---\n\n# 正文\n按规范执行。\n`;
@@ -222,5 +223,40 @@ export async function runSkillsTests(test, assert, eq) {
       rmSync(ws, { recursive: true, force: true });
       rmSync(sd, { recursive: true, force: true });
     }
+  });
+
+  await test('skills: normalizeSkillRows 把旧版响应当规整为完整行（防设置页白屏）', () => {
+    // a4be825 之前的旧形状：目录口只回 name/description/source——集合字段全缺
+    const rows = normalizeSkillRows([{ name: 'demo', description: '演示', source: 'user' }]);
+    eq(rows.length, 1, '行数保留');
+    eq(rows[0].name, 'demo', '既有字段原样');
+    eq(rows[0].resources.length, 0, '缺 resources 回退空数组（不再 .length 白屏）');
+    eq(rows[0].allowedTools.length, 0, '缺 allowedTools 回退空数组');
+    eq(rows[0].warnings.length, 0, '缺 warnings 回退空数组');
+    eq(rows[0].implicit, true, '缺 implicit 回退 true（未声明即允许隐式调用）');
+    eq(rows[0].bodyLines, 0, '缺 bodyLines 回退 0');
+    eq(rows[0].compatibility, '', '缺 compatibility 回退空串');
+    // 畸形值：类型不对、混入非字符串元素、非对象行
+    const weird = normalizeSkillRows([
+      { name: 'a', description: 5, source: null, resources: 'references/x.md', allowedTools: [1, 'read', null], warnings: 3, implicit: 'no', bodyLines: -2 },
+      null, 'nope', 42,
+    ]);
+    eq(weird.length, 1, '非对象行剔除');
+    eq(weird[0].resources.length, 0, '非数组 resources 回退空数组');
+    eq(weird[0].allowedTools.join(' '), 'read', '字符串数组成员过滤');
+    eq(weird[0].warnings.length, 0, '非数组 warnings 回退空数组');
+    eq(weird[0].implicit, true, '非布尔 implicit 回退默认值');
+    eq(weird[0].bodyLines, 0, '负数 bodyLines 钳为 0');
+    eq(weird[0].description, '', '非字符串 description 回退空串');
+    eq(weird[0].source, '', '非字符串 source 回退空串');
+    eq(normalizeSkillRows(undefined).length, 0, '非数组输入回退空列表');
+    eq(normalizeSkillRows({ skills: [] }).length, 0, '对象输入回退空列表');
+    // 完整形状原样通过（不缺字段时不加工）
+    const full = normalizeSkillRows([{ name: 'demo', description: '演示', source: 'builtin', resources: ['references/a.md'], implicit: false, compatibility: 'Node 18+', allowedTools: ['shell'], bodyLines: 33, warnings: ['description 超长'] }]);
+    eq(full[0].resources.join(','), 'references/a.md', 'resources 保留');
+    eq(full[0].allowedTools.join(','), 'shell', 'allowedTools 保留');
+    eq(full[0].implicit, false, '显式 false 保留');
+    eq(full[0].bodyLines, 33, 'bodyLines 保留');
+    eq(full[0].warnings.join(','), 'description 超长', 'warnings 保留');
   });
 }
