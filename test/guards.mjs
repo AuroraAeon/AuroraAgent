@@ -174,13 +174,17 @@ export function guardDocsSite() {
 }
 /** 版本机制守卫：README 只声明「版本随 package.json」的取数机制，不硬编码具体版本号。
  *  release-please 的发布 PR 只动 package.json 与 CHANGELOG.md，README 里的硬编码数字会让
- *  发布 PR 的 CI 必然红，且合并后 master 持续红；版本唯一真值源是 package.json */
+ *  发布 PR 的 CI 必然红，且合并后 master 持续红；版本唯一真值源是 package.json。
+ *  逐处扫描全部标注，漏掉任何一处都会让硬编码版本号悄悄复活 */
 export function guardDocsFreshness() {
   const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
-  const m = readme.match(/版本随 package\.json(（[^）]*）)?/);
-  if (!m) throw new Error('README.md 缺少「版本随 package.json」版本机制标注');
-  if (m[1] && /[0-9]/.test(m[1])) {
-    throw new Error(`README 不得在「版本随 package.json」后硬编码版本号${m[1]}：版本唯一真值源是 package.json，硬编码会让发布 PR 的 CI 必然失败`);
+  const annotations = readme.match(/版本随 package\.json(（[^）]*）)?/g);
+  if (!annotations) throw new Error('README.md 缺少「版本随 package.json」版本机制标注');
+  for (const annotation of annotations) {
+    const versioned = annotation.match(/（([^）]*)）/);
+    if (versioned && /[0-9]/.test(versioned[1])) {
+      throw new Error(`README 不得在「版本随 package.json」后硬编码版本号${versioned[1]}：版本唯一真值源是 package.json，硬编码会让发布 PR 的 CI 必然失败`);
+    }
   }
 }
 
