@@ -69,7 +69,7 @@ AuroraAgent 是「本地 Agent 运行时」：终端 + 网页双客户端共用�
 | `web-ui/src/latex.tsx` | LaTeX 渲染：KaTeX 自托管（`trust: false`，`\href` / `\includegraphics` / HTML 扩展一律拒绝），`htmlAndMathml` 输出；解析失败回退展示原始源码而非红色错误墙 |
 | `web-ui/src/math-split.mjs` | 公式分段纯函数（零依赖，Node 测试直接 import 同一份）：识别 `$...$` / `\(...\)` / `$$...$$` / `\[...\]` / 裸 `\begin{env}`，代码段与货币区间假阳性防护；`.d.mts` 供 TS 取类型 |
 | `web-ui/src/md-table.mjs` | Markdown 表格块解析纯函数（零依赖，Node 测试直接 import 同一份）：GFM 子集（表头 + 分隔行 + 对齐 + 数据行），列数不匹配 / 裸 `---` 不成表；渲染（thead/tbody/滚动包裹层）在 `markdown.tsx`，`.d.mts` 供 TS 取类型 |
-| `web-ui/src/reasoning-summary.mjs` | 思考过程流式摘要纯函数（零依赖，Node 测试直接 import 同一份，复刻 ZCode `resolveReasoningStreamingSummary` / `isReasoningSummaryOverflowing`）：取流式文本最后一个非空行作单行摘要、1px 容差溢出判定；组件 `Message.tsx` 的 `ThinkingBlock` 消费，`.d.mts` 供 TS 取类型 |
+| `web-ui/src/reasoning.mjs` | 思考过程纯函数（零依赖，Node 测试直接 import 同一份，复刻 ZCode `ReasoningTrigger` 助手）：`normalizeThinkingText` 剥开头空行（模型常吐 `\n\n` 导致展开后首行空白）、`resolveReasoningStreamingSummary` 取流式文本最后一个非空行作单行摘要、`isReasoningSummaryOverflowing` 1px 容差溢出判定；组件 `Message.tsx` 的 `ThinkingBlock` 消费，`.d.mts` 供 TS 取类型 |
 | `public/app/` | web-ui 构建产物（随仓库提交）：`/` 与 `/app/` 同一份 index.html，哈希资产长缓存 |
 | `public/icon.svg` `public/vendors/` | 品牌标识 / 各接入厂商标识（`/vendor/` 白名单路由） |
 | `test/` | e2e 测试：mock 上游 + 真实 socket（见第 7 节）；子套件（llm / tui / highlight / config / pick / skills / guards）经 import 聚合；`guards.mjs` 仓库守卫入套 |

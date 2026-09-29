@@ -337,14 +337,16 @@ html { font-size: var(--ui-font-size, 14px); }
 
 /* ---------- 思考块 ---------- */
 /* 思考过程（复刻 ZCode Reasoning / ReasoningTrigger）：无框内联摘要行——brain 16px +
-   「正在思考 / 思考」标签（medium、subtlest 色，hover 整行提亮），流式且收起时右侧一个 ·
-   分隔加最后一个非空行的单行滚动摘要（视口恒宽、推到尾端、溢出才渐隐）；
-   16px chevron 静止透明、hover 才显、展开态转向 90°。展开内容带左侧导线 + 缩进 + 限高滚动，
-   纯文本渲染（不走 Markdown——流式 chunk 反复解析长思考会掉帧，ZCode 同取舍）。 */
+   「正在思考 / 思考」标签（medium、subtlest 色，hover 整行提亮），整行字号 text-ui-base
+   （1rem，随界面字号缩放），流式且收起时右侧一个 · 分隔加最后一个非空行的单行滚动摘要
+   （视口恒宽、推到尾端、溢出才渐隐）；16px chevron 静止透明、hover 才显、展开态转向 90°。
+   展开内容带左侧导线 + 缩进 + 限高滚动，纯文本渲染（不走 Markdown——流式 chunk 反复解析
+   长思考会掉帧，ZCode 同取舍）。行高节奏与 ZCode 等价：ZCode 用 gap-4（16px）组间距 +
+   行内零内距，本项目用行内 3px 上下内距 + 10px 列间距，两者工作项行距同为 37px。 */
 .think { align-self:flex-start; max-width:100%; }
 .think-head {
   display:inline-flex; align-items:center; gap:8px; max-width:100%; padding:3px 0;
-  background:none; border:0; color:var(--faint); font-size:0.8929rem; cursor:pointer; text-align:left;
+  background:none; border:0; color:var(--faint); font-size:1rem; cursor:pointer; text-align:left;
   transition:color .15s var(--ease);
 }
 .think-head:hover { color:var(--text); }
@@ -356,7 +358,7 @@ html { font-size: var(--ui-font-size, 14px); }
 .think-dot { flex:none; color:var(--faint); }
 .think-summary {
   flex:1 1 0; min-width:0; overflow:hidden; white-space:nowrap;
-  color:var(--dim); font-size:0.8571rem;
+  color:var(--dim); font-size:1rem;
 }
 /* 只在溢出时挂左右各 16px 渐隐（ZCode getReasoningSummaryMaskStyle：不溢出不遮罩） */
 .think-summary.over {
@@ -366,9 +368,9 @@ html { font-size: var(--ui-font-size, 14px); }
 .think-head:hover .think-chev { opacity:1; }
 .think.open .think-chev { transform:rotate(90deg); opacity:1; }
 .think-body {
-  margin-top:6px; margin-left:6px; padding-left:14px; border-left:1px solid var(--line);
+  margin-top:12px; margin-left:8px; padding-left:14px; border-left:1px solid var(--line);
   max-height:240px; overflow:auto;
-  color:var(--dim); font-size:0.9286rem; line-height:1.75;
+  color:var(--dim); font-size:1rem; line-height:1.75;
   white-space:pre-wrap; word-break:break-word;
 }
 

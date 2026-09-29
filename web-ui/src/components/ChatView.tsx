@@ -34,7 +34,7 @@ function LiveRow({ live, onDecide, onDecidePlan }: { live: LiveTurn; onDecide?: 
   return (
     <div className="row row-ai is-assistant">
       <div className="col-ai">
-        {live.thinking ? <ThinkingBlock text={live.thinking} defaultOpen streaming /> : null}
+        {live.thinking ? <ThinkingBlock text={live.thinking} streaming /> : null}
         {live.plan ? <PlanCard plan={live.plan} onDecide={onDecidePlan} /> : null}
         {/* parts 时间线与历史投影同形态：流式期间即按「文字 → 工具 → 文字」落位，结束后不重排版 */}
         {live.parts.map((p, pi) => (p.kind === 'text'

@@ -47,9 +47,16 @@ export const IconGear = (p: IconProps) => (
     <line x1="4" y1="18" x2="20" y2="18" /><circle cx="7" cy="18" r="2.2" fill="currentColor" stroke="none" />
   </Svg>
 );
-export const IconBulb = (p: IconProps) => (
+export const IconBrain = (p: IconProps) => (
   <Svg {...p}>
-    <path d="M9.5 18h5M10.5 21h3M12 3a6 6 0 0 1 3.6 10.8c-.8.5-1.1 1.2-1.1 2.2h-5c0-1-.3-1.7-1.1-2.2A6 6 0 0 1 12 3z" />
+    <path d="M12 18V5" />
+    <path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4" />
+    <path d="M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5" />
+    <path d="M17.997 5.125a4 4 0 0 1 2.526 5.77" />
+    <path d="M18 18a4 4 0 0 0 2-7.464" />
+    <path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517" />
+    <path d="M6 18a4 4 0 0 1-2-7.464" />
+    <path d="M6.003 5.125a4 4 0 0 0-2.526 5.77" />
   </Svg>
 );
 export const IconPerson = (p: IconProps) => (
