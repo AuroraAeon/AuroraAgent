@@ -1,7 +1,7 @@
 # 终端 TUI 设计规范（Design Spec）
 
 > 本文件是 AuroraAgent 终端所有 dialog / selector / 输入框的**单一真值源**。新增或改造交互组件前先读本文件，提交前对照文末「自查清单」。
-> 基准组件：模型选择器（`/model`）。所有列表型 dialog 的头部、hint、搜索、选中 / 当前态都以它为准对齐。
+> 基准组件：模型选择器（`/model`）。所有列表型 dialog 的头部、hint、搜索、选中 / 当前态都以它为准。
 > 落地模块：`util/tui/`（theme / printable-key / searchable-list / symbols / render）与 `util/agent/` 的 TUI 组件。
 
 ---
@@ -100,7 +100,7 @@
  ↑↓ navigate · Space toggle · Enter details · Esc cancel
  Installed plugins (2)
   ❯ Kimi Datasource  enabled
-    id kimi-datasource · 1 skill · official
+    id web-search · 1 skill · official
     Superpowers  disabled
 ```
 
@@ -124,10 +124,10 @@
 | 列表光标 / 搜索 / 翻页状态机 | `util/tui/searchable-list.mjs` → `SearchableList` |
 | Kitty 可打印字符 | `util/tui/printable-key.mjs` → `printableChar` / `isPrintableChar` / `matchesKey` |
 | 选中指针 / 当前项标记 | `util/tui/symbols.mjs` → `SELECT_POINTER` / `CURRENT_MARK` |
-| 宽度 / 截断 / 对齐 / 水平线 | `util/tui/render.mjs` → `displayWidth` / `truncateToWidth` / `padToWidth` / `hline` |
+| 宽度 / 截断 / 补宽 / 水平线 | `util/tui/render.mjs` → `displayWidth` / `truncateToWidth` / `padToWidth` / `hline` |
 | 颜色 | `util/tui/theme.mjs` → `createPainter` / `paletteFor` / `auditPalette` |
 
-新列表组件**必须复用 `SearchableList`**（光标 / 搜索 / 翻页），并手工对齐本文件第 3–6 节的布局、键位、文案。
+新列表组件**必须复用 `SearchableList`**（光标 / 搜索 / 翻页），并手工比照本文件第 3–6 节的布局、键位、文案。
 
 ## 9. OSC 终端标题
 
@@ -147,7 +147,7 @@
 ## 11. footer 状态栏与目标芯片
 
 - footer 是单行纯渲染（`util/tui/footer.mjs`）：`模型 · 模式 · 思考 · 权限 [· 计划 · 标题 · 目标 · 生成态 · tokens/费用]`，方括号为可选段，超宽时**从右到左**逐段裁剪（ANSI 不计宽）。
-- **目标芯片**：有 `active` 目标时插入 `目标` 段（`accent` token），值形如 `13K / 50K · 2min30s`（tokens 用量 / 预算 · 活跃时长；无预算时省略 `/ 预算`）。计数与时长走紧凑格式化（对齐 MiniMax）：tokens `<1K` 原样、`<1M` 记 `K`（`>=10` 取整，如 `12500→13K`）、其余记 `M`；时长 `Ns`（`<60s`）/ `NminNs`（`<60min`，秒位不省略）/ `NhNminNs`，与 turn 渲染器同源（`goal/budget.mjs` 的 `formatGoalCount` / `formatGoalDuration` / `goalUsageChip`）。
+- **目标芯片**：有 `active` 目标时插入 `目标` 段（`accent` token），值形如 `13K / 50K · 2min30s`（tokens 用量 / 预算 · 活跃时长；无预算时省略 `/ 预算`）。计数与时长走紧凑格式化：tokens `<1K` 原样、`<1M` 记 `K`（`>=10` 取整，如 `12500→13K`）、其余记 `M`；时长 `Ns`（`<60s`）/ `NminNs`（`<60min`，秒位不省略）/ `NhNminNs`，与 turn 渲染器同源（`goal/budget.mjs` 的 `formatGoalCount` / `formatGoalDuration` / `goalUsageChip`）。
 - 状态词进 OSC 标题的 `state` 段：就绪 / 生成中 / 侧边对话。
 
 ## 12. 新增 / 改造 dialog 自查清单

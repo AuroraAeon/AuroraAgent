@@ -1,7 +1,7 @@
 # Terminology & Copy
 
 > This page is the complete single source of truth for AuroraAgent domain vocabulary and user-facing copy: check it before writing docs, UI labels, or error messages. The terminology table in the docs-site `AGENTS.md` is a condensed version of this page.
-> The vocabulary discipline is ported from ZCode's `CONTEXT.md`: every core concept has exactly **one** name with an Avoid list; inventing synonyms is a defect, not a style choice.
+> The vocabulary discipline: every core concept has exactly **one** name with an Avoid list; inventing synonyms is a defect, not a style choice.
 
 ---
 
@@ -23,7 +23,7 @@
 | 故障转移 | failover | On connection-phase errors (429 / 5xx / network), automatically retry via another provider of the same model | "retry" (failover switches route), "load balancing" |
 | 账本 | usage ledger | The append-only `usage.jsonl` usage record, priced per provider | "billing", "fee table" |
 | 收回态 | collapsed mode | The sidebar is gone entirely and only the always-on top overlay and 48px Header remain: one overlay button showing the brand tile at rest and the open-panel icon plus shortcut hint on hover, with a 200ms sidebar wipe; the Header keeps showing the workspace context, title, and menus | "mini sidebar", "icon mode", rail mode |
-| 顶部浮层 | top overlay | The always-on entry group floating above the sidebar (ported from ZCode DesktopTopOverlay): toggle sidebar, back / forward, new session, update; it floats to the screen edge when collapsed | floating ball, floating toolbar |
+| 顶部浮层 | top overlay | The always-on entry group floating above the sidebar: toggle sidebar, back / forward, new session, update; it floats to the screen edge when collapsed | floating ball, floating toolbar |
 | 会话导航历史 | navigation history | The browser-style back/forward stack across sessions: actively opening / creating / forking a session pushes onto the stack, back / forward only move the pointer without pushing; the overlay arrows and `Ctrl/Cmd+[` , `Ctrl/Cmd+]` share the same stack and rules, disabled at the ends; in-memory only, reset on refresh | message navigation (that is the ladder track along the conversation edge), browse history |
 | 工作区 | workspace | A session's working-directory context: path (home-abbreviated), last activity, git branch; read-only display, no file management | project (that is what goals are for), workbench (that is the whole UI) |
 | 数据目录 | data directory | The config and session root with three-level fallback (env var / same directory / `~/Library`) | "config directory" (only part of it) |

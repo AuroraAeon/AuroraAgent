@@ -172,6 +172,24 @@ export function guardDocsSite() {
     if (!pkg.scripts[s]) throw new Error(`package.json 应提供 ${s} 脚本`);
   }
 }
+/** 用户-facing 文档措辞铁律（AGENTS.md §10）：README 与文档站不出现外部项目名词、
+ *  禁用「对齐 / 对标 / 复刻 / 蒸馏」表述——出处只登记在 AGENTS.md 与 commit message。
+ *  与 tools/gen-release-notes.mjs 的渲染脱敏共用同一份词表（发布笔记由 commit subject 生成，
+ *  历史 subject 的外部名词在渲染层剥掉，git 历史保留出处） */
+export function guardDocsWording() {
+  const files = [join(ROOT, 'README.md'), ...walk(join(ROOT, 'docs-site'), ['.md'])];
+  const banned = /OpenBitFun|ZCode|MiniMax|minimax|kimi|kosong|dsh web|\bdsh\b|CC Switch|对标|复刻|蒸馏|对齐/g;
+  const bad = [];
+  for (const f of files) {
+    const lines = readFileSync(f, 'utf8').split('\n');
+    lines.forEach((line, i) => {
+      const m = line.match(banned);
+      if (m) bad.push(`${f.replace(ROOT + '/', '')}:${i + 1} [${m[0]}]`);
+    });
+  }
+  if (bad.length) throw new Error(`用户-facing 文档出现外部项目名词或禁用表述（出处只登记在 AGENTS.md 与 commit message）: ${bad.join(', ')}`);
+}
+
 /** 版本机制守卫：README 只声明「版本随 package.json」的取数机制，不硬编码具体版本号。
  *  release-please 的发布 PR 只动 package.json 与 CHANGELOG.md，README 里的硬编码数字会让
  *  发布 PR 的 CI 必然红，且合并后 master 持续红；版本唯一真值源是 package.json。
@@ -218,6 +236,7 @@ export const GUARDS = [
   ['文档站结构契约（中英对应 / 标记 / 依赖例外）', guardDocsSite],
   ['README 版本机制标注（不硬编码版本号）', guardDocsFreshness],
   ['架构地图覆盖 util/ 与 util/agent/ 模块', guardArchitectureMap],
+  ['用户-facing 文档措辞（无外部项目名词 / 禁用对齐表述）', guardDocsWording],
 ];
 
 export async function runGuardTests(test, assert) {

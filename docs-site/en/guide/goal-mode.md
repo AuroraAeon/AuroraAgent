@@ -1,6 +1,6 @@
 # Goal Mode
 
-Goal mode attaches a **cross-round session goal** to a conversation: the model advances, verifies, and continues on its own until the goal is complete, blocked, or out of budget — and you can pause, resume, or re-budget at any time. The semantics mirror MiniMax-code's thread-goal capability, re-implemented with zero dependencies for a local single-user tool (`util/agent/goal/`).
+Goal mode attaches a **cross-round session goal** to a conversation: the model advances, verifies, and continues on its own until the goal is complete, blocked, or out of budget — and you can pause, resume, or re-budget at any time. Re-implemented with zero dependencies for a local single-user tool (`util/agent/goal/`).
 
 ## When to use it
 
@@ -29,7 +29,7 @@ At most one goal per session (`<dataDir>/goals/<sessionId>.json`, atomic write);
 
 ## Model-side tools
 
-Names and schemas match codex / minimax-code so models need zero learning time; collected in Standard / Ultimate only, not in Minimal.
+Tool names and schemas follow common conventions so models need zero learning time; collected in Standard / Ultimate only, not in Minimal.
 
 | Tool | Purpose |
 | --- | --- |
@@ -44,7 +44,7 @@ Names and schemas match codex / minimax-code so models need zero learning time; 
 - **Token budget**: `tokensUsed` accumulates through the usage ledger each round; on exhaustion the goal moves to `budget_limited(token)` and a single tool-free wrap-up round runs — summarizing what was done, what was not, and why it stopped, plus how to re-budget and continue
 - **Round / time budgets**: `goal.mainTurns` (continuation rounds) and `goal.activeSeconds` (in-turn active seconds) move the goal to `budget_limited(main_turn)` / `budget_limited(active_time)`; `graceSteps` is the grace period after exhaustion (default 1)
 - **Re-arming**: raising or clearing `token_budget` restores a `budget_limited(token)` goal to `active` (model side via CAS budget mode, user side via `/goal budget`)
-- **Dual breakers**: a repeated normalized reply fingerprint (`noProgressStreak`) and consecutive tool-free rounds (`noToolStreak`) share the threshold `goal.repeatedReplyLimit` (default 3, range 2–10) and never accumulate together. The ladder mirrors MiniMax `decideAction`: the first observation is only recorded, the second injects the matching corrective nudge (repeated-reply / no-tool wording, merged when both fire, delivered with the next round), and the third trips the goal into `paused(no_progress)`. A round without usable reply text (a pure tool round) carries no fingerprint evidence — the streak and fingerprint stay as they were, so alternating empty rounds cannot launder a repeated reply past the breaker
+- **Dual breakers**: a repeated normalized reply fingerprint (`noProgressStreak`) and consecutive tool-free rounds (`noToolStreak`) share the threshold `goal.repeatedReplyLimit` (default 3, range 2–10) and never accumulate together. The ladder escalates in steps: the first observation is only recorded, the second injects the matching corrective nudge (repeated-reply / no-tool wording, merged when both fire, delivered with the next round), and the third trips the goal into `paused(no_progress)`. A round without usable reply text (a pure tool round) carries no fingerprint evidence — the streak and fingerprint stay as they were, so alternating empty rounds cannot launder a repeated reply past the breaker
 
 ## Verification tiers
 
@@ -61,13 +61,13 @@ No implicit routing: evaluator only runs when `goal.evaluatorModel` is explicitl
 
 Adapted to the single-SSE-turn model with no queue subsystem: within a turn, when the model stops calling tools while the goal is still `active`, with no terminal proposal and no budget / breaker trip, a goal-continuation system reminder extends the round (capped by both the harness round limit and the goal's main-turn budget). A new user message ends the continuation; the goal state carries into your next turn. While waiting for permission, plan approval, or verification, `goal_wait_changed` (`executionWait`) is emitted so both clients render "waiting" instead of "stuck".
 
-Rewriting the objective mid-turn (web `/goal edit` / Composer or REST) does not leave the in-flight model in the dark: its next round receives a "Goal updated" reminder — the new objective is wrapped as untrusted data (`<untrusted_objective>`) with a budget snapshot (used / cap / remaining, `unlimited` when uncapped) — so it adjusts course instead of continuing work that only served the old objective. A pending terminal proposal for the old objective is discarded at the same time (mirrors MiniMax `renderObjectiveUpdatedPrompt` and binding-staleness cancellation).
+Rewriting the objective mid-turn (web `/goal edit` / Composer or REST) does not leave the in-flight model in the dark: its next round receives a "Goal updated" reminder — the new objective is wrapped as untrusted data (`<untrusted_objective>`) with a budget snapshot (used / cap / remaining, `unlimited` when uncapped) — so it adjusts course instead of continuing work that only served the old objective. A pending terminal proposal for the old objective is discarded at the same time.
 
-An active goal is also re-stated in the first round of every user turn (mirrors MiniMax admitting each turn with `continuationBody`): after context compaction evicts the `create_goal` tool call, the model still knows what it is pursuing in a fresh user turn. Every five goal rounds carry a scheduled status audit (mirrors MiniMax `reminder-policy` terminal-audit) that re-evaluates completion / blocked against current evidence, so the goal cannot drift forever without a proposal.
+An active goal is also re-stated in the first round of every user turn (injected with each user request): after context compaction evicts the `create_goal` tool call, the model still knows what it is pursuing in a fresh user turn. Every five goal rounds carry a scheduled status audit that re-evaluates completion / blocked against current evidence, so the goal cannot drift forever without a proposal.
 
 ## User-side operations
 
-The terminal and the web Composer share one `/goal` parser (`util/agent/goal/command.mjs`, the single source of truth, mirroring MiniMax-code's `thread-goal-command`), so both clients behave identically:
+The terminal and the web Composer share one `/goal` parser (`util/agent/goal/command.mjs`, the single source of truth), so both clients behave identically:
 
 ```bash
 /goal                          # current goal: status / objective / usage / budget / latest verification / available actions
@@ -83,7 +83,7 @@ The terminal and the web Composer share one `/goal` parser (`util/agent/goal/com
 /goal help                     # command help
 ```
 
-Web: type the commands above straight into the chat box (a message starting with `/goal` is intercepted instead of sent); **they also work while a turn is still generating** — `/goal` commands bypass the message channel and go straight to the goal REST surface (independent of the single-active-turn gate), so raising a budget before it runs out, pausing auto-continuation, or rewriting the objective mid-flight are all supported, matching MiniMax command-flow where catalog commands dispatch during an active turn; async command callbacks are session-guarded, so switching or creating a session mid-turn never carries the previous session's goal state into the new view; view / help / errors reply as system messages, create becomes "rewrite the objective" when a goal is unfinished, and budget changes carry a fresh `expectedGoalId` + `expectedUpdatedAt` snapshot. A single-line GoalBar docked above the composer shows the status chip, objective (ellipsized when long), tokens / turns / live elapsed, budget cap, and a compact verdict chip (`not_met` carries its streak count, while missing gaps and the action hint live in the hover title); while `active` and waiting on permission / verification the chip switches to a wait label (matching MiniMax goalPresentation), and when a goal turns `complete` the bar hides and a same-source completion receipt is appended to the message stream. Pause / resume / stop are one click away.
+Web: type the commands above straight into the chat box (a message starting with `/goal` is intercepted instead of sent); **they also work while a turn is still generating** — `/goal` commands bypass the message channel and go straight to the goal REST surface (independent of the single-active-turn gate), so raising a budget before it runs out, pausing auto-continuation, or rewriting the objective mid-flight are all supported, with commands dispatched during an active turn; async command callbacks are session-guarded, so switching or creating a session mid-turn never carries the previous session's goal state into the new view; view / help / errors reply as system messages, create becomes "rewrite the objective" when a goal is unfinished, and budget changes carry a fresh `expectedGoalId` + `expectedUpdatedAt` snapshot. A single-line GoalBar docked above the composer shows the status chip, objective (ellipsized when long), tokens / turns / live elapsed, budget cap, and a compact verdict chip (`not_met` carries its streak count, while missing gaps and the action hint live in the hover title); while `active` and waiting on permission / verification the chip switches to a wait label, and when a goal turns `complete` the bar hides and a same-source completion receipt is appended to the message stream. Pause / resume / stop are one click away.
 
 The REST surface is `GET /api/agent/goal/:id`, `POST /api/agent/goal` (create; 409 `GOAL_STATUS_CONFLICT` while a goal is unfinished), `POST /api/agent/goal/edit` (rewrite; 400 `GOAL_BAD_OBJECTIVE` for a blank text, 409 when complete), `POST /api/agent/goal/clear` (idempotent removal, returns `{cleared}`), and `POST /api/agent/goal/{pause,resume,stop,budget}`.
 

@@ -1,6 +1,6 @@
 # Goal 模式
 
-Goal 模式给会话挂一个**跨轮次存续的目标**：模型自主推进、验证、续跑，直到完成、受阻或预算耗尽，中途你随时可以暂停、恢复、改预算或叫停。语义对齐 MiniMax-code 的 thread-goal 能力，按本地单用户场景零依赖落地（`util/agent/goal/`）。
+Goal 模式给会话挂一个**跨轮次存续的目标**：模型自主推进、验证、续跑，直到完成、受阻或预算耗尽，中途你随时可以暂停、恢复、改预算或叫停。按本地单用户场景零依赖落地（`util/agent/goal/`）。
 
 ## 什么时候用
 
@@ -31,7 +31,7 @@ Goal 模式给会话挂一个**跨轮次存续的目标**：模型自主推进�
 
 ## 模型侧三工具
 
-名字与 schema 对齐 codex / minimax-code，模型对这套工具有先验，零学习成本；仅 Standard / Ultimate 模式收录，Minimal 不收录。
+工具名字与 schema 保持通用约定，模型对这套工具有先验，零学习成本；仅 Standard / Ultimate 模式收录，Minimal 不收录。
 
 | 工具 | 作用 |
 | --- | --- |
@@ -46,7 +46,7 @@ Goal 模式给会话挂一个**跨轮次存续的目标**：模型自主推进�
 - **token 预算**：每轮结束经用量账本累计 `tokensUsed`；触顶自动转 `budget_limited(token)`，并追加唯一一个无工具的收尾轮——只总结「已完成 / 未完成 / 为何停止」，并告知可经 `update_goal` 调整预算后续跑
 - **轮次 / 时长预算**：`goal.mainTurns`（续跑轮次上限）与 `goal.activeSeconds`（轮内活跃秒数）触顶转 `budget_limited(main_turn)` / `budget_limited(active_time)`；`graceSteps` 是触顶后的宽限轮数（默认 1）
 - **重新武装**：抬高或清零 `token_budget` 可把 `budget_limited(token)` 恢复为 `active`（模型侧走 CAS 预算模式，用户侧走 `/goal budget`）
-- **双熔断**：归一化回复指纹连续重复（`noProgressStreak`）与「连续无工具提交轮」（`noToolStreak`）共享阈值 `goal.repeatedReplyLimit`（默认 3，范围 2–10），互不累加；阶梯对齐 MiniMax `decideAction`：第 1 次观察只记录、第 2 次注入对应纠正提醒（复读 / 无工具各自成文，同时中招合并注入下一轮）、第 3 次转 `paused(no_progress)`；无可用回复文本的轮（纯工具轮）不携带指纹证据——连胜与指纹原样保持，杜绝「交替空轮 + 复读」绕过熔断
+- **双熔断**：归一化回复指纹连续重复（`noProgressStreak`）与「连续无工具提交轮」（`noToolStreak`）共享阈值 `goal.repeatedReplyLimit`（默认 3，范围 2–10），互不累加；阶梯式升级：第 1 次观察只记录、第 2 次注入对应纠正提醒（复读 / 无工具各自成文，同时中招合并注入下一轮）、第 3 次转 `paused(no_progress)`；无可用回复文本的轮（纯工具轮）不携带指纹证据——连胜与指纹原样保持，杜绝「交替空轮 + 复读」绕过熔断
 
 ## 验证三档
 
@@ -63,13 +63,13 @@ Goal 模式给会话挂一个**跨轮次存续的目标**：模型自主推进�
 
 适配单 SSE turn 模型，不建队列子系统：turn 内模型不再要求工具、而目标仍 `active`、无终态提案、未触预算 / 熔断时，注入 goal-continuation 系统提醒续轮（受 harness 轮次上限与 goal 主轮预算双重封顶）。你发新消息即收尾，目标状态延续到下一次用户 turn。等待授权 / 计划批准 / 验证时发布 `goal_wait_changed`（`executionWait`），两端渲染「等待中」而非「卡住」。
 
-在 turn 进行中改写目标文本（网页 `/goal edit` / Composer 或 REST）时，在飞模型不会蒙在鼓里：下一轮即收到【目标已更新】提醒——新目标按不可信数据包裹（`<untrusted_objective>`）并附预算快照（已用 / 上限 / 剩余，无预算记 `unlimited`），模型据此调整方向，不再继续只为旧目标服务的工作；针对旧目标提出的待定终态提案同时作废（对齐 MiniMax `renderObjectiveUpdatedPrompt` 与绑定失配取消语义）。
+在 turn 进行中改写目标文本（网页 `/goal edit` / Composer 或 REST）时，在飞模型不会蒙在鼓里：下一轮即收到【目标已更新】提醒——新目标按不可信数据包裹（`<untrusted_objective>`）并附预算快照（已用 / 上限 / 剩余，无预算记 `unlimited`），模型据此调整方向，不再继续只为旧目标服务的工作；针对旧目标提出的待定终态提案同时作废。
 
-活跃目标在每次用户轮的首轮即重述（对齐 MiniMax 每轮准入注入 `continuationBody`）：上下文压缩把 `create_goal` 的工具调用挤出窗口后，模型在新用户轮里仍然知道在追什么；每 5 个 goal 轮附带一次例行状态审计（对齐 MiniMax `reminder-policy` 的 terminal-audit），提醒对照当前证据重估完成 / 受阻，避免无限推进从不提案。
+活跃目标在每次用户轮的首轮即重述（随每轮用户请求注入）：上下文压缩把 `create_goal` 的工具调用挤出窗口后，模型在新用户轮里仍然知道在追什么；每 5 个 goal 轮附带一次例行状态审计，提醒对照当前证据重估完成 / 受阻，避免无限推进从不提案。
 
 ## 用户面操作
 
-终端与网页 Composer 共用同一份 `/goal` 命令解析（`util/agent/goal/command.mjs` 单一事实源，语义对齐 MiniMax-code 的 `thread-goal-command`），两端行为完全一致：
+终端与网页 Composer 共用同一份 `/goal` 命令解析（`util/agent/goal/command.mjs` 单一事实源），两端行为完全一致：
 
 ```bash
 /goal                          # 查看当前目标：状态 / 目标内容 / 用量 / 预算 / 最近验证 / 可用操作
@@ -85,7 +85,7 @@ Goal 模式给会话挂一个**跨轮次存续的目标**：模型自主推进�
 /goal help                     # 命令帮助
 ```
 
-网页：聊天框直接输入上述命令（整段以 `/goal` 开头即被拦截，不当作普通消息发送）；**生成中（模型仍在输出）同样可以输入**——`/goal` 家族命令不经普通消息通道，直走 goal REST（与 turn 单活门控互不阻塞），运行中抬高预算防触顶、暂停自动续跑、改写目标文本都是在飞场景的对齐能力（对齐 MiniMax command-flow：catalog 命令在 turn 运行中直接 dispatch）；命令操作的异步回调带会话归属校验，运行中切换 / 新建会话不会把旧会话的目标状态带到新会话界面；view / help / 错误以系统消息回复，create 在已有未完成目标时自动转为「改写目标文本」，budget 变更携带 `expectedGoalId` + `expectedUpdatedAt` 新鲜快照。输入框上方单行 GoalBar 展示状态芯片、目标内容（超长省略）、tokens / 轮次 / live 时长、预算上限与验证结论芯片（`not_met` 附连击数，缺失项与操作提示收进悬停 title）；`active` 且等待授权 / 验证时芯片改用等待标签（对齐 MiniMax goalPresentation），目标转 `complete` 时目标条隐藏、消息流贴一条同源完成回执。暂停 / 恢复 / 停止即点即走。
+网页：聊天框直接输入上述命令（整段以 `/goal` 开头即被拦截，不当作普通消息发送）；**生成中（模型仍在输出）同样可以输入**——`/goal` 家族命令不经普通消息通道，直走 goal REST（与 turn 单活门控互不阻塞），运行中抬高预算防触顶、暂停自动续跑、改写目标文本都是在飞场景的可用能力（命令在 turn 运行中直接分派）；命令操作的异步回调带会话归属校验，运行中切换 / 新建会话不会把旧会话的目标状态带到新会话界面；view / help / 错误以系统消息回复，create 在已有未完成目标时自动转为「改写目标文本」，budget 变更携带 `expectedGoalId` + `expectedUpdatedAt` 新鲜快照。输入框上方单行 GoalBar 展示状态芯片、目标内容（超长省略）、tokens / 轮次 / live 时长、预算上限与验证结论芯片（`not_met` 附连击数，缺失项与操作提示收进悬停 title）；`active` 且等待授权 / 验证时芯片改用等待标签，目标转 `complete` 时目标条隐藏、消息流贴一条同源完成回执。暂停 / 恢复 / 停止即点即走。
 
 REST 面对应 `GET /api/agent/goal/:id`、`POST /api/agent/goal`（创建，未完成目标存在时 409 `GOAL_STATUS_CONFLICT`）、`POST /api/agent/goal/edit`（改写，空白 400 `GOAL_BAD_OBJECTIVE`，已完成 409）、`POST /api/agent/goal/clear`（幂等移除，回 `{cleared}`）与 `POST /api/agent/goal/{pause,resume,stop,budget}`。
 

@@ -1,7 +1,7 @@
 # 网页设计规范（Web Design Spec）
 
 > 本文件是 AuroraAgent 网页工作台（`web-ui/`）视觉与交互的**单一真值源**。新增或改造界面前先读本文件，提交前对照文末「自查清单」。
-> 来源：蒸馏 ZCode `DESIGN.md` 中可跨项目复用的部分，落到本项目零依赖 CSS 的实际形态；终端侧的对应规范是 `tui-design.md`，两者互不覆盖。
+> 来源：网页工作台的视觉与交互纪律，落到本项目零依赖 CSS 的实际形态；终端侧的对应规范是 `tui-design.md`，两者互不覆盖。
 > 落地模块：`web-ui/src/tokens.css`（设计令牌，双主题）与 `web-ui/src/app.css`（组件样式）。令牌对比度与过渡动画纪律由 `test/guards.mjs` 强制。
 
 ---
@@ -75,12 +75,12 @@
 
 - 只过渡**颜色 / 透明度 / 变换**；时长三档 `120ms` / `150ms` / `180ms`，曲线统一 `--ease`。
 - 浮层进场用 `@starting-style`（淡入 + 轻微缩放，`120ms`）；`prefers-reduced-motion: reduce` 时关闭。
-- **禁止 `transition:all`**（守卫强制）。ZCode 教训：大会话 / 连续交互里它会批量启动滚动条色、尺寸等非合成动画，放大主线程 style / layout 压力。
+- **禁止 `transition:all`**（守卫强制）。实战教训：大会话 / 连续交互里它会批量启动滚动条色、尺寸等非合成动画，放大主线程 style / layout 压力。
 - 动效用于澄清状态变化，不装饰屏幕。
 
 ## 9. 菜单与 tooltip 密度语言
 
-提示气泡规格（复刻 ZCode `ControlHintTooltip`，零依赖实现在 `ControlTooltip.tsx` + `.ct-tip`）：
+提示气泡规格（零依赖实现在 `ControlTooltip.tsx` + `.ct-tip`）：
 
 | 部件 | 规格 |
 | --- | --- |
@@ -94,40 +94,40 @@
 
 ## 10. 工作区 Header 与顶部浮层
 
-Header 常驻 `48px`（ZCode `h-12`）：内行 `p-2` / `gap-2` / `justify-between` / `overflow-hidden`，标题区按内容占宽不铺满（父级是拖拽区，铺满会让空白处无法拖动）；分隔线走 inset 阴影而非 border（不参与布局，与主区顶部严格对齐）。
+Header 常驻 `48px`（`h-12`）：内行 `p-2` / `gap-2` / `justify-between` / `overflow-hidden`，标题区按内容占宽不铺满（父级是拖拽区，铺满会让空白处无法拖动）；分隔线走 inset 阴影而非 border（不参与布局，与主区顶部严格齐平）。
 
 - **左组**（`gap-1`）：工作区上下文钮（`28px` ghost 方钮，hover 即显信息卡、点击 pin；卡内三行——工作目录 home 缩写 / 最近活动 / git 分支，分支由 `GET /api/workspace` 零依赖直读 `.git/HEAD`）+ 会话标题（`14px` / `600`、`max-width:400px`、容器查询窄档 `30vw` / `22vw`、双击原位重命名）+ 更多菜单（`28px` ghost，菜单项选中即关）
-- **右组**（`gap-0.5`）：帮助菜单（文档 / 反馈外链 + 快捷键与关于两个信息面板；触发器挂「帮助」气泡，复刻 ZCode「ControlHintTooltip 包住 DropdownMenuTrigger」）+ 设置
-- **顶部浮层**（复刻 ZCode `DesktopTopOverlay`）：absolute 常驻，外层 `pointer-events:none`、交互容器 `auto`——空白处的点击仍归侧栏；切换钮静止显 `20px` 品牌砖（圆角 `6px`）、hover 淡出并淡入 `16px` 面板图标（绝对居中），气泡显示「切换侧边栏 + ⌘B/Ctrl+B」；后退 / 前进（会话导航历史，复刻 ZCode `taskNav`：浏览器式前进后退栈，栈首 / 栈尾禁用，`Ctrl/Cmd+[` 与 `Ctrl/Cmd+]` 同效——与对话区左缘梯状轨 TurnNavigator 分工：那是消息内的上一条 / 下一条，这是会话间的后退 / 前进）；新建任务钮随 `isNewTaskButtonVisible` 语义做 `opacity` / `width` `300ms` 过渡（收回态才显，图标取 lucide `MessageCirclePlus` 精确路径——聊天气泡 + 加号，不是裸加号）；更新入口仅发现有新版时出现（ZCode 教训：收回态不能按宽度阈值隐藏全局入口）
+- **右组**（`gap-0.5`）：帮助菜单（文档 / 反馈外链 + 快捷键与关于两个信息面板；触发器挂「帮助」气泡，气泡包住下拉触发器）+ 设置
+- **顶部浮层**：absolute 常驻，外层 `pointer-events:none`、交互容器 `auto`——空白处的点击仍归侧栏；切换钮静止显 `20px` 品牌砖（圆角 `6px`）、hover 淡出并淡入 `16px` 面板图标（绝对居中），气泡显示「切换侧边栏 + ⌘B/Ctrl+B」；后退 / 前进（会话导航历史：浏览器式前进后退栈，栈首 / 栈尾禁用，`Ctrl/Cmd+[` 与 `Ctrl/Cmd+]` 同效——与对话区左缘梯状轨 TurnNavigator 分工：那是消息内的上一条 / 下一条，这是会话间的后退 / 前进）；新建任务钮随 `isNewTaskButtonVisible` 语义做 `opacity` / `width` `300ms` 过渡（收回态才显，图标取 lucide `MessageCirclePlus` 精确路径——聊天气泡 + 加号，不是裸加号）；更新入口仅发现有新版时出现（教训：收回态不能按宽度阈值隐藏全局入口）
 - **让位**：侧栏收回时 Header 内行加左侧内距（实测浮层宽 + `8px`）；侧栏顶部留 `48px` 浮层带；主列窄于 `360px` 时自动收回侧栏（只收不展）
-- **侧栏本体**（复刻 ZCode `WorkspaceSidebar`）：展开态没有大 Logo——`aside` 首段是 `48px` 空拖拽带（浮层盖在上面），品牌只存在于浮层那枚切换钮；会话行是 32px（ZCode `TaskListItem`）：左 `10px` 内距 + `16px` 前置槽 + `8px` 间距把标题整体右移，槽位在会话运行中填 `14px` 灰色加载圈（转圈即「这个会话有活在跑」——运行中允许切换会话，旧 turn 仍在跑，加载圈按 sessionId 集合点亮而非「当前会话 + busy」推导；`prefers-reduced-motion` 下放慢转速）；带下第一件是新建任务钮（ZCode `NewTaskButtonGroup`：`w-full h-8 rounded-lg` ghost、`pl-2.5 pr-2.5 gap-2`、`MessageCirclePlus 16px` +「新建任务」+ 右侧 `12px` 快捷键标签；正常态不挂 tooltip——按钮已自带文案与快捷键，再挂就是重复）；设置外观在设置弹层「外观」一级目录（ZCode `appearance` section）：界面主题是 `Select` 下拉（`260px`、选项带 `Monitor` / `Moon` / `Sun` 图标 + 对勾指示），不是分段按钮——选项带图标时分段控件排不下，且下拉与设置页其它选择器语言一致（全量选项见第 13 节）
-- 入口钮统一 `28px` + 圆角 `8px` + 只过渡背景色 / 颜色（ZCode 教训：`transition-all` 会在缩放窗口时把尺寸变化也动画化）
+- **侧栏本体**：展开态没有大 Logo——`aside` 首段是 `48px` 空拖拽带（浮层盖在上面），品牌只存在于浮层那枚切换钮；会话行是 32px：左 `10px` 内距 + `16px` 前置槽 + `8px` 间距把标题整体右移，槽位在会话运行中填 `14px` 灰色加载圈（转圈即「这个会话有活在跑」——运行中允许切换会话，旧 turn 仍在跑，加载圈按 sessionId 集合点亮而非「当前会话 + busy」推导；`prefers-reduced-motion` 下放慢转速）；带下第一件是新建任务钮（新建任务钮组：`w-full h-8 rounded-lg` ghost、`pl-2.5 pr-2.5 gap-2`、`MessageCirclePlus 16px` +「新建任务」+ 右侧 `12px` 快捷键标签；正常态不挂 tooltip——按钮已自带文案与快捷键，再挂就是重复）；设置外观在设置弹层「外观」一级目录：界面主题是 `Select` 下拉（`260px`、选项带 `Monitor` / `Moon` / `Sun` 图标 + 对勾指示），不是分段按钮——选项带图标时分段控件排不下，且下拉与设置页其它选择器语言一致（全量选项见第 13 节）
+- 入口钮统一 `28px` + 圆角 `8px` + 只过渡背景色 / 颜色（教训：`transition-all` 会在缩放窗口时把尺寸变化也动画化）
 
-## 11. 输入区（Composer，复刻 ZCode `ChatPromptEditor`）
+## 11. 输入区（Composer）
 
 - **输入壳**：`border-radius:16px`、内距 `12px`、区块间距 `12px`；`:focus-within` 只换边框色与底色，不铺 glow——焦点态不该像报错一样发亮。
-- **工具栏**：`flex` + `align-items:flex-end` + `gap:12px`，永远单行不换行；左组 `flex:1 min-width:0`（内容左对齐、可被压缩的是空白），右组 `margin-left:auto` + `shrink:0` + `gap:6px`（模型选择器与发送 / 停止贴右）。
+- **工具栏**：`flex` + `align-items:flex-end` + `gap:12px`，永远单行不换行；左组 `flex:1 min-width:0`（内容靠左、可被压缩的是空白），右组 `margin-left:auto` + `shrink:0` + `gap:6px`（模型选择器与发送 / 停止贴右）。
 - **入口钮**：工具栏全部入口统一 `28px` ghost 方钮（圆角 `8px`、无描边、`padding:0 8px`、图标与文字间距 `4px`、只过渡背景色 / 颜色）——加号、模式、权限、标题同规格，不建新高度；发送是 `28px` 品牌钮（`IconArrowUp`），生成中换中性底方形停止钮。
 - **「添加上下文」加号菜单**：左组第一枚（复用零依赖 `Menu`：portal 单例 root、ARIA 键盘全集、Esc / Tab / 点外关闭）。两项：**上传文件**——读本机文本文件，以 `<file name="…">…</file>` 块插入输入框（后端没有附件存储，插入内容即「添加上下文」的落地形态，模型当场能读到；单文件上限 `200KB`、一次最多 `5` 个，二进制 / 超限说清原因并给出下一步，不静默丢弃）；**引用工作目录文件**——在文末补一个 `@`，唤起既有提及调色板（与 `@` 提及时同一套只读文件搜索）。
-- **窄屏收纳**：工具栏超宽时整组收成图标钮（隐藏文字标签、钮保持方形），不放宽、不换行——输入框宽度稳定，不随标签显隐跳动（ZCode `useComposerToolbarFit` 首档语义）。
+- **窄屏收纳**：工具栏超宽时整组收成图标钮（隐藏文字标签、钮保持方形），不放宽、不换行——输入框宽度稳定，不随标签显隐跳动（首档语义）。
 
-## 12. 对话时间线密度（复刻 ZCode 消息行 / Reasoning / ToolSummaryRow）
+## 12. 对话时间线密度
 
 流式期间一排工具调用不应是一叠卡片。摘要行是**无框内联行**：`align-self:flex-start` + `width:fit-content` Hug 内容宽度，`gap:8px` 单行排「图标（14px，dim）+ 类别（500 字重）+ 资源（等宽、截断、无底无边）+ 状态词」，垂直内距 `3px`——一次调用只占一行高。
 
-- **展开箭头默认隐藏**：hover 摘要行才淡入（`opacity:0 → 1`），展开态常显并旋转 `225°`（ZCode：`opacity-0 group-hover:opacity-100` + `rotate-90`）。
+- **展开箭头默认隐藏**：hover 摘要行才淡入（`opacity:0 → 1`），展开态常显并旋转 `225°`（`opacity-0 group-hover:opacity-100` + `rotate-90`）。
 - **完整内容默认收起**：参数 / 输出 / diff / 待办 / 子代理清单只在点开后渲染，落到行下方一个自带边框与底色的面板（圆角 `10px`）——收起态零占地，展开态才有容器。
 - **语义边框只挂展开面板**：授权态（ask）强调色、失败 / 拒绝态危险色；收起态由状态词颜色承载，不给整行描边。
-- **运行中**：状态词内联「执行中」（动画点 + 文字），不加行不加框；失败原因走状态词 hover 提示（ZCode `statusTooltip` 语义）。
+- **运行中**：状态词内联「执行中」（动画点 + 文字），不加行不加框；失败原因走状态词 hover 提示（悬停提示语义）。
 - 子代理缩进 `18px` + 左侧 `2px` 强调色细线标记层级，不另起卡片。
 
-**消息行**（复刻 ZCode `Message` / `MessageContent`）：**无头像**——用户与助手都不渲染头像，层级靠对齐方式与底色建立，不靠装饰件。用户消息整行 `justify-end` 推右，气泡 `width:fit-content` Hug 内容（`max-width:min(640px,82%)` 封顶）、圆角 `8px`、`--surface-hover` 底、内距 `10px 16px`、四角同圆（不要气泡尾）；助手消息左对齐铺列（`w-fit` 由内容自然撑开），思考 / 工具 / 正文按发生顺序交错。系统提示（压缩）与通知行走弱化条形态，不抢对话层级。
+**消息行**：**无头像**——用户与助手都不渲染头像，层级靠左右分布与底色建立，不靠装饰件。用户消息整行 `justify-end` 推右，气泡 `width:fit-content` Hug 内容（`max-width:min(640px,82%)` 封顶）、圆角 `8px`、`--surface-hover` 底、内距 `10px 16px`、四角同圆（不要气泡尾）；助手消息靠左铺列（`w-fit` 由内容自然撑开），思考 / 工具 / 正文按发生顺序交错。系统提示（压缩）与通知行走弱化条形态，不抢对话层级。
 
-**思考过程**（复刻 ZCode `Reasoning` / `ReasoningTrigger`）：与工具摘要行同一套密度语言——无框内联行：brain 图标 `16px`（lucide `brain` 原样路径，ZCode `size-4`）+ 「正在思考 / 思考」标签（`500` 字重、subtlest 色、hover 整行提亮），整行 `gap:8px`、字号 `text-ui-base`（`1rem`，随界面字号缩放）；流式且收起时标签颜色扫光（只动颜色，`prefers-reduced-motion` 下定色），标签后一个 `·` 分隔，右侧挂**最后一个非空行**的单行滚动摘要（视口恒宽、新 token 增长把视口推到末尾、只在溢出时挂左右各 `16px` 渐隐——保证最新思考始终可见；ZCode `resolveReasoningStreamingSummary` + `getReasoningSummaryMaskStyle`）；`16px` chevron 静止透明、hover 才显、展开态转向 `90°`。展开内容：`pt-3`（12px）上距 + `ml-2`（8px）左距 + `1px` 导线 + `14px` 缩进、限高 `240px` 内部滚动、**纯文本渲染**（不走 Markdown——流式 chunk 反复解析长思考会掉帧，ZCode 同取舍）。**流式与完成态都默认收起**（ZCode：流式默认展开会持续挤压工具和正文空间，只保留运行态文案）；流式结束自动收起，用户手动展开过则不打扰（ZCode `autoCollapse` 语义）。正文先剥掉开头空行（模型常在思考内容前吐 `\n\n`，不处理展开后第一行是空白）。正文归一、摘要取值与溢出判定抽在纯函数层 `web-ui/src/reasoning.mjs`（Node 测试直 import 同一份）。耗时文案（「思考 · N 秒」）**不移植**：投影层不记录思考起止时间，编造秒数等于造假，故只留「思考」标签。行高节奏与 ZCode 等价：ZCode 用 `gap-4`（16px）组间距 + 行内零内距，本项目用行内 `3px` 上下内距 + 列 `10px` 间距，两者工作项行距同为 `37px`。
+**思考过程**：与工具摘要行同一套密度语言——无框内联行：brain 图标 `16px`（lucide `brain` 原样路径，`size-4`）+ 「正在思考 / 思考」标签（`500` 字重、subtlest 色、hover 整行提亮），整行 `gap:8px`、字号 `text-ui-base`（`1rem`，随界面字号缩放）；流式且收起时标签颜色扫光（只动颜色，`prefers-reduced-motion` 下定色），标签后一个 `·` 分隔，右侧挂**最后一个非空行**的单行滚动摘要（视口恒宽、新 token 增长把视口推到末尾、只在溢出时挂左右各 `16px` 渐隐——保证最新思考始终可见；`resolveReasoningStreamingSummary` + `getReasoningSummaryMaskStyle`）；`16px` chevron 静止透明、hover 才显、展开态转向 `90°`。展开内容：`pt-3`（12px）上距 + `ml-2`（8px）左距 + `1px` 导线 + `14px` 缩进、限高 `240px` 内部滚动、**纯文本渲染**（不走 Markdown——流式 chunk 反复解析长思考会掉帧，同取舍）。**流式与完成态都默认收起**（流式默认展开会持续挤压工具和正文空间，只保留运行态文案）；流式结束自动收起，用户手动展开过则不打扰（自动收起语义）。正文先剥掉开头空行（模型常在思考内容前吐 `\n\n`，不处理展开后第一行是空白）。正文归一、摘要取值与溢出判定抽在纯函数层 `web-ui/src/reasoning.mjs`（Node 测试直 import 同一份）。耗时文案（「思考 · N 秒」）**不移植**：投影层不记录思考起止时间，编造秒数等于造假，故只留「思考」标签。行高节奏：行内 `3px` 上下内距 + 列 `10px` 间距，工作项行距 `37px`。
 
 ## 13. 外观设置页
 
-设置弹层「外观」一级目录（复刻 ZCode `appearance` section，`Palette` 图标，排在「通用」之后）承载三段内容，全部只影响本机浏览器（`localStorage` 持久化，首帧由 `index.html` 内联脚本预置防闪）：
+设置弹层「外观」一级目录（`Palette` 图标，排在「通用」之后）承载三段内容，全部只影响本机浏览器（`localStorage` 持久化，首帧由 `index.html` 内联脚本预置防闪）：
 
 - **界面设置**：界面主题（`Select` 下拉 `260px`，`系统` / `深色` / `浅色` 三选项带 `Monitor` / `Moon` / `Sun` 图标 + 对勾指示）+ 界面字号（`12~20px` 数字输入，失焦 / 回车提交、钳制范围、`Esc` 还原草稿）。
 - **代码设置**：浅色 / 深色代码主题各一个 `Select`（`默认（Aurora）` / `GitHub` / `Vitesse` / `Catppuccin` / `高对比`，各配一套 `--code-key/str/num/com/fn/type` 调色板——零依赖高亮器按类别上色，不引 Shiki）+ 显示行号（`Switch`）+ 长行自动换行（`Switch`）+ 代码字号（`12~20px`，与界面字号独立）。
@@ -135,7 +135,7 @@ Header 常驻 `48px`（ZCode `h-12`）：内行 `p-2` / `gap-2` / `justify-betwe
 
 两条工程纪律：
 
-- **界面字号只动文字**：`app.css` 全文件 `font-size` 一律 rem（`1rem` ＝ 界面字号），行高用无单位比值随之缩放；图标、间距、圆角保持 `px` 不动（对齐 ZCode「只更新字号 Token 基准变量」的做法）。
+- **界面字号只动文字**：`app.css` 全文件 `font-size` 一律 rem（`1rem` ＝ 界面字号），行高用无单位比值随之缩放；图标、间距、圆角保持 `px` 不动（只更新字号基准变量的做法）。
 - **行号结构随偏好切分**：`Markdown` 把高亮 token 序列按换行切开逐行渲染，序号用 `position:sticky` 钉在滚动左缘并带底纹盖住滚过的代码；偏好经迷你真外部存储（`useSyncExternalStore`）广播，改设置当下重排。
 
 ## 14. 可访问性与长文案
