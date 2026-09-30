@@ -151,6 +151,13 @@ export type SkillRow = {
   warnings: string[];         // 宽松校验告警（超限 / name 与目录不一致）
 };
 
+export type HookRow = {
+  event: string;
+  path: string;
+  source: 'data' | 'workspace';
+  interpreter: string;
+};
+
 export type McpServerRow = {
   id: string; name: string; transport: 'stdio' | 'http';
   enabled: boolean; connected: boolean; error: string; tools: number;

@@ -33,6 +33,8 @@ import { truncate, toolLabel } from './terminal-format.mjs';
 import { formatQueueLines, parseQueueArg, pickQueueItem } from './queue-cmd.mjs';
 import { JobStore } from '../jobs/store.mjs';
 import { formatJobLines, parseCronArg, pickJob } from './cron-cmd.mjs';
+import { createHookRunner } from './hooks/index.mjs';
+import { parseHooksArg, formatHookLines, formatHookEventLines, formatHookTestLines } from './hooks-cmd.mjs';
 
 const BASE = process.env.AURORAAGENT_BASE_URL || 'https://api.longcat.chat';
 const KEY_PAGE = 'https://longcat.chat/platform/api_keys';
@@ -91,6 +93,18 @@ export async function runTerminal({ argv = [] } = {}) {
   // MCP 注册表（实验特性门控）：启用时后台连接并发现工具，/mcp 查看状态
   const mcp = experimentalEnabled('MCP') ? new McpRegistry({ dataDir }) : null;
   if (mcp) mcp.refresh().catch(() => {});
+  // 事件钩子运行器（实验特性门控）：按工作目录缓存——项目钩子与个人钩子的发现根不同，
+  // 切换会话（换工作目录）时看到的是那一份目录的钩子。门控关闭时恒空转
+  const hookRunners = new Map();
+  const hookRunnerFor = (workspace) => {
+    const key = String(workspace || process.cwd());
+    let runner = hookRunners.get(key);
+    if (!runner) {
+      runner = createHookRunner({ workspace: key, dataDir, log: () => {} });
+      hookRunners.set(key, runner);
+    }
+    return runner;
+  };
 
   let meta = store.list()[0] || store.create({
     model: cfg.model, provider: providers.providerForModel(cfg.model).id, harness: 'standard', titleMode: cfg.titleMode,
@@ -401,6 +415,31 @@ export async function runTerminal({ argv = [] } = {}) {
     lineQueue.push(job.prompt);
   };
 
+  /**
+   * /hooks 家族：查看 / 手动触发当前工作目录的事件钩子。
+   * 钩子由 loop.mjs 在各阶段闸口自动触发（见 util/agent/hooks/），这里只做「看得见」与「试得动」——
+   * test 用一个合成 payload 打真实脚本，不跑上游、不动会话，纯验证脚本写得对不对。
+   */
+  const cmdHooks = async (arg) => {
+    const p = painter();
+    const parsed = parseHooksArg(arg);
+    if (parsed.action === 'events') {
+      for (const line of formatHookEventLines()) console.log('  ' + p.dim(line));
+      return;
+    }
+    if (parsed.action === 'error') { console.log(p.warning(parsed.message)); return; }
+    const runner = hookRunnerFor(meta.workspace);
+    if (parsed.action === 'list') {
+      for (const line of formatHookLines({ enabled: runner.enabled, hooks: runner.hooks })) console.log('  ' + p.dim(line));
+      console.log(p.dim('  /hooks events 看全部事件 · /hooks test <事件名> 手动触发一次'));
+      return;
+    }
+    const outcome = await runner.fire(parsed.event, {
+      sessionId: meta.id, turnId: 'manual', workspace: meta.workspace || process.cwd(), round: 0,
+    }, { input: '（手动触发，非真实发言）', manual: true });
+    for (const line of formatHookTestLines(parsed.event, outcome)) console.log('  ' + p.dim(line));
+  };
+
   /** 声明式斜杠命令表：/help 与分发同源；技能派生命令追加进同一张表（/<技能名> 直接调用） */
   const baseCommands = [
     { name: 'help', summary: '显示全部命令', run: printHelp },
@@ -446,6 +485,7 @@ export async function runTerminal({ argv = [] } = {}) {
     { name: 'goal', argHint: '<目标内容>|[pause|resume|stop|budget <n>|clear|edit|help]', summary: '会话目标（无参查看；/<目标内容> 设立或改写；edit 回填续编）', run: cmdGoal },
     { name: 'queue', argHint: '[send|drop <序号>|clear]', summary: '消息队列：生成中提交的消息在此排队（无参列出，send 立即发送，drop 移除）', run: cmdQueue },
     { name: 'cron', argHint: '[add <名称> | <表达式> | <内容>|remove|run|on|off <id>]', summary: '定时任务：到期自动在当前会话跑一轮 Agent（无参列出）', run: cmdCron },
+    { name: 'hooks', argHint: '[list|events|test <事件名>]', summary: '事件钩子：脚本在 turn 各阶段自动触发（实验特性，无参列出）', run: cmdHooks },
     { name: 'btw', argHint: '<问题>', summary: '侧边对话：继承当前会话历史开聊，不落盘不进会话列表；Ctrl+/ 切换、Ctrl+C 丢弃', run: async (arg) => {
       const q = String(arg || '').trim();
       if (!q) { console.log(painter().warning('用法: /btw <问题>（侧边对话，继承当前会话历史，不落盘）')); return; }

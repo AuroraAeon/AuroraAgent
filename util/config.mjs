@@ -28,7 +28,7 @@ export const TITLE_MODES = ['local', 'model'];
 export const DEFAULT_TITLE_MODE = 'local';
 
 /** 实验特性目录：AURORAAGENT_EXPERIMENTAL_<NAME> 单开；AURORAAGENT_EXPERIMENTAL_FLAG 全开。缺省关。 */
-export const EXPERIMENTAL_FLAGS = ['MCP'];
+export const EXPERIMENTAL_FLAGS = ['MCP', 'HOOKS'];
 export function experimentalEnabled(name) {
   if (process.env.AURORAAGENT_EXPERIMENTAL_FLAG) return true;
   return Boolean(process.env['AURORAAGENT_EXPERIMENTAL_' + String(name || '').toUpperCase()]);

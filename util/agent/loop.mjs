@@ -19,6 +19,7 @@ import { createSpawner } from './swarm.mjs';
 import { IgnoreController } from '../ignore.mjs';
 import { discoverRules, collectCandidatePaths } from './rules.mjs';
 import { discoverAgentConfigs, subagentTools } from './subagents.mjs';
+import { nullHooks } from './hooks/index.mjs';
 import { deriveTitle } from './title.mjs';
 import { generateTitleText } from './title-model.mjs';
 import { DEFAULT_SESSION_NAME } from './session.mjs';
@@ -92,7 +93,7 @@ export function createModelSteer() {
  */
 export async function runAgentTurn(ctx) {
   const {
-    store, usage, session, input, provider, model, harness, builtinPrice,
+    store, usage, session, provider, model, harness, builtinPrice,
     gen = {}, skills = [], extraTools = [], inputSkill = '', emit, controller, requestPermission, requestPlanDecision,
     permissionMode = 'ask_when_needed', planMode = false, titleMode = DEFAULT_TITLE_MODE, depth = 0,
     agentProxy = '', goalStore = null, goalCfg = null, log = () => {},
@@ -109,7 +110,11 @@ export async function runAgentTurn(ctx) {
     // 熔断器 + 生效超时 + 队列：都由 HTTP 面按配置算好后注入（failover-state.mjs / failover.mjs），
     // Loop 只负责在 onSwitch 里写热切换偏好，不自己读配置
     failoverState = null, failoverTimeouts = null, failoverQueue = null,
+    // hook 运行器（util/agent/hooks/）：由 HTTP 面按工作目录注入；直连 Loop 的旧调用方不传即空转
+    hooks = nullHooks,
   } = ctx;
+  // input 单独声明：prompt_submit 钩子可改写入参（overrideInput），落库 / 标题 / 规则候选路径都认改写后的值
+  let input = ctx.input;
   const sessionId = session.id;
   const steer = modelSteer || createModelSteer();
   const turnId = randomUUID();
@@ -154,6 +159,29 @@ export async function runAgentTurn(ctx) {
       },
     },
   });
+
+  // —— hook 接入（util/agent/hooks/，实验门控 AURORAAGENT_EXPERIMENTAL_HOOKS）——
+  // fireHook 是唯一出入口：未注入 runner（直连 Loop 的旧调用方 / 测试）或门控关闭时恒回「无控制」，
+  // 接入点因此不需要到处判空判开关。单个 hook 失败 / 超时只记日志（fail-open），绝不让 turn 崩掉。
+  const hookBase = () => ({ sessionId, turnId, workspace: session.workspace, agentId: agentName });
+  const fireHook = (event, extra = {}, opts = {}) => hooks.fire(event, hookBase(), extra, { signal: controller?.signal, ...opts });
+  // hook 追加内容（systemPrompt 进系统提示、context 进上下文）累积到 turn 结束，下一轮 assemble 时带上
+  let hookExtra = '';
+  const absorbHookExtra = (c) => {
+    const sys = typeof c?.systemPrompt === 'string' ? c.systemPrompt.trim() : '';
+    const text = typeof c?.context === 'string' ? c.context.trim() : '';
+    if (sys) hookExtra += `${hookExtra ? '\n\n' : ''}【钩子追加的系统提示】\n${sys}`;
+    if (text) hookExtra += `${hookExtra ? '\n\n' : ''}【钩子追加的上下文】\n${text}`;
+  };
+
+  // prompt_submit：用户记录落盘前最后一道改写机会（overrideInput 换输入 / cancel 掐掉这个 turn）
+  const submitHook = await fireHook('prompt_submit', { input, ...(inputSkill ? { skill: inputSkill } : {}) });
+  if (submitHook.overrideInput !== undefined) input = String(submitHook.overrideInput ?? '');
+  absorbHookExtra(submitHook);
+  if (submitHook.cancel) {
+    emit('turn_cancelled', { sessionId, turnId, reason: 'hook_cancel' });
+    return { turnId, text: '', rounds: 0, tools: 0, cancelled: true };
+  }
 
   // 斜杠技能注入的用户记录带 skill 标记：压缩期据此完整保留技能规范，不当普通对话摘掉
   store.append(sessionId, { t: 'user', text: input, ...(inputSkill ? { skill: inputSkill } : {}) });
@@ -213,6 +241,12 @@ export async function runAgentTurn(ctx) {
 
   let records = store.records(sessionId);
   emit('turn_started', { sessionId, turnId, turnIndex: (session.turns || 0) + 1, userInput: input, model, provider: provider.id, harness: harness.id });
+  const startHook = await fireHook('turn_start', { input, model, harness: harness.id, turns: (session.turns || 0) + 1 });
+  absorbHookExtra(startHook);
+  if (startHook.cancel) {
+    emit('turn_cancelled', { sessionId, turnId, reason: 'hook_cancel' });
+    return { turnId, text: '', rounds: 0, tools: 0, cancelled: true };
+  }
 
   // 会话级权限规则（「总是允许」沉淀处）叠加在默认规则之上；permissionMode 决定 ask 类默认效应
   const sessionRules = Array.isArray(session.rules) ? session.rules.slice() : [];
@@ -252,7 +286,7 @@ export async function runAgentTurn(ctx) {
   /** 超长时把早期记录折叠成一条 summary（压缩本身花一轮模型调用，失败不阻塞主流程）。
    *  force=true 时跳过阈值判断（上游已明示上下文超长，estimated 口径偏小也要压） */
   const maybeCompact = async (force = false) => {
-    const messages = assembleMessages({ harness, workspace: session.workspace, records, skills, ...ruleOpts() });
+    const messages = assembleMessages({ harness, workspace: session.workspace, records, skills, ...(hookExtra ? { extraSystem: hookExtra } : {}), ...ruleOpts() });
     if (!force && !needsCompaction(messages, { windowTokens: contextWindowOf(activeProvider), ratio: harness.compactRatio })) return;
     // 切点必须落在无悬空 tool_call 的边界，并按窗口 × ratio 做预算投影
     // （保留下来的尾部还得给摘要与新内容留地方），见 context.mjs 的 findCutIndex
@@ -261,6 +295,13 @@ export async function runAgentTurn(ctx) {
       ratio: harness.compactRatio,
     });
     if (!plan) return;
+    // pre_compact：压缩真要动手前问一遍钩子（cancel = 本轮不压缩，沿用原上下文）
+    const compactHook = await fireHook('pre_compact', { headRecords: plan.head.length, tailRecords: plan.tail.length, keepTurns: COMPACTION_KEEP_TURNS });
+    absorbHookExtra(compactHook);
+    if (compactHook.cancel) {
+      log('info', '钩子取消了本轮上下文压缩，沿用原上下文', { sessionId, turnId });
+      return;
+    }
     emit('context_compression_started', { sessionId, turnId, headRecords: plan.head.length });
     try {
       const opened = await openChatStream(activeProvider, { model, messages: compactionMessages(plan.head), maxTokens: 1024 }, { signal: controller.signal, ...failoverIo() });
@@ -327,7 +368,7 @@ export async function runAgentTurn(ctx) {
     return [...new Set([...fromInput, ...fromHistory])];
   };
   const ruleOpts = () => ({ rules, ruleToggles, rulePaths: rulePaths() });
-  let messages = assembleMessages({ harness, workspace: session.workspace, records, skills, ...ruleOpts() });
+  let messages = assembleMessages({ harness, workspace: session.workspace, records, skills, ...(hookExtra ? { extraSystem: hookExtra } : {}), ...ruleOpts() });
   let round = 0;
   let finalText = '';
   let totalTools = 0;
@@ -350,6 +391,7 @@ export async function runAgentTurn(ctx) {
     return { toolCalls: [], roundText, steered: true };
   };
 
+  let turnOutcome = 'end'; // hook 收尾口径：end / error / abort（各收尾路径写入，finally 里据此刻字）
   let overflowRetried = false; // 上下文超长恢复只做一次（压缩无效时不循环重放）
   let lengthRetried = false;   // 长度截断续写只做一次
 
@@ -364,9 +406,17 @@ export async function runAgentTurn(ctx) {
   };
 
   const runRound = async ({ toolNames, extraSystem = '' }) => {
-    // 专人专用的系统提示（声明式子代理）叠加在本轮指令之前：它定义角色，harness 提示定义边界
-    const sysExtra = [turnExtraSystem, extraSystem].filter(Boolean).join('\n\n');
     await maybeCompact();
+    // round_start：本轮模型调用前最后一道闸门（cancel = 跳过本轮不调上游，turn 以无工具轮收尾）
+    const roundHook = await fireHook('round_start', { round, tools: toolNames });
+    absorbHookExtra(roundHook);
+    if (roundHook.cancel) {
+      log('info', '钩子取消了本轮模型调用', { sessionId, turnId, round });
+      return { toolCalls: [], roundText: '' };
+    }
+    // 专人专用的系统提示（声明式子代理）叠加在本轮指令之前：它定义角色，harness 提示定义边界；
+    // hook 追加内容排在最后——它是运行期才拿到的最新信息
+    const sysExtra = [turnExtraSystem, extraSystem, hookExtra].filter(Boolean).join('\n\n');
     // 工具执行期间到达的中途发言：此刻没有模型流可断，先并入上下文再开流
     const pendingSteer = steer.take();
     if (pendingSteer) {
@@ -480,15 +530,32 @@ export async function runAgentTurn(ctx) {
     const t0 = Date.now();
     if (!tool) return { ok: false, output: `未知工具：${call.name}。当前模式可用工具：${harness.tools.join('、') || '（无）'}`, durationMs: Date.now() - t0 };
     if (effect === 'deny') return { ok: false, output: '权限策略拒绝执行该操作。', durationMs: Date.now() - t0 };
+    const resource = tool ? toolResource(call.name, args) : '';
+    // pre_tool_use：执行前最后一道闸门。cancel 不执行；review 转权限通道（复用 pending permission，
+    // 用户显式确认后才继续）；overrideInput 改参数——只影响本次执行，转录与模型消息仍记模型给的
+    // 原始参数（改写记录会让「模型看到了什么」与「实际发生了什么」对不上，那是更糟的混乱）
+    const pre = await fireHook('pre_tool_use', { tool: call.name, args, resource });
+    if (pre.review && effect !== 'ask') {
+      const decision = await askPermission({ toolId: call.id, toolName: call.name, params: args, resource, action: call.name });
+      if (decision === 'deny') return { ok: false, output: '钩子要求人工复核，用户拒绝了这次操作，未做任何改动。', durationMs: Date.now() - t0 };
+    }
+    if (pre.cancel) return { ok: false, output: '钩子取消了这次工具调用，未做任何改动。', durationMs: Date.now() - t0 };
+    const runArgs = (pre.overrideInput && typeof pre.overrideInput === 'object' && !Array.isArray(pre.overrideInput)) ? { ...args, ...pre.overrideInput } : args;
+    let out;
     try {
       // signal 进 ctx：长动作（computer_use 批量操作）可在用户中止时立刻停手，不留野进程
-      const res = await tool.run(args, { workspace: session.workspace, skills, todoStore, spawn, proxy: agentProxy, skillsLoaded, signal: controller?.signal, ignore, sanitizeChildEnv });
+      const res = await tool.run(runArgs, { workspace: session.workspace, skills, todoStore, spawn, proxy: agentProxy, skillsLoaded, signal: controller?.signal, ignore, sanitizeChildEnv });
       // 工具可返回字符串或 { output, extra }：extra 是结构化负载（diff / todos），
       // 进转录与 tool_event 供两端渲染，但不进模型消息（模型只看 output 文本）
-      if (call.name === 'skill') grantSkillTools(args.name);
-      if (res && typeof res === 'object') return { ok: true, output: String(res.output ?? ''), extra: res.extra, durationMs: Date.now() - t0 };
-      return { ok: true, output: String(res ?? ''), durationMs: Date.now() - t0 };
-    } catch (e) { return { ok: false, output: `工具执行失败：${e.message}`, durationMs: Date.now() - t0 }; }
+      if (call.name === 'skill') grantSkillTools(runArgs.name);
+      out = (res && typeof res === 'object')
+        ? { ok: true, output: String(res.output ?? ''), extra: res.extra, durationMs: Date.now() - t0 }
+        : { ok: true, output: String(res ?? ''), durationMs: Date.now() - t0 };
+    } catch (e) { out = { ok: false, output: `工具执行失败：${e.message}`, durationMs: Date.now() - t0 }; }
+    // post_tool_use：只追加上下文，不改写结果——让模型看到与真实世界不一致的信息比不加钩子更糟
+    const post = await fireHook('post_tool_use', { tool: call.name, args: runArgs, ok: out.ok, output: String(out.output).slice(0, 4000) });
+    absorbHookExtra(post);
+    return out;
   };
 
   /** 串行执行单个调用（写操作 / 要问权限 / 未标记并行的工具）：权限交互语义与并行化之前完全一致 */
@@ -575,7 +642,7 @@ export async function runAgentTurn(ctx) {
       let planDone = false;
       for (round = 1; round <= Math.min(harness.maxRounds, PLAN_MAX_ROUNDS); round++) {
         const r = await runRound({ toolNames: narrow(planNames), extraSystem: PLAN_MODE_PROMPT });
-        if (r.failed) return { turnId, text: finalText, rounds: round, tools: totalTools, failed: true };
+        if (r.failed) { turnOutcome = 'error'; return { turnId, text: finalText, rounds: round, tools: totalTools, failed: true }; }
         // 用户中途发言：本轮不结算（不提案、不判空闲），直接进下一轮
         if (r.steered) continue;
         finalText = r.roundText;
@@ -612,7 +679,7 @@ export async function runAgentTurn(ctx) {
       const roundT0 = Date.now();
       const r = await runRound({ toolNames: execToolNames, extraSystem: goalNote });
       goalNote = '';
-      if (r.failed) { await goalRt?.finish(); return { turnId, text: finalText, rounds: round, tools: totalTools, failed: true }; }
+      if (r.failed) { turnOutcome = 'error'; await goalRt?.finish(); return { turnId, text: finalText, rounds: round, tools: totalTools, failed: true }; }
       // 用户中途发言：本轮不结算（不入账、不判空闲 / 提案），直接进下一轮
       if (r.steered) continue;
       finalText = r.roundText;
@@ -641,14 +708,22 @@ export async function runAgentTurn(ctx) {
     const aborted = controller.signal.aborted || err?.name === 'AbortError';
     if (aborted) {
       if (currentEntry?.usage) recordRoundUsage(currentEntry.usage, true);
+      turnOutcome = 'abort';
       emit('turn_cancelled', { sessionId, turnId });
       return { turnId, text: finalText, rounds: round, tools: totalTools, cancelled: true };
     }
+    turnOutcome = 'error';
     log('error', 'turn 运行异常', { sessionId, turnId, error: String(err) });
     emit('turn_failed', { sessionId, turnId, error: String(err), round });
     return { turnId, text: finalText, rounds: round, tools: totalTools, failed: true };
   } finally {
     ignore?.close(); // 释放 fs.watch： turn 结束即不再需要热加载
+    // hook 收尾：turn_end / turn_error / turn_abort 三选一（各收尾路径已写 turnOutcome）。
+    // 放在 finally 里是因为 turn 有多个 return 点（计划驳回 / 触顶 / 失败 / 中止），逐处补容易漏
+    try {
+      await fireHook(turnOutcome === 'abort' ? 'turn_abort' : turnOutcome === 'error' ? 'turn_error' : 'turn_end',
+        { rounds: round, tools: totalTools, text: finalText, outcome: turnOutcome });
+    } catch { /* hook 收尾失败不影响 turn 结果 */ }
   }
   if (titleMode === 'model') await autoTitle(finalText); // 等终稿出来再花这笔标题钱，失败回退本地推导
   await goalRt?.finish(); // 终态提案结算与最终用量快照先于 turn_completed，客户端按序看到终态

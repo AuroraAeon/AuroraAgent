@@ -13,7 +13,7 @@ import { SettingsDialog } from './components/SettingsDialog';
 import { projectRecords } from './projection';
 import {
   abortTurn, checkUpdate, clearGoal, createGoal, createSession, deleteSession, editGoal, forkSession, getAgentQueue, getGoal, getSession, getSettings, goalAction,
-  listHarnesses, listJobs, listMcpServers, listModels, listSkills, listProviders, listSessions, patchSession, promoteQueueItem, removeQueueItem, respondPermission, respondPlan, runTurn,
+  listHarnesses, listHooks, listJobs, listMcpServers, listModels, listSkills, listProviders, listSessions, patchSession, promoteQueueItem, removeQueueItem, respondPermission, respondPlan, runTurn,
   saveApiKey, saveGeneration,
 } from './api';
 import { GOAL_COMMAND_HELP, formatGoalReceipt, formatGoalSummary, parseGoalCommand } from '../../util/agent/goal/command.mjs';
@@ -433,6 +433,16 @@ export default function App() {
           const lines = rows.map((j) => `${j.name} · ${j.schedule.kind === 'cron' ? `cron ${j.schedule.expr}` : `每 ${Math.round(j.schedule.everyMs / 60000)} 分钟`} · ${j.enabled ? '启用' : '停用'} · id=${j.id.slice(0, 8)}`);
           notice(`当前会话的定时任务：\n${lines.join('\n')}`);
         } catch (e) { notice(`读取定时任务失败：${e instanceof Error ? e.message : String(e)}`); }
+        return;
+      }
+      case 'hooks': {
+        try {
+          const rows = await listHooks(current?.workspace || undefined);
+          if (!rows.enabled) { notice('钩子未开启：设置 AURORAAGENT_EXPERIMENTAL_HOOKS=1 后重启服务'); return; }
+          if (!rows.hooks.length) { notice('尚未发现钩子：把脚本命名为 <事件名>.sh 或 <事件名>.mjs 放进数据目录 hooks/ 或工作目录 .auroraagent/hooks/ 即生效'); return; }
+          const lines = rows.hooks.map((h) => `${h.event} · ${h.source === 'workspace' ? '项目' : '个人'} · ${h.path}`);
+          notice(`已发现的钩子（${rows.hooks.length} 个）：\n${lines.join('\n')}`);
+        } catch (e) { notice(`读取钩子失败：${e instanceof Error ? e.message : String(e)}`); }
         return;
       }
       case 'title': {

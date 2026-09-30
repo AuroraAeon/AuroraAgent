@@ -24,6 +24,10 @@ import { createJobsApi } from '../jobs/http.mjs';
 import { subscribeJobEvents, publishJobEvent } from '../jobs/bus.mjs';
 import { PERMISSION_MODES, TITLE_MODES, experimentalEnabled } from '../config.mjs';
 import { McpRegistry } from '../mcp/registry.mjs';
+import { createHookRunner } from './hooks/index.mjs';
+import { HOOK_EVENTS } from './hooks/events.mjs';
+
+const HOOK_EVENT_NAMES = HOOK_EVENTS;
 import { parseFailoverConfig, effectiveTimeouts } from '../llm/failover.mjs';
 
 const SESSION_RE = /^\/api\/agent\/sessions\/([0-9a-f-]{36})$/;
@@ -70,6 +74,18 @@ export function createAgentApi(deps) {
   const jobs = new JobStore(dataDir, { warn: (m, e) => log('warn', m, e) });
   // cron 工具运行时按会话缓存：工具形状稳定才能命中 toolSchemas 的 schema 缓存（请求字节稳定以吃提示缓存）。
   // sessionId 必须是当次 turn 的会话——模型不显式给 session_id 时任务就落到当前会话
+  // hook 运行器按工作目录缓存：目录发现一次（脚本改了下个 turn 生效，不值得为它起 watch），
+  // 实验门控关闭时 createHookRunner 直接给空清单，fire() 恒空转
+  const hookRunners = new Map();
+  const hookRunnerFor = (workspace) => {
+    const key = String(workspace || '');
+    let runner = hookRunners.get(key);
+    if (!runner) {
+      runner = createHookRunner({ workspace: key, dataDir, log: (level, msg, extra) => log(level, msg, extra) });
+      hookRunners.set(key, runner);
+    }
+    return runner;
+  };
   const cronRuntimes = new Map();
   const cronRuntimeFor = (sessionId) => {
     let rt = cronRuntimes.get(sessionId);
@@ -225,6 +241,8 @@ export function createAgentApi(deps) {
         emit, controller, permissionMode, planMode, titleMode, extraTools: extraToolsFor(harness, side, sessionId),
         agentProxy: cfg.agentProxy,
         ignoreEnabled: cfg.ignore?.enabled !== false, sanitizeChildEnv: cfg.sanitizeChildEnv !== false,
+        // hook 运行器（util/agent/hooks/）：按会话工作目录取（项目钩子与个人钩子的发现根不同）
+        hooks: hookRunnerFor(sessionMeta.workspace),
         // 规则 toggle 表（用户显式关掉的规则不注入系统提示；见 util/agent/rules.mjs）
         ruleToggles: cfg.rules?.toggles || {},
         // 声明式子代理（util/agent/subagents.mjs）：目录由 Loop 自己按数据目录发现，
@@ -310,6 +328,17 @@ export function createAgentApi(deps) {
           bodyLines: s.bodyLines,
           warnings: s.warnings,
         })),
+      });
+    }
+
+    if (req.method === 'GET' && url === '/api/agent/hooks') {
+      // ?workspace= 指定工作目录（缺省当前进程目录）：回报该目录下已发现的钩子与实验门控状态
+      const q = new URL(req.url, 'http://localhost').searchParams;
+      const runner = hookRunnerFor(q.get('workspace') || process.cwd());
+      return json(res, 200, {
+        enabled: runner.enabled,
+        hooks: runner.describe(),
+        events: HOOK_EVENT_NAMES,
       });
     }
 

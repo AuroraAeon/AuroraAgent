@@ -7,7 +7,7 @@ import {
   normalizeUsageSummary,
 } from './api-shapes.mjs';
 import { normalizeSkillRows } from './skill-rows.mjs';
-import type { AgentEvent, CatalogProvider, ErrorLogEntry, FailoverQueue, FailoverSettings, GoalState, UpdateInfo, Harness, JobItem, McpServerRow, ModelInfo, ProviderRow, QueueItem, SessionMeta, SessionRecord, SettingsInfo, SkillRow, TuiSettings, UsageSummary, WorkspaceInfo } from './types';
+import type { AgentEvent, CatalogProvider, ErrorLogEntry, FailoverQueue, FailoverSettings, GoalState, HookRow, UpdateInfo, Harness, JobItem, McpServerRow, ModelInfo, ProviderRow, QueueItem, SessionMeta, SessionRecord, SettingsInfo, SkillRow, TuiSettings, UsageSummary, WorkspaceInfo } from './types';
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(path, {
@@ -82,6 +82,8 @@ export const deleteProvider = (id: string) => api<{ ok: boolean; providers: Prov
 export const discoverModels = (draft: { baseUrl: string; protocol: string; apiKey?: string; pathPrefix?: string }) =>
   api<{ ok: boolean; url: string; models: { id: string; name?: string; contextWindow?: number; maxTokens?: number }[] }>('/api/providers/discover', { method: 'POST', body: JSON.stringify(draft) }).then(normalizeDiscoveredModels);
 export const listMcpServers = () => api<{ servers: McpServerRow[] }>('/api/mcp/servers').then(normalizeMcpServers);
+export const listHooks = (workspace?: string) =>
+  api<{ enabled: boolean; hooks: HookRow[]; events: string[] }>(`/api/agent/hooks${workspace ? `?workspace=${encodeURIComponent(workspace)}` : ''}`);
 export const createMcpServer = (draft: { id: string; name?: string; transport: string; command?: string; args?: string[]; url?: string }) =>
   api<{ ok: boolean; server: McpServerRow; servers: McpServerRow[] }>('/api/mcp/servers', { method: 'POST', body: JSON.stringify(draft) });
 export const deleteMcpServer = (id: string) => api<{ ok: boolean; removed: number; servers: McpServerRow[] }>(`/api/mcp/servers/${id}`, { method: 'DELETE' });
