@@ -28,6 +28,15 @@ const TYPE_LABEL_EN = {
   feat: 'Features', fix: 'Fixes', refactor: 'Refactors', test: 'Tests', chore: 'Chores', docs: 'Docs', perf: 'Performance',
 };
 
+/**
+ * 提交信息原样进 Markdown 会被 VitePress 的 Vue 编译器当 HTML 标签解析：
+ * 形如 <objective> 的占位符直接让 docs:build 报 "Element is missing end tag"。
+ * 把这类标签形态包进反推号（同时符合文档站「标识符一律反引号」的规约）。
+ */
+function mdSafe(text) {
+  return String(text).replace(/<([a-zA-Z][a-zA-Z0-9_-]*)>/g, '`<$1>`');
+}
+
 function group(commits) {
   const groups = new Map();
   for (const c of commits) {
@@ -45,7 +54,7 @@ function renderZh(groups) {
   for (const [type, items] of groups) {
     lines.push(`### ${TYPE_LABEL[type] || type}`);
     lines.push('');
-    for (const it of items) lines.push(`- ${it.text}（\`${it.hash}\` ${it.date}）`);
+    for (const it of items) lines.push(`- ${mdSafe(it.text)}（\`${it.hash}\` ${it.date}）`);
     lines.push('');
   }
   return lines.join('\n').trim();
@@ -56,7 +65,7 @@ function renderEn(groups) {
   for (const [type, items] of groups) {
     lines.push(`### ${TYPE_LABEL_EN[type] || type}`);
     lines.push('');
-    for (const it of items) lines.push(`- ${it.text} (\`${it.hash}\` ${it.date})`);
+    for (const it of items) lines.push(`- ${mdSafe(it.text)} (\`${it.hash}\` ${it.date})`);
     lines.push('');
   }
   return lines.join('\n').trim();

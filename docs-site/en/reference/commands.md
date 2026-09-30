@@ -18,11 +18,13 @@
 
 ## Terminal slash commands
 
-`/new` `/sessions` `/model` `/harness` `/think` `/temp` `/max` `/key` `/plan` `/goal` `/btw` `/mcp` `/help` `/quit`; every skill gets `/<skill-name>`.
+`/new` `/sessions` `/model` `/harness` `/think` `/temp` `/max` `/key` `/plan` `/goal` `/queue` `/cron` `/btw` `/mcp` `/help` `/quit`; every skill gets `/<skill-name>`.
 
 - `/goal` family (one parser for the terminal and the web Composer): `/goal` (no argument shows status) / `/goal <objective>` (create; rewrites the text when a goal is unfinished, accepts a trailing `budget=50K`) / `/goal budget=50K` (change the budget, `clear` removes the cap; the legacy `/goal budget 50000` is equivalent) / `/goal edit` (fill the objective back for another pass) / `/goal clear` (remove; `cancel` / `delete` are aliases) / `/goal pause|resume|stop` / `/goal help`: goal-mode user operations (also accepted while a turn is generating on the web, routed straight to the goal REST surface), see the [Goal Mode guide](/en/guide/goal-mode)
+- `/queue`: message queue (messages sent while a turn is generating line up automatically and are relayed after the previous one settles). `/queue` lists waiting messages (position + summary), `/queue send <n>` sends one now, `/queue drop <n>` removes one, `/queue clear` clears the queue; see the [Message Queue guide](/en/guide/message-queue)
+- `/cron`: scheduled tasks (a turn runs in the current session when due). A bare `/cron` lists, `/cron add <name> | <expression> | <prompt>` creates one (the expression is a five-field cron or `every <minutes>`), `/cron remove <id>` deletes, `/cron run <id>` runs now, `/cron on|off <id>` toggles; see the [Scheduled Tasks guide](/en/guide/scheduled-tasks)
 - `/btw <question>`: side conversation that inherits the current session history, never persisted and absent from the session list; `Ctrl+/` toggles, `Ctrl+C` on an empty side prompt discards
 
 ## Runtime tools (model side)
 
-`read_file` `list_dir` `grep` `glob` `web_fetch` `write_file` `edit_file` `shell` `todo` `skill` `task` `create_goal` `update_goal` `get_goal` (goal mode, Standard / Ultimate only); MCP tools join as `mcp__<server>__<tool>`.
+`read_file` `list_dir` `grep` `glob` `web_fetch` `write_file` `edit_file` `shell` `todo` `skill` `task` `create_goal` `update_goal` `get_goal` (goal mode, Standard / Ultimate only) `cron` (scheduled tasks, Standard / Ultimate only, asks by default) `computer_use` (screen control, Ultimate only, asks by default); MCP tools join as `mcp__<server>__<tool>`. See the [Screen Control guide](/en/guide/screen-control).

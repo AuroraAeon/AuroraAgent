@@ -10,6 +10,7 @@ Same-origin `/api/*`, all JSON; SSE frames are `event:` + `data:` lines.
 | `GET /api/models` | model catalog (built-in + custom providers) |
 | `GET/POST /api/providers`, `PUT/DELETE /api/providers/:id` | provider CRUD |
 | `POST /api/providers/discover` | pull upstream catalog (read-only) |
+| `GET /api/providers/catalog` | provider preset catalog (endpoints and preset model IDs for 14 vendors; `gemini` / `responses` format endpoints are stored but not activatable) |
 
 ## Agent runtime
 
@@ -22,9 +23,15 @@ Same-origin `/api/*`, all JSON; SSE frames are `event:` + `data:` lines.
 | `POST /api/agent/turn` | run a turn (SSE); single active turn (409); when the session still has the default name, the first round summarizes a title from the input and emits `session_renamed` (titleMode resolves as request body > session meta > global config)  With `side:true` it runs a side conversation (`/btw`: in-memory facade, never persisted, no goal, no subagents, mutually exclusive with the main conversation) |
 | `POST /api/agent/abort` | abort, keeping generated content |
 | `POST /api/agent/permission` | `{ requestId, decision: allow/deny/always }` |
+| `GET /api/agent/queue/:id` | read a session's message queue (`queued` / `running` / `held`, in arrival order); 404 when the session is gone |
+| `POST /api/agent/queue/promote` | move an item to the front and send it now `{ sessionId, opId }`; 404 when the queue has no such item |
+| `POST /api/agent/queue/remove` | remove a queued item `{ sessionId, opId }`; 409 when it is already executing (use stop instead), 404 when absent |
+| `GET /api/shots/:sessionId/:file` | static route for `computer_use` screenshots (`.png` / `.jpg` / `.jpeg` only, regex allowlist plus directory containment; the directory is cleared when the session is deleted) |
 | `POST /api/agent/plan` | `{ sessionId, decision: approve/reject }` |
 | `GET /api/agent/skills` | skill catalog |
 | `GET /api/files/search?sessionId=&q=` | read-only file search inside the session workspace (path-jailed, dependency dirs skipped); 404 for unknown sessions |
+
+Two turn SSE events relate to the queue and scheduled tasks: `turn_queued` (a submission was queued, with `position` and `duplicate`) and `jobs_changed` (scheduled tasks changed inside a turn).
 
 ## Goal (goal mode)
 
@@ -50,6 +57,17 @@ Same-origin `/api/*`, all JSON; SSE frames are `event:` + `data:` lines.
 | `GET/POST /api/settings/failover` | read / write multi-provider failover preferences (`providerFailover` boolean + `providerFailoverMaxAttempts` 1–5); 400 on non-boolean or out-of-range values, 405 for other methods |
 | `GET/POST /api/settings/generation` | read / write generation parameters (`temperature` 0–1, `maxTokens` positive integer ≤1000000, partial merge); 400 on out-of-range or non-integer values and on an empty body, 405 for other methods |
 | `GET/POST /api/settings/key` | write the API key (`apiKey` non-empty, no whitespace, ≤200 chars) and query whether one exists; GET returns only `hasKey` and never the key itself; 409 when an env-var key takes precedence so the write would be ignored |
+
+## Scheduled tasks
+
+| Method & path | Notes |
+| --- | --- |
+| `GET /api/jobs` | list jobs; add `?sessionId=` to read only that session's |
+| `POST /api/jobs` | create a job `{ name, sessionId, prompt, schedule, enabled? }`; 400 on validation failure (interval 60s–366 days, 200 jobs per session) |
+| `DELETE /api/jobs/:id` | delete a job (idempotent, returns `{ removed }`) |
+| `POST /api/jobs/:id/run` | run once now (queued when the target session is busy); 500 on execution failure |
+| `POST /api/jobs/:id/toggle` | enable/disable `{ enabled }`; 400 when not a boolean |
+| `GET /api/jobs/events` | job change long connection (SSE): a `jobs_changed` frame, auto-unsubscribed on close |
 
 ## MCP (experimental; 404 when disabled)
 

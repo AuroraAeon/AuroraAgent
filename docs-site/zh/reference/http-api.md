@@ -10,6 +10,7 @@
 | `GET /api/models` | 模型目录（内置 + 自定义提供方） |
 | `GET /api/providers` · `POST /api/providers` · `PUT/DELETE /api/providers/:id` | 提供方 CRUD |
 | `POST /api/providers/discover` | 拉取上游模型目录（只读） |
+| `GET /api/providers/catalog` | 提供方预设目录（14 家厂商的端点与预置模型 ID，`gemini` / `responses` 格式端点入数据不激活） |
 
 ## Agent 运行时
 
@@ -22,9 +23,15 @@
 | `POST /api/agent/turn` | 跑一个 turn（SSE 事件流）；单活跃 turn（409）；`side:true` 跑侧边对话（`/btw`，内存门面、不落盘、不接管 goal、不派发子代理，与主对话互斥）；会话仍是默认名时，首轮总结标题并推送 `session_renamed`（titleMode 按请求体 > 会话 meta > 全局配置解析） |
 | `POST /api/agent/abort` | 中止 turn（保留已生成内容） |
 | `POST /api/agent/permission` | 权限决策 `{ requestId, decision: allow/deny/always }` |
+| `GET /api/agent/queue/:id` | 查某会话的消息队列（`queued` / `running` / `held`，按入队序）；会话不存在 404 |
+| `POST /api/agent/queue/promote` | 把选中项挪到队首立即发送 `{ sessionId, opId }`；队列里没有这一条 404 |
+| `POST /api/agent/queue/remove` | 移除等待中的项 `{ sessionId, opId }`；已在执行的那条 409（请改用停止），不存在 404 |
+| `GET /api/shots/:sessionId/:file` | `computer_use` 截图静态路由（仅 `.png` / `.jpg` / `.jpeg`，正则白名单 + 目录禁锢；删除会话即清目录） |
 | `POST /api/agent/plan` | 计划决策 `{ sessionId, decision: approve/reject }` |
 | `GET /api/agent/skills` | 技能目录 |
 | `GET /api/files/search?sessionId=&q=` | 会话工作目录内只读文件搜索（路径禁锢，跳过依赖目录）；会话不存在 404 |
+
+turn SSE 事件里与队列 / 定时任务相关的两帧：`turn_queued`（提交已入队，带 `position` 与 `duplicate`）与 `jobs_changed`（turn 内改了定时任务）。
 
 ## Goal（目标模式）
 
@@ -50,6 +57,17 @@
 | `GET/POST /api/settings/failover` | 多提供方故障转移偏好读写（`providerFailover` 布尔 + `providerFailoverMaxAttempts` 1–5）；非布尔 / 越界 400，其他方法 405 |
 | `GET/POST /api/settings/generation` | 生成参数读写（`temperature` 0–1、`maxTokens` 正整数 ≤1000000，局部合并）；越界 / 非整数 400，空体 400，其他方法 405 |
 | `GET/POST /api/settings/key` | API Key 写入（`apiKey` 非空、无空白、≤200 字符）与「有没有 Key」查询；GET 只回 `hasKey`，绝不回传 Key 本身；环境变量 Key 生效时写盘无效，返回 409 |
+
+## 定时任务
+
+| 方法与路径 | 说明 |
+| --- | --- |
+| `GET /api/jobs` | 任务列表；带 `?sessionId=` 只读该会话的 |
+| `POST /api/jobs` | 新建任务 `{ name, sessionId, prompt, schedule, enabled? }`；校验失败 400（间隔下限 60 秒、上限 366 天，单会话上限 200 个） |
+| `DELETE /api/jobs/:id` | 删除任务（幂等，回 `{ removed }`） |
+| `POST /api/jobs/:id/run` | 立即跑一次（目标会话忙则入队）；执行失败 500 |
+| `POST /api/jobs/:id/toggle` | 启停 `{ enabled }`；非布尔 400 |
+| `GET /api/jobs/events` | 任务变更长连接（SSE）：`jobs_changed` 帧，连接关闭自动退订 |
 
 ## MCP（实验特性，未开启时 404）
 

@@ -12,6 +12,9 @@
 - **上下文压缩**（`util/agent/context.mjs`）：token 估算超过窗口阈值（默认 128k 的 70%）时，把早期对话经一轮模型调用总结为 summary 记录，保留近期尾部原文
 - **三档 Harness 模式**（`util/agent/harness.mjs`）：模式决定任务怎么被完成——系统提示、可用工具、轮次上限、压缩阈值都随模式变化
 - **技能与扩展**：`skills/` 内置 + `<数据目录>/skills/` 用户技能，三层渐进式披露（名称与描述常驻且受 token 预算治理、`SKILL.md` 正文按需整篇加载、`references/` `scripts/` `assets/` 附属文件经只读白名单根按需读取，激活内容免上下文压缩）；`/<技能名>` 斜杠命令与 `skill` 工具按需加载正文；`task` 工具派发子代理并行处理相互独立的子任务并聚合结果；MCP 客户端（实验特性，stdio / HTTP 双传输）把外部服务器工具接入同一套工具接口
+- **消息队列**（`util/agent/queue.mjs`）：一个会话同时只有一个活跃 turn，生成期间继续发送的消息进每会话 FIFO 排队，前一条结算后由泵自动接力，不再 409 挡人；`opId` 幂等（重复提交不重复执行），落盘 `<数据目录>/queue.json`，重启后 running 回落 queued、held 保留；网页输入区队列条与终端 `/queue` 同源
+- **定时任务**（`util/jobs/`）：cron 五段或固定间隔，到期在目标会话把 prompt 当用户消息跑一轮 Agent；模型 `cron` 工具、终端 `/cron`、设置页「定时任务」与 `GET/POST /api/jobs` 四个入口共用一份 `jobs.json`；进程内 1 秒 ticker + `jobs.lock` 单实例 owner 锁防端口交接期双跑，停机期间到期先记 missed 再补跑一次；变更经 `jobs_changed` 扇出，界面即时重读
+- **屏幕操作**（`util/agent/computer.mjs`，仅 Ultimate）：截图观察 + 点击 / 输入 / 按键 / 滚动 / 启动应用，全用 macOS 内置命令拼装（`osascript` System Events / `screencapture` / `sips`），截图作为多模态 tool result 进模型上下文（OpenAI `image_url` / Anthropic `tool_result` image block）；调用前探测屏幕录制与辅助功能授权，未授权返回中文系统设置指引
 - **Goal 目标模式**（`util/agent/goal/`）：给会话挂一个跨轮次存续的目标——模型自主推进、独立验证、自动续跑，直到完成、受阻或预算耗尽；六态状态机 + 三维预算（token / 轮次 / 活跃时长）+ 无进展双熔断，你随时可暂停 / 恢复 / 改预算（`/goal`、GoalBar、`POST /api/agent/goal/*`）
 - **按轮记账**：每一轮模型请求经 `util/usage.mjs` 按提供方单价结算，会话内可看到每轮输入 / 输出与费用
 - **事件协议**（`util/agent/events.mjs`）：`turn_started` / `model_round_started` / `text_chunk` / `thinking_chunk` / `tool_event` / `token_usage_updated` / `context_compression_*` / `turn_completed|cancelled|failed`，统一 SSE 帧封装，终端与网页共用
@@ -53,6 +56,8 @@ npm run web       # 网页工作台 http://localhost:8787
 | `create_goal` | 建立跨轮次目标（仅 Standard / Ultimate；已存在未完成目标时失败） | 放行 |
 | `update_goal` | 提案 complete / blocked；用户显式要求时带新鲜快照改 token 预算（CAS 纪元校验） | 放行 |
 | `get_goal` | 读当前目标：状态 / 时间戳 / 用量 / 预算 | 放行 |
+| `cron` | 定时任务增删改查与立即执行（仅 Standard / Ultimate；到期在目标会话跑一轮 Agent，花 token） | 需确认 |
+| `computer_use` | 屏幕操作：截图观察 + 点击 / 输入 / 按键 / 滚动 / 启动应用（仅 Ultimate；每次调用都确认，见文档站「屏幕操作」指南） | 需确认 |
 
 需要确认的工具会在界面里弹出权限卡：**允许**（仅这一次）/ **总是允许**（本会话后续同类操作放行，落会话规则）/ **拒绝**（结果回给模型，循环继续）。终端里是 `y` / `a` / `n` 确认。
 
@@ -65,12 +70,12 @@ npm run web       # 网页工作台 http://localhost:8787
 `npm run web` 后访问 <http://localhost:8787>（React + Vite + TypeScript，源码在 `web-ui/`，构建产物随仓库提交在 `public/app/`，运行时零构建）：
 
 - **侧栏**（像素级对齐 dsh web）：品牌（点按即新建会话）、新会话钮、会话列表（32px 行：标题 + 相对时间，悬停现出派生 / 删除操作，区头搜索实时过滤；行首 16px 槽位，正在运行的会话转灰色加载圈）、可整块收起（偏好本机记忆：收回后左侧边完全消失，只留常驻的顶部浮层与 Header，200ms 擦除动画，`Ctrl/Cmd+B` 同效；浮层承载切换 / 后退 / 前进（会话导航历史）/ 新建会话 / 更新入口，Header 常驻展示工作区上下文、会话标题与各类菜单）、设置入口（模式切换在输入区，与 dsh web 同布局）；新会话的首条消息发出后，侧栏标题会按消息内容自动总结更新（默认本地推导，不调模型、不花额度；输入区也可切「模型总结」——每个新会话多一次小额请求，失败自动回退本地推导；你手动改过名的会话不被覆盖）
-- **对话区**：用户消息、流式回答、可折叠思考块、工具调用摘要行（复刻 ZCode ToolSummaryRow 紧缩形态：无框单行挤图标 / 类别 / 资源 / 状态，完整参数 / 结果 / 差异默认收起、点开才落面板）、内联权限卡、每轮用量脚注（输入 / 输出 / 费用）；正文支持 LaTeX 公式渲染与 Markdown 表格；回答与工具调用按发生顺序交错呈现，不被每次工具调用切断；对话区左缘还有一条离散「梯状」历史导航（每个提问一条短棒，悬停以焦点项为山峰衰减并浮出提问与助手摘录预览卡，点击平滑跳回那一问）
-- **输入区**（排版复刻 ZCode `ChatPromptEditor`）：自适应文本框、「添加上下文」加号菜单（上传本机文本文件——内容以 `<file name>` 块插入输入框，模型当场可读，二进制 / 超限明确拒绝并提示改用 `@`；或引用工作目录文件）、`@` 文件 / 技能提及（只读搜索会话工作目录，调色板键盘可选）、`/` 斜杠命令菜单（命令与技能合并，随输入实时过滤：无参数命令回车即执行、带参数命令回车或 Tab 补全续写，合法命令绿色语义提示、未登记命令黄色提示）、模型选择器（按提供方分组，二级菜单内含思考强度：标准 / 关闭）、模式切换（芯片定宽，切换不重排输入区）、标题生成方式（本地总结 / 模型总结，会话级）、计划模式开关已并入 `/plan` 命令（开启时输入区显示状态芯片）、发送 / 停止
+- **对话区**：用户消息、流式回答、可折叠思考块、工具调用摘要行（复刻 ZCode ToolSummaryRow 紧缩形态：无框单行挤图标 / 类别 / 资源 / 状态，完整参数 / 结果 / 差异默认收起、点开才落面板；`computer_use` 的截图出缩略图，点开放大）、内联权限卡、每轮用量脚注（输入 / 输出 / 费用）；正文支持 LaTeX 公式渲染与 Markdown 表格；回答与工具调用按发生顺序交错呈现，不被每次工具调用切断；对话区左缘还有一条离散「梯状」历史导航（每个提问一条短棒，悬停以焦点项为山峰衰减并浮出提问与助手摘录预览卡，点击平滑跳回那一问）
+- **输入区**（排版复刻 ZCode `ChatPromptEditor`）：自适应文本框、「添加上下文」加号菜单（上传本机文本文件——内容以 `<file name>` 块插入输入框，模型当场可读，二进制 / 超限明确拒绝并提示改用 `@`；或引用工作目录文件）、`@` 文件 / 技能提及（只读搜索会话工作目录，调色板键盘可选）、`/` 斜杠命令菜单（命令与技能合并，随输入实时过滤：无参数命令回车即执行、带参数命令回车或 Tab 补全续写，合法命令绿色语义提示、未登记命令黄色提示）、模型选择器（按提供方分组，二级菜单内含思考强度：标准 / 关闭）、模式切换（芯片定宽，切换不重排输入区）、标题生成方式（本地总结 / 模型总结，会话级）、计划模式开关已并入 `/plan` 命令（开启时输入区显示状态芯片）、发送 / 停止；上一条还在生成时继续发送会进输入区上方的紧凑队列条（看位置、立即发送、移除），前一条结算后自动接力
 - **目标条**：有 Goal 时单行停靠在输入框上方——「进行中」状态芯片、目标内容（超长省略）、tokens / 轮次 / live 时长、预算上限、验证结论芯片（verdict × 连击，缺失项与提示收进悬停 title），暂停 / 恢复 / 停止一键操作，等待授权 / 验证时芯片改用等待标签，目标完成即隐藏（回执走消息流）；另一客户端（终端 / 另一标签页）的改动经 SSE 事件流实时同步
 - **`/goal` 命令**：聊天框直接输入即走目标命令（整段 `/goal` 开头不当作普通消息）——`/goal <目标内容>` 设立或改写、`budget=50K` 一并设预算、`/goal edit` 回填续编、`/goal clear` 移除（`cancel` / `delete` 同义）、`pause/resume/stop`，与终端同一份解析器
 - **会话派生**：侧栏每会话可复制历史到新会话（新 id，原会话不动）
-- **设置弹层**（左侧分类导航：通用 / 外观 / 提供方 / 故障转移 / 网络 / 技能 / MCP 工具 / 终端 / 用量 / 错误日志，首次进入才加载、切换保留草稿）：提供方管理（自定义上游）、用量统计（近 30 天逐日用量走势 + 按模型 / 提供方 / 用途 / 会话构成 + 最近请求明细）、错误日志（界面崩溃与未捕获错误的落盘查看与清空）、开机自启开关、终端偏好（OSC 标题项序、系统通知时机 / 通道 / 事件；浏览器通知 opt-in 开关，默认关）、生成参数（温度 / 单次最大输出 / API Key，全局生效，下一轮请求即时生效）、外观（界面主题下拉：系统 / 深色 / 浅色；界面字号与代码字号 12~20；浅色 / 深色代码主题（默认 / GitHub / Vitesse / Catppuccin / 高对比）；显示行号与长行自动换行开关；浅 / 深双卡代码预览——只影响本机浏览器）、网络（Agent 沙箱出站代理：本机直连被重置的站点（如维基百科）可经 `http://127.0.0.1:7890` 这类本机 HTTP 代理抓取，留空直连，保存即时生效）、数据目录与版本
+- **设置弹层**（左侧分类导航：通用 / 外观 / 提供方 / 故障转移 / 网络 / 技能 / MCP 工具 / 终端 / 定时任务 / 用量 / 错误日志，首次进入才加载、切换保留草稿）：提供方管理（自定义上游）、用量统计（近 30 天逐日用量走势 + 按模型 / 提供方 / 用途 / 会话构成 + 最近请求明细）、错误日志（界面崩溃与未捕获错误的落盘查看与清空）、开机自启开关、终端偏好（OSC 标题项序、系统通知时机 / 通道 / 事件；浏览器通知 opt-in 开关，默认关）、生成参数（温度 / 单次最大输出 / API Key，全局生效，下一轮请求即时生效）、外观（界面主题下拉：系统 / 深色 / 浅色；界面字号与代码字号 12~20；浅色 / 深色代码主题（默认 / GitHub / Vitesse / Catppuccin / 高对比）；显示行号与长行自动换行开关；浅 / 深双卡代码预览——只影响本机浏览器）、网络（Agent 沙箱出站代理：本机直连被重置的站点（如维基百科）可经 `http://127.0.0.1:7890` 这类本机 HTTP 代理抓取，留空直连，保存即时生效）、定时任务（cron 五段或固定间隔，到期在指定会话跑一轮 Agent；可立即跑 / 启停，改动即时同步到终端 `/cron`）、数据目录与版本
 - **侧边对话**（`/btw <问题>`）：在输入框直接开一问一答的临时分支，继承当前会话历史，不落盘、不进会话列表、不接管目标；输入框上方出现侧边横幅（返回主对话 / 丢弃），`Ctrl+/` 主 / 侧边切换（与终端同键位）
 - **快捷键**：`Ctrl/Cmd+K` 新建会话，`Ctrl/Cmd+B` 折叠 / 展开侧栏（收回态只剩常驻顶部浮层与 Header：浮层左上角单按钮静止显品牌标、悬停显切换图标与快捷键提示，Header 展示工作区上下文卡与标题，双击标题可重命名），`Ctrl/Cmd+[` 后退、`Ctrl/Cmd+]` 前进（会话导航历史，与浮层箭头同栈）；`Ctrl+/` 主 / 侧边对话切换，`/` 聚焦输入框；对话区上翻读历史时停止自动贴底，出现「回到最新」按钮，点一下或重新贴底即恢复跟随
 - **版本检查**：设置页「服务」段可检查 GitHub Releases 新版（结果缓存 6 小时，只提示不自动安装）
@@ -108,6 +113,8 @@ npm run web       # 网页工作台 http://localhost:8787
 | `/theme <dark\|light\|auto>` | 切换终端主题（无参数弹出选择器） |
 | `/title <local\|model>` | 标题生成方式：local 本地推导零成本 / model 调模型总结（每个新会话多一次小额请求，失败自动回退；无参数查看当前值） |
 | `/goal` | 目标模式（终端与网页 Composer 同解析）：无参看状态；`/goal <目标内容>` 设立（有未完成目标时改写文本，可带 `budget=50K`）；`/goal budget=50K\|clear` 改 token 预算（旧式 `budget 50000` 等价；纪元不符 409，可重新武装预算耗尽的目标）；`/goal edit` 目标文本回填续编；`/goal clear` 移除（`cancel` / `delete` 同义）；`/goal pause\|resume\|stop`；`/goal help` |
+| `/queue` | 消息队列：生成中继续发的消息自动排队，前一条结算后接力。无参列出等待中的消息（位置 + 摘要），`send <序号>` 立即发送，`drop <序号>` 移除，`clear` 清空 |
+| `/cron` | 定时任务：到点在当前会话跑一轮 Agent。无参列出，`add <名称> \| <表达式> \| <到期内容>` 新建（cron 五段或 `every <分钟>`），`remove <id>` 删除，`run <id>` 立即跑，`on\|off <id>` 启停 |
 | `/btw <问题>` | 侧边对话：继承当前会话历史开聊，不落盘不进 `/sessions`；`Ctrl+/` 切换、空提示符 `Ctrl+C` 丢弃 |
 | `/plan on\|off` | 计划模式开关（默认关；开启后下一轮先出计划，批准才执行） |
 | `/mcp` | MCP 服务器与工具状态（实验特性，需 `AURORAAGENT_EXPERIMENTAL_MCP=1`） |
@@ -145,11 +152,17 @@ Agent 运行时（`/api/agent/*`，单活跃 turn：已有 turn 在跑时返回 
 | `POST /api/agent/goal/budget` | 改 token 预算（纪元不符 409 `GOAL_STALE`；抬高或清零可重新武装 budget_limited） |
 | `GET /api/agent/events?sessionId=` | 跨客户端 goal 事件流（SSE）：另一客户端经 REST 改动目标时即时推送，网页横幅实时校正 |
 | `GET /api/files/search?sessionId=&q=` | 会话工作目录内只读文件搜索（路径禁锢，跳过依赖目录） |
+| `GET /api/agent/queue/:id` | 查某会话的消息队列（`queued` / `running` / `held`，按入队序） |
+| `POST /api/agent/queue/promote` · `/remove` | 把选中项挪到队首立即发送 / 移除等待中的项（已在执行的那条 409，请改用停止） |
+| `GET/POST /api/jobs` · `DELETE /api/jobs/:id` | 定时任务列表 / 新建 / 删除（新建校验失败 400：间隔 60 秒~366 天，单会话上限 200 个） |
+| `POST /api/jobs/:id/run` · `/toggle` | 立即跑一次（目标会话忙则入队）/ 启停 |
+| `GET /api/jobs/events` | 定时任务变更长连接（SSE）：`jobs_changed` 帧，设置面板与终端据此重读 |
+| `GET /api/shots/:sessionId/:file` | `computer_use` 截图静态路由（仅 `.png` / `.jpg`，白名单 + 目录禁锢；删会话即清目录） |
 | `GET/POST /api/settings/tui` | 终端偏好读写（标题项序 + 通知三档；坏值 400） |
 
 MCP 实验面（`AURORAAGENT_EXPERIMENTAL_MCP=1` 门控，未开启 404 并附开启指引）：`GET /api/mcp/servers`、`POST /api/mcp/servers`、`DELETE /api/mcp/servers/:id`、`POST /api/mcp/servers/:id/probe`（测试连接并列举工具）、`POST /api/mcp/servers/:id/enabled`（显示开关：停用即把该服务器工具从工具箱摘掉，配置保留）。
 
-模型速测底座（全部保持原样）：`POST /api/chat`（SSE 流式对话，`provider` 路由自定义上游）、`POST /api/abort`、`GET /api/models`（60s 缓存）、`GET/POST/PUT/DELETE /api/providers*`、`POST /api/providers/discover`、`GET /api/status` `/api/health`、`GET /api/usage`（`?lite=1` 只取汇总；默认另带近 30 天 `stats` 统计视图）、`GET/POST /api/settings`、`POST/GET/DELETE /api/logs/errors`（前端崩溃与未捕获错误的落盘与查看）、`GET /api/update/check`（GitHub Releases 版本检查，6 小时缓存且按本地版本号作 key，版本一变旧结论作废）、`GET /vendor/<name>.svg`。
+模型速测底座（全部保持原样）：`POST /api/chat`（SSE 流式对话，`provider` 路由自定义上游）、`POST /api/abort`、`GET /api/models`（60s 缓存）、`GET/POST/PUT/DELETE /api/providers*`、`POST /api/providers/discover`、`GET /api/providers/catalog`（提供方预设目录：14 家厂商端点与预置模型 ID，`gemini` / `responses` 格式端点入数据不激活）、`GET /api/status` `/api/health`、`GET /api/usage`（`?lite=1` 只取汇总；默认另带近 30 天 `stats` 统计视图）、`GET/POST /api/settings`、`POST/GET/DELETE /api/logs/errors`（前端崩溃与未捕获错误的落盘与查看）、`GET /api/update/check`（GitHub Releases 版本检查，6 小时缓存且按本地版本号作 key，版本一变旧结论作废）、`GET /vendor/<name>.svg`。
 
 ## 数据与日志（与 App 解耦）
 
@@ -233,9 +246,9 @@ npm run docs:dev    # 本地起文档站
 
 ## 当前状态（实测打通）
 
-- `npm test` 409/409 通过（mock 上游，不花额度，含仓库守卫：零 emoji / TUI 颜色单一真值源 / 对比度 / 行数预算 / 过渡动画纪律 / 文档站结构 / 文档新鲜度 / 架构地图覆盖）；`npm run check` 真实 API 连通（Key 有效 + 模型目录 + 测试请求）
+- `npm test` 447/447 通过（mock 上游，不花额度，含仓库守卫：零 emoji / TUI 颜色单一真值源 / 对比度 / 行数预算 / 过渡动画纪律 / 文档站结构 / 文档新鲜度 / 架构地图覆盖）；`npm run check` 真实 API 连通（Key 有效 + 模型目录 + 测试请求）
 - 性能基准：`npm run bench`（basic 套件：startup / upstream-100 / history-300 三场景，采样 wall / CPU / peak-RSS），方法论与本地基线见 `docs/perf-baseline.md`，只作回归参考不作门禁
-- Agent e2e 覆盖：会话 CRUD；完整 turn（工具调用 → 权限允许 → workspace 落盘 → 二轮出终稿）；权限拒绝后循环继续；路径穿越拒绝；shell 执行与超时；turn 中途 abort；harness 列表；上下文压缩触发；每轮用量记账；技能斜杠注入与 skill 工具加载（结构化包裹 + 技能绝对目录 + 附属资源清单、同轮重复激活去重）；模型经只读白名单根读技能 `references/` 附属文件；技能内容免上下文压缩；todo 维护；edit_file diff 回传；计划批准 / 驳回两阶段；首条消息自动总结会话标题（默认名才套用、事件推送、落元信息；local 本地推导与 model 调模型两路，模型失败回退本地、成本记 purpose=title 账）；task 派发子代理并汇总（子会话可查）；MCP 注册与工具调用（实验）；Goal 全链路（create_goal → 提案完成 / 预算触顶转 budget_limited + 收尾轮 / 空转续跑 / evaluator 裁决 met 与 not_met 连击两条路径）；Goal REST 冲突与纪元边界；`/goal` 命令解析单测（预算 K/M 后缀、clear 同义词、旧式空格、edit/clear/help、错误分支）与 edit / clear 动作与 REST e2e（改写 trim、空白 400、无目标 404、已完成 409、clear 幂等）；会话派生逐条一致复制；`@` 提及时文件搜索与 404；终端偏好读写与坏值 400；多提供方故障转移（主提供方 429 自动换路并记账到新提供方、候选耗尽报最后一次真实错误、`/api/chat` 换路、401 不转移、故障转移偏好读写）
+- Agent e2e 覆盖：会话 CRUD；完整 turn（工具调用 → 权限允许 → workspace 落盘 → 二轮出终稿）；权限拒绝后循环继续；路径穿越拒绝；shell 执行与超时；turn 中途 abort；harness 列表；上下文压缩触发；每轮用量记账；技能斜杠注入与 skill 工具加载（结构化包裹 + 技能绝对目录 + 附属资源清单、同轮重复激活去重）；模型经只读白名单根读技能 `references/` 附属文件；技能内容免上下文压缩；todo 维护；edit_file diff 回传；计划批准 / 驳回两阶段；首条消息自动总结会话标题（默认名才套用、事件推送、落元信息；local 本地推导与 model 调模型两路，模型失败回退本地、成本记 purpose=title 账）；task 派发子代理并汇总（子会话可查）；MCP 注册与工具调用（实验）；Goal 全链路（create_goal → 提案完成 / 预算触顶转 budget_limited + 收尾轮 / 空转续跑 / evaluator 裁决 met 与 not_met 连击两条路径）；Goal REST 冲突与纪元边界；`/goal` 命令解析单测（预算 K/M 后缀、clear 同义词、旧式空格、edit/clear/help、错误分支）与 edit / clear 动作与 REST e2e（改写 trim、空白 400、无目标 404、已完成 409、clear 幂等）；会话派生逐条一致复制；`@` 提及时文件搜索与 404；终端偏好读写与坏值 400；多提供方故障转移（主提供方 429 自动换路并记账到新提供方、候选耗尽报最后一次真实错误、`/api/chat` 换路、401 不转移、故障转移偏好读写）；消息队列（活跃 turn 期间提交入队回执、前一条结算后自动泵接力、重复 opId 只执行一次、abort 后新提交不被延迟清理吞掉、侧边对话不入队）；定时任务（cron 表达式矩阵、store 纪元与到期、单实例 owner 锁含真实子进程 PID、调度器驱动 mock turn、`/api/jobs` REST 与 `jobs_changed` SSE、cron 工具经真 turn 落库与权限询问）；屏幕操作（多模态 tool result 投影 OpenAI image_url 与 Anthropic image block、批量动作回执与取消、未授权中文指引、权限卡门控、`/api/shots` 路由与目录穿越）
 - 网页工作台经浏览器实测完整 turn：权限卡允许 → 写文件 → 二轮终稿 → 按轮分组的思考 / 工具 / 用量脚注
 - 终端实测：权限 y/n 两条路径、`/help` `/sessions` `/new` `/model` `/harness`、拒绝后续跑均正常；OSC 标题设置 / 清除、`/goal` 家族命令与状态栏目标芯片、`/btw` 侧边对话与 `Ctrl+/` 切换均经 PTY 实测
 - 自定义提供方：设置页可接任意 OpenAI 兼容网关或 Anthropic Messages 上游；账本按提供方单价计价（只填一侧时另一侧回退内置价）；内置 LongCat 请求载荷与接入前逐字节一致（有专门测试守着）
