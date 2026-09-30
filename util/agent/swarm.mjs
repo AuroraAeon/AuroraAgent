@@ -23,7 +23,7 @@ export function createSpawner(ctx) {
     runTurn, store, usage, provider, model, harness, skills = [], builtinPrice,
     emit, controller, requestPermission, permissionMode = 'ask_when_needed', titleMode = 'local',
     rules = [], gen = {}, extraTools = [], workspace = '', depth = 0, agentProxy = '', log = () => {},
-    sanitizeChildEnv = true, ignoreEnabled = true,
+    sanitizeChildEnv = true, ignoreEnabled = true, promptCache = 'auto',
     providerFailover = true, providerFailoverMaxAttempts, failoverCandidates = null,
     // 声明式子代理（util/agent/subagents.mjs）：专人专用的模型 / 工具集 / 系统提示
     agents = [], resolveAgentProvider = null, ruleToggles = {},
@@ -82,6 +82,7 @@ export function createSpawner(ctx) {
         depth: depth + 1,
         agentProxy, // 子代理与父层共用同一条本机代理出站
         sanitizeChildEnv, ignoreEnabled, // 环境净化与忽略闸门开关随派发继承
+        promptCache, // 提示缓存档位随派发继承（专人跑别的模型时按目标提供方口径决定是否插断点）
         providerFailover, providerFailoverMaxAttempts, failoverCandidates, // 故障转移配置与候选源随派发继承
         log,
       });

@@ -540,7 +540,7 @@ const server = createServer(async (req, res) => {
         const foTimeouts = effectiveTimeouts(foCfg);
         let opened;
         try {
-          opened = await openChatStream(provider, { model, messages, ...genFor(provider) }, {
+          opened = await openChatStream(provider, { model, messages, ...genFor(provider), promptCache: cfg.promptCache }, {
             signal: entry.controller.signal,
             onRetry: (n, e) => log('warn', '上游连接失败，准备重试', { attempt: n, error: String(e) }),
             ...(foEnabled ? { circuit: failoverState.circuits, timeouts: foTimeouts, nonStreamMs: foTimeouts.nonStreamMs } : {}),

@@ -90,6 +90,9 @@ export type ModelInfo = { id: string; name?: string; tag?: string; provider: str
 export type ProviderRow = {
   id: string; name: string; protocol: string; baseUrl: string; pathPrefix?: string;
   builtin: boolean; hasKey: boolean; model: string; models: ModelInfo[]; price?: { input?: number; output?: number };
+  /** 提供方能力声明：上游是否支持提示缓存（supportsPromptCache）。未声明即按不支持处理，
+ *  见 util/providers.mjs 的 normalizeStored 与 util/wire.mjs 的 promptCacheEnabled */
+  capacity?: { supportsPromptCache?: boolean };
   /** 故障转移队列位置（-1 = 不在队列）；队列是用户编排的优先级，见 util/providers.mjs */
   failoverIndex?: number;
 };
@@ -112,6 +115,8 @@ export type JobItem = {
 
 export type CatalogEndpoint = {
   id: string; baseUrl: string; format: string; label: string; isDefault: boolean; supported: boolean;
+  /** 该端点上游是否支持提示缓存（Anthropic 线路的 cache_control）；预设据此带上 capacity */
+  promptCache?: boolean;
 };
 export type CatalogProvider = {
   id: string; name: string; description: string; endpoints: CatalogEndpoint[]; models: string[];

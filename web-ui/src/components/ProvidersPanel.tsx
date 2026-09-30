@@ -13,7 +13,7 @@ import { toast } from '../toast';
 
 const emptyDraft = (protocol = 'openai'): Draft => ({
   id: '', name: '', protocol, baseUrl: '', pathPrefix: '', apiKey: '',
-  inputPrice: '', outputPrice: '', models: [],
+  inputPrice: '', outputPrice: '', supportsPromptCache: false, models: [],
 });
 
 const draftFrom = (p: ProviderRow): Draft => ({
@@ -25,6 +25,7 @@ const draftFrom = (p: ProviderRow): Draft => ({
   apiKey: '',
   inputPrice: p.price?.input != null ? String(p.price.input) : '',
   outputPrice: p.price?.output != null ? String(p.price.output) : '',
+  supportsPromptCache: p.capacity?.supportsPromptCache === true,
   models: (p.models || []).map((m) => ({ id: m.id, name: m.name || '', contextWindow: fmtCap(m.contextWindow), maxTokens: fmtCap(m.maxTokens) })),
 });
 
@@ -217,6 +218,8 @@ export function ProvidersPanel({ onProvidersChanged }: Props) {
     setDraft({
       id, name: `${p.name}${variant}`.slice(0, 40), protocol: ep.format, baseUrl: ep.baseUrl, pathPrefix: '',
       apiKey: '', inputPrice: '', outputPrice: '',
+      // 目录里标了缓存的端点（Anthropic 线路）预设直接勾上，用户不必自己判断上游能力
+      supportsPromptCache: ep.promptCache === true,
       models: p.models.map((m) => ({ id: m, name: '', contextWindow: DEFAULT_CONTEXT_WINDOW, maxTokens: '' })),
     });
     setErrors({}); setFormError(''); setDiscoverError('');

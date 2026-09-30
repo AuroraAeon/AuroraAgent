@@ -186,11 +186,20 @@ function pauseForDrain(res, controller) {
   });
 }
 
+/** 归一化缓存命中字段：Anthropic 的 cache_read_input_tokens / OpenAI 的 prompt_tokens_details.cached_tokens 统一成 cachedTokens（写缓存的另计 cacheWriteTokens）。无缓存时原样返回，透传给前端的 usage 帧字节不变。 */
+function withCacheFields(usage) {
+  if (!usage || typeof usage !== 'object') return usage;
+  const read = Number(usage.cachedTokens ?? usage.prompt_tokens_details?.cached_tokens ?? usage.cache_read_input_tokens ?? 0);
+  const write = Number(usage.cacheWriteTokens ?? usage.cache_creation_input_tokens ?? 0);
+  if (!(read > 0) && !(write > 0)) return usage;
+  return { ...usage, ...(read > 0 ? { cachedTokens: read } : {}), ...(write > 0 ? { cacheWriteTokens: write } : {}) };
+}
+
 /** 从 SSE 事件里提取 usage 记账（OpenAI 兼容帧形状） */
 function harvest(events, entry) {
   for (const ev of events) {
     if (ev.data === '[DONE]') continue;
-    try { const j = JSON.parse(ev.data); if (j.usage) entry.usage = j.usage; } catch {}
+    try { const j = JSON.parse(ev.data); if (j.usage) entry.usage = withCacheFields(j.usage); } catch {}
   }
 }
 
@@ -224,7 +233,7 @@ export async function pumpTranslated(reader, res, entry, translate, { idleMs = 0
     for (const ev of events) {
       const out = translate(ev);
       if (!out) continue;
-      if (out.usage) entry.usage = { ...entry.usage, ...out.usage };
+      if (out.usage) entry.usage = { ...entry.usage, ...withCacheFields(out.usage) };
       if (out.chunk) await writeFrame(`data: ${JSON.stringify(out.chunk)}\n\n`);
     }
   };
@@ -259,7 +268,7 @@ export async function consumeAgentStream(reader, entry, handlers = {}, { transla
   const calls = new Map(); // index -> { id, name, args }
   const handleFrame = (j) => {
     if (!j || typeof j !== 'object') return;
-    if (j.usage) { entry.usage = { ...entry.usage, ...j.usage }; handlers.onUsage?.(j.usage); }
+    if (j.usage) { entry.usage = { ...entry.usage, ...withCacheFields(j.usage) }; handlers.onUsage?.(j.usage); }
     const choice = j.choices?.[0];
     if (!choice) return;
     const d = choice.delta;
@@ -280,7 +289,14 @@ export async function consumeAgentStream(reader, entry, handlers = {}, { transla
   };
   let finishReason = null;
   const handleEvent = (ev) => {
-    if (translate) { const out = translate(ev); if (out?.chunk) handleFrame(out.chunk); return; }
+    if (translate) {
+      const out = translate(ev);
+      // 翻译帧里的 usage（Anthropic 的 message_start / message_delta）必须落到 entry：
+      // 早先只挑 chunk，导致 Anthropic 线路的 Agent 轮次用量恒为 null、账本记 0 token
+      if (out?.usage) { entry.usage = { ...entry.usage, ...withCacheFields(out.usage) }; handlers.onUsage?.(out.usage); }
+      if (out?.chunk) handleFrame(out.chunk);
+      return;
+    }
     try { handleFrame(JSON.parse(ev.data)); } catch {}
   };
   for (;;) {

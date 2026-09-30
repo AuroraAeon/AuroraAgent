@@ -1,10 +1,14 @@
 /** 自定义提供方编辑器卡片：校验规则镜像 util/providers.mjs（同一份中文话术），模型行可编辑。 */
 import type { ReactNode } from 'react';
 import { IconAlert, IconPlus, IconRefresh, IconTrash } from '../icons';
+import { Switch } from '../Switch';
 
 export type Draft = {
   id: string; name: string; protocol: string; baseUrl: string; pathPrefix: string;
   apiKey: string; inputPrice: string; outputPrice: string;
+  /** 上游是否支持提示缓存：勾选后请求拼装层才插 cache_control / prompt_cache_key 断点
+ *  （util/wire.mjs 的 promptCacheEnabled）。缺省不勾——不认这些字段的线路会 400 */
+  supportsPromptCache: boolean;
   models: { id: string; name: string; contextWindow: string; maxTokens: string }[];
 };
 
@@ -130,6 +134,8 @@ export function draftToPayload(d: Draft): Record<string, unknown> {
   if (d.inputPrice.trim()) price.input = Number(d.inputPrice);
   if (d.outputPrice.trim()) price.output = Number(d.outputPrice);
   if (Object.keys(price).length) payload.price = price;
+  // 能力声明随载荷提交（显式 false 也要传：服务端据此关掉已开过的缓存）
+  payload.capacity = { supportsPromptCache: d.supportsPromptCache === true };
   return payload;
 }
 
@@ -205,6 +211,10 @@ export function ProviderEditor({
           <input id="pvOut" value={draft.outputPrice} inputMode="decimal" autoComplete="off" onChange={(e) => onChange({ outputPrice: e.target.value })} />
         </Field>
       </div>
+
+      <Field id="pvCache" label="提示缓存" hint="上游支持提示缓存时打开（Anthropic 的 cache_control / OpenAI 的 prompt_cache_key）。勾错会让上游报 400——不确定就别开。">
+        <Switch checked={draft.supportsPromptCache} onChange={(supportsPromptCache) => onChange({ supportsPromptCache })} ariaLabel="上游支持提示缓存" />
+      </Field>
 
       <div className="pv-models">
         <div className="pv-models-head">

@@ -104,6 +104,8 @@ export async function runAgentTurn(ctx) {
     agents = [], resolveAgentProvider = null,
     // 忽略文件闸门开关与 shell 子进程环境净化（配置段见 util/config.mjs）：缺省开
     ignoreEnabled = true, sanitizeChildEnv = true,
+    // 提示缓存档位（auto / off，配置段见 util/config.mjs）：真正生效还要提供方声明支持
+    promptCache = 'auto',
     // 用户中途发言（steering）状态：HTTP 面持有同一对象，活跃 turn 收到新提交时 request()
     modelSteer = null,
     // 多提供方故障转移：candidates 由 HTTP 面按模型目录注入（直连 Loop 的旧调用方不传即不转移）
@@ -216,10 +218,14 @@ export async function runAgentTurn(ctx) {
     const outTok = u?.completion_tokens || 0;
     const cost = (inTok * price.input + outTok * price.output) / 1_000_000;
     totIn += inTok; totOut += outTok; totCost = Number((totCost + cost).toFixed(6));
-    store.append(sessionId, { t: 'usage', inputTokens: inTok, outputTokens: outTok, cost });
+    // 提示缓存命中量（stream.mjs 已把两家协议归一成 cachedTokens / cacheWriteTokens）：进转录与会话汇总，
+    // 让「缓存到底有没有省到钱」在用量面板里看得见，而不是一个黑箱开关
+    const cachedTok = u?.cachedTokens || 0;
+    const cacheWriteTok = u?.cacheWriteTokens || 0;
+    store.append(sessionId, { t: 'usage', inputTokens: inTok, outputTokens: outTok, cost, ...(cachedTok ? { cachedTokens: cachedTok } : {}), ...(cacheWriteTok ? { cacheWriteTokens: cacheWriteTok } : {}) });
     store.patch(sessionId, { inputTokens: totIn, outputTokens: totOut, cost: totCost });
-    usage.record({ kind: 'agent', requestId: turnId, sessionId, model, provider: activeProvider.id, ms: Date.now() - started, inputTokens: inTok, outputTokens: outTok, reasoningTokens: u?.completion_tokens_details?.reasoning_tokens || 0, cost: Number(cost.toFixed(6)), stopped });
-    emit('token_usage_updated', { sessionId, turnId, model, inputTokens: inTok, outputTokens: outTok, cost: Number(cost.toFixed(6)) });
+    usage.record({ kind: 'agent', requestId: turnId, sessionId, model, provider: activeProvider.id, ms: Date.now() - started, inputTokens: inTok, outputTokens: outTok, reasoningTokens: u?.completion_tokens_details?.reasoning_tokens || 0, cost: Number(cost.toFixed(6)), stopped, ...(cachedTok ? { cachedTokens: cachedTok } : {}), ...(cacheWriteTok ? { cacheWriteTokens: cacheWriteTok } : {}) });
+    emit('token_usage_updated', { sessionId, turnId, model, inputTokens: inTok, outputTokens: outTok, cost: Number(cost.toFixed(6)), cachedTokens: cachedTok, cacheWriteTokens: cacheWriteTok });
   };
 
   /** 附加请求记账（titleMode=model 的标题轮 / goal 验证轮）：同一套单价，进账本与会话汇总，但不进转录与轮次脚注（渲染口径与本地模式一致） */
@@ -289,6 +295,9 @@ export async function runAgentTurn(ctx) {
     extraTools: [...extraTools, ...subTools],
     agents: agentConfigs, resolveAgentProvider, ruleToggles: ctx.ruleToggles || {},
     workspace: session.workspace, depth, log,
+    // 安全与缓存三项开关随派发继承：子代理与父层同一套口径（缺省值与配置缺省一致，
+    // 用户显式关掉时子代理也跟着关，不出现「父关子开」两套行为）
+    ignoreEnabled, sanitizeChildEnv, promptCache,
     // 子代理继承同一套故障转移配置与候选源：父层换过的路，子代理也能自己换
     providerFailover, providerFailoverMaxAttempts, failoverCandidates,
   });
@@ -326,7 +335,7 @@ export async function runAgentTurn(ctx) {
     }
     emit('context_compression_started', { sessionId, turnId, headRecords: plan.head.length });
     try {
-      const opened = await openChatStream(activeProvider, { model, messages: compactionMessages(plan.head), maxTokens: 1024 }, { signal: controller.signal, ...failoverIo() });
+      const opened = await openChatStream(activeProvider, { model, messages: compactionMessages(plan.head), maxTokens: 1024, promptCache }, { signal: controller.signal, ...failoverIo() });
       let summary = '';
       await consumeAgentStream(opened.reader, { controller, usage: null }, { onText: (t) => { summary += t; } }, { translate: opened.translate, idleMs: failoverTimeouts?.idleMs || 0 });
       if (!summary.trim()) throw new Error('压缩结果为空');
@@ -461,7 +470,7 @@ export async function runAgentTurn(ctx) {
         // LLM 抽象层统一入口：构造请求 + 连接期重试 + 中文错误话术 + 协议帧翻译选择；
         // extraTools（MCP 等外部工具）的 schema 经此进入请求，模型才看得见这些工具
         opened = await openChatStream(activeProvider, {
-          model, messages, toolNames, extraTools: allTools, ...requestGen(activeProvider),
+          model, messages, toolNames, extraTools: allTools, ...requestGen(activeProvider), promptCache,
         }, { signal: roundAbort.signal, onRetry: (n, e) => log('warn', '上游暂时不可用，准备重试', { attempt: n, error: String(e) }), ...failoverIo() });
       } catch (e) {
         // 中止走统一取消路径（保留已生成内容）；其余（上游非 2xx / 网络失败）以 turn_failed 收尾

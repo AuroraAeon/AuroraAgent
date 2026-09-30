@@ -34,8 +34,10 @@ export class UsageLedger {
       a.inputTokens += r.inputTokens || 0;
       a.outputTokens += r.outputTokens || 0;
       a.cost += r.cost || 0;
+      a.cachedTokens += r.cachedTokens || 0;
+      a.cacheWriteTokens += r.cacheWriteTokens || 0;
       return a;
-    }, { requests: 0, inputTokens: 0, outputTokens: 0, cost: 0 });
+    }, { requests: 0, inputTokens: 0, outputTokens: 0, cost: 0, cachedTokens: 0, cacheWriteTokens: 0 });
     return { totals, recent: rows.slice(-20).reverse() };
   }
 
@@ -51,7 +53,7 @@ export class UsageLedger {
       const d = new Date(today.getTime() - i * 86400000);
       dayKeys.push(d.toISOString().slice(0, 10));
     }
-    const byDay = new Map(dayKeys.map((k) => [k, { day: k, requests: 0, inputTokens: 0, outputTokens: 0, cost: 0 }]));
+    const byDay = new Map(dayKeys.map((k) => [k, { day: k, requests: 0, inputTokens: 0, outputTokens: 0, cost: 0, cachedTokens: 0, cacheWriteTokens: 0 }]));
     const byModel = new Map();
     const byProvider = new Map();
     const byPurpose = new Map();
@@ -59,11 +61,13 @@ export class UsageLedger {
 
     const bump = (map, key, row) => {
       if (!key) return;
-      const cur = map.get(key) || { key, requests: 0, inputTokens: 0, outputTokens: 0, cost: 0 };
+      const cur = map.get(key) || { key, requests: 0, inputTokens: 0, outputTokens: 0, cost: 0, cachedTokens: 0, cacheWriteTokens: 0 };
       cur.requests += 1;
       cur.inputTokens += row.inputTokens || 0;
       cur.outputTokens += row.outputTokens || 0;
       cur.cost += row.cost || 0;
+      cur.cachedTokens += row.cachedTokens || 0;
+      cur.cacheWriteTokens += row.cacheWriteTokens || 0;
       map.set(key, cur);
     };
 
@@ -75,6 +79,8 @@ export class UsageLedger {
         slot.inputTokens += r.inputTokens || 0;
         slot.outputTokens += r.outputTokens || 0;
         slot.cost += r.cost || 0;
+        slot.cachedTokens += r.cachedTokens || 0;
+        slot.cacheWriteTokens += r.cacheWriteTokens || 0;
       }
       bump(byModel, r.model, r);
       bump(byProvider, r.provider, r);

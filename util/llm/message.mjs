@@ -12,7 +12,23 @@ export function textOf(content) {
 
 /** 系统消息合并为 Anthropic 的 system 字符串（多段以空行相接） */
 export function systemTextOf(messages) {
-  return (messages || []).filter((m) => m.role === 'system').map((m) => textOf(m.content)).filter(Boolean).join('\n\n');
+  return systemBlocksOf(messages).join('\n\n');
+}
+
+/**
+ * 系统消息按顺序拆成块（wire.mjs 打提示缓存断点用）。
+ * context.mjs 的约定：稳定段（harness 提示 / 工作目录 / 规则 / 技能清单）在前，
+ * 易变尾（当前时间 / 本轮追加指令）在后——末块每轮都变，对它打断点会让整段缓存失效。
+ */
+export function systemBlocksOf(messages) {
+  return (messages || []).filter((m) => m.role === 'system').map((m) => textOf(m.content)).filter(Boolean);
+}
+
+/** 稳定段文本（去掉末块易变尾）：派生确定性缓存键时用，同一会话各轮保持一致 */
+export function stableSystemTextOf(messages) {
+  const blocks = systemBlocksOf(messages);
+  if (blocks.length < 2) return blocks[0] || '';
+  return blocks.slice(0, -1).join('\n\n');
 }
 
 /** OpenAI 视觉片段 → Anthropic image block（data URL 拆成 media_type + base64） */

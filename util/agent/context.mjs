@@ -56,17 +56,22 @@ export function assembleMessages({ harness, workspace, records = [], skills = []
   // 规则（用户指令层）拼在 extraSystem 之前：它是项目约定，优先级高于本轮临时指令；
   // 超预算的规则降级为 name + description，绝不整块丢弃（rulesBlock）
   const rulesSeg = rulesBlock(rules, { paths: rulePaths || ruleCandidatePaths(records), toggles: ruleToggles, budget: ruleBudget });
-  const system = [
+  // 稳定段（harness 提示 / 工作目录 / 规则 / 技能清单）与易变尾（当前时间 / 本轮追加指令）
+  // 拆成两条系统消息：wire.mjs 只在稳定段收尾打提示缓存断点，时间戳因此不会每轮把缓存打废
+  const stable = [
     harness.systemPrompt,
     '',
     `工作目录：${workspace}`,
-    `当前时间：${new Date().toISOString()}`,
     '文件工具只能访问工作目录内的路径；修改用户文件前先说清将要改什么。',
   ].join('\n')
     + (rulesSeg.block ? `\n\n${rulesSeg.block}` : '')
-    + (catalog ? `\n\n${catalog}` : '')
-    + (extraSystem ? `\n\n${extraSystem}` : '');
-  const messages = [{ role: 'system', content: system }];
+    + (catalog ? `\n\n${catalog}` : '');
+  const volatile = [
+    `当前时间：${new Date().toISOString()}`,
+    ...(extraSystem ? [extraSystem] : []),
+  ].join('\n');
+  const messages = [{ role: 'system', content: stable }];
+  if (volatile) messages.push({ role: 'system', content: volatile });
   const pending = [];
   // 预扫：有真实 tool_result 的调用 id，其余即悬空调用（中断残留），flush 时补合成结果。
   // 之所以预扫而非「见到结果就摘掉 pending」：真实结果记录排在 flush 之后，边扫边判会把正常配对误判成悬空。

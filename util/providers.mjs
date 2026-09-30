@@ -159,6 +159,13 @@ export function validateProviderDraft(draft, taken = []) {
   if (draft.thinking === true) value.thinking = true;
   const maxTokens = Number(draft.maxTokens);
   if (Number.isFinite(maxTokens) && maxTokens > 0) value.maxTokens = Math.round(maxTokens);
+  // 提供方能力声明（capacity）：上游是否支持提示缓存。缺省不写——多数 OpenAI 兼容线路
+  // 不认 prompt_cache_key，多发一个字段就是 400；要开由用户在提供方编辑器里显式勾选
+  if (draft.capacity && typeof draft.capacity === 'object') {
+    const capacity = {};
+    if (draft.capacity.supportsPromptCache !== undefined) capacity.supportsPromptCache = draft.capacity.supportsPromptCache === true;
+    if (Object.keys(capacity).length) value.capacity = capacity;
+  }
   return { ok: Object.keys(errors).length === 0, errors, value };
 }
 
@@ -188,6 +195,10 @@ function normalizeStored(raw) {
     if (Number.isFinite(n) && n >= 0) price[key] = n;
   }
   const maxTokens = Number(raw.maxTokens);
+  const capacity = {};
+  const capWindow = Number(raw.capacity?.contextWindow);
+  if (Number.isFinite(capWindow) && capWindow > 0) capacity.contextWindow = Math.round(capWindow);
+  if (raw.capacity?.supportsPromptCache === true) capacity.supportsPromptCache = true;
   return {
     id,
     name: String(raw.name ?? id).trim() || id,
@@ -198,6 +209,7 @@ function normalizeStored(raw) {
     price: Object.keys(price).length ? price : undefined,
     thinking: raw.thinking === true,
     maxTokens: Number.isFinite(maxTokens) && maxTokens > 0 ? Math.round(maxTokens) : undefined,
+    capacity: Object.keys(capacity).length ? capacity : undefined,
     // 非法密钥直接丢弃：与 dsh 的解析层一致——这类形状永远无法通过上游鉴权，
     // 留在这里只会在下次保存时炸出难懂的错误，不如让界面回到「未配置」让用户重填
     apiKey: (() => { const k = String(raw.apiKey ?? '').trim(); return k && !apiKeyFailure(k) ? k : ''; })(),
@@ -291,6 +303,7 @@ export class ProviderStore {
       price: p.price || null,
       thinking: Boolean(p.thinking),
       maxTokens: p.maxTokens || null,
+      capacity: p.capacity ? { ...p.capacity } : null,
       models: p.models.map((m) => ({ ...m })),
       // 队列位置（-1 = 不在队列）：设置页「故障转移队列」区据此渲染顺序与加入 / 移除态
       failoverIndex: this.failoverQueue.indexOf(p.id),
@@ -400,6 +413,7 @@ export class ProviderStore {
       thinking: patch.thinking !== undefined ? patch.thinking : this.custom[idx].thinking,
       maxTokens: patch.maxTokens !== undefined ? patch.maxTokens : this.custom[idx].maxTokens,
       price: patch.price !== undefined ? patch.price : this.custom[idx].price,
+      capacity: patch.capacity !== undefined && patch.capacity !== null ? patch.capacity : this.custom[idx].capacity,
     };
     const checked = validateProviderDraft(merged, this.custom.filter((p) => p.id !== key).map((p) => p.id));
     if (!checked.ok) throw new ProviderError(Object.values(checked.errors)[0], Object.keys(checked.errors)[0]);

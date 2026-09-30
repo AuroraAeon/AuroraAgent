@@ -259,6 +259,8 @@ export function createAgentApi(deps) {
         emit, controller, permissionMode, planMode, titleMode, extraTools: extraToolsFor(harness, side, sessionId),
         agentProxy: cfg.agentProxy,
         ignoreEnabled: cfg.ignore?.enabled !== false, sanitizeChildEnv: cfg.sanitizeChildEnv !== false,
+        // 提示缓存档位（auto / off）：提供方声明 supportsPromptCache 时才真的插断点
+        promptCache: cfg.promptCache,
         // hook 运行器（util/agent/hooks/）：按会话工作目录取（项目钩子与个人钩子的发现根不同）
         hooks: hookRunnerFor(sessionMeta.workspace),
         // 检查点运行时（util/agent/checkpoint.mjs）：侧边对话不传（不落盘无从回滚）

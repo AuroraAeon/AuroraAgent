@@ -23,6 +23,15 @@ export const PRICE = { input: 2, output: 8 };
 export const PERMISSION_MODES = ['always_ask', 'ask_when_needed', 'never_ask'];
 export const DEFAULT_PERMISSION_MODE = 'ask_when_needed';
 
+/** 提示缓存档位：auto（缺省）提供方声明支持即启用；off 一律不启用。
+ *  真正生效还要提供方 capacity.supportsPromptCache===true——不支持的线路多发一个字段就是 400 */
+export const PROMPT_CACHE_MODES = ['auto', 'off'];
+export const DEFAULT_PROMPT_CACHE_MODE = 'auto';
+/** 单叶容错：坏值回退缺省（与 goal / tui / failover 各段同一纪律） */
+export function parsePromptCache(raw) {
+  return PROMPT_CACHE_MODES.includes(raw) ? raw : DEFAULT_PROMPT_CACHE_MODE;
+}
+
 /** 会话标题生成方式：local 本地推导（零成本，缺省）/ model 调模型总结（每新会话多一次小请求） */
 export const TITLE_MODES = ['local', 'model'];
 export const DEFAULT_TITLE_MODE = 'local';
@@ -105,6 +114,9 @@ export function loadConfig({ warn } = {}) {
     ignore: parseIgnoreConfig(saved.ignore),
     // shell 子进程环境净化（剔除 KEY/TOKEN/SECRET 等凭据形态变量）：缺省开
     sanitizeChildEnv: saved.sanitizeChildEnv !== false,
+    // 提示缓存档位（auto / off）：提供方声明 supportsPromptCache 且非 off 时，wire.mjs 才会
+    // 插缓存断点；不支持的线路保持历史字节形态。读取认 saved，保存走下方白名单回写
+    promptCache: parsePromptCache(saved.promptCache),
     // 规则 toggle 表（用户显式关掉的规则不注入）：解析在 agent/rules.mjs，缺省全开
     rules: parseRulesConfig(saved),
     providerFailover: failover.enabled,
@@ -148,6 +160,8 @@ export function saveConfig(cfg) {
     tui: parseTuiConfig(cfg.tui),
     ignore: cfg.ignore !== undefined ? parseIgnoreConfig(cfg.ignore) : (savedSection('ignore') !== undefined ? parseIgnoreConfig(savedSection('ignore')) : parseIgnoreConfig(undefined)),
     sanitizeChildEnv: cfg.sanitizeChildEnv !== undefined ? cfg.sanitizeChildEnv !== false : savedSection('sanitizeChildEnv') !== false,
+    // 提示缓存档位：调用方未感知时保留盘上原值，防止其它设置保存把这一项抹掉
+    promptCache: parsePromptCache(cfg.promptCache !== undefined ? cfg.promptCache : savedSection('promptCache')),
     rules: cfg.rules !== undefined ? parseRulesConfig(cfg.rules) : parseRulesConfig(savedSection('rules')),
     agentProxy: cfg.agentProxy !== undefined ? (parseAgentProxy(cfg.agentProxy) || '') : savedAgentProxy(),
     providerFailover: cfg.providerFailover !== undefined ? parseFailoverConfig(cfg, {}).enabled : savedFailover().providerFailover,

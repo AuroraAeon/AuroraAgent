@@ -52,6 +52,9 @@ export function normalizeProviderRows(raw) {
     price: p?.price && typeof p.price === 'object'
       ? { ...p.price, input: asOptionalNumber(p.price.input), output: asOptionalNumber(p.price.output) }
       : undefined,
+    capacity: p?.capacity && typeof p.capacity === 'object'
+      ? { supportsPromptCache: asBool(p.capacity.supportsPromptCache, false) }
+      : undefined,
     failoverIndex: asOptionalNumber(p?.failoverIndex),
   }));
 }
@@ -69,6 +72,7 @@ export function normalizeCatalogProviders(raw) {
       label: asString(e.label),
       isDefault: asBool(e.isDefault, false),
       supported: asBool(e.supported, false),
+      promptCache: asBool(e.promptCache, false),
     })),
     models: asStringArray(p?.models),
   }));

@@ -7,6 +7,8 @@
 const TEMPERATURE_LIMITS = { min: 0, max: 1 };
 const MAX_TOKENS_LIMITS = { min: 1, max: 1000000 };
 const KEY_MAX_LENGTH = 200;
+/** 提示缓存档位：auto（缺省）提供方声明支持即启用；off 一律不启用 */
+const PROMPT_CACHE_MODES = ['auto', 'off'];
 
 function json(res, status, obj) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -39,6 +41,13 @@ export function parseMaxTokens(value) {
   return n;
 }
 
+/** 提示缓存档位归一：auto / off，坏值抛 Error */
+export function parsePromptCacheMode(value) {
+  const mode = String(value ?? '').trim();
+  if (!PROMPT_CACHE_MODES.includes(mode)) throw new Error(`promptCache 应为 auto 或 off（当前 ${value}）`);
+  return mode;
+}
+
 /** API Key 归一：去空白后非空、无内部空白、不超长；否则抛 Error */
 export function parseApiKey(value) {
   const key = String(value ?? '').trim();
@@ -55,7 +64,7 @@ export async function handleGenerationApi(req, res, url, ctx) {
   if (url === '/api/settings/generation') {
     if (req.method === 'GET') {
       const cfg = loadConfig();
-      json(res, 200, { ok: true, temperature: cfg.temperature, maxTokens: cfg.maxTokens });
+      json(res, 200, { ok: true, temperature: cfg.temperature, maxTokens: cfg.maxTokens, promptCache: cfg.promptCache });
       return true;
     }
     if (req.method === 'POST') {
@@ -63,20 +72,23 @@ export async function handleGenerationApi(req, res, url, ctx) {
       if (!body) { json(res, 400, { ok: false, error: '请求体不是合法 JSON' }); return true; }
       let temperature;
       let maxTokens;
+      let promptCache;
       try {
         if (body.temperature !== undefined) temperature = parseTemperature(body.temperature);
         if (body.maxTokens !== undefined) maxTokens = parseMaxTokens(body.maxTokens);
+        if (body.promptCache !== undefined) promptCache = parsePromptCacheMode(body.promptCache);
       } catch (e) { json(res, 400, { ok: false, error: e.message }); return true; }
-      if (temperature === undefined && maxTokens === undefined) {
-        json(res, 400, { ok: false, error: '没有可更新的字段（temperature / maxTokens）' });
+      if (temperature === undefined && maxTokens === undefined && promptCache === undefined) {
+        json(res, 400, { ok: false, error: '没有可更新的字段（temperature / maxTokens / promptCache）' });
         return true;
       }
       const cfg = loadConfig();
       if (temperature !== undefined) cfg.temperature = temperature;
       if (maxTokens !== undefined) cfg.maxTokens = maxTokens;
+      if (promptCache !== undefined) cfg.promptCache = promptCache;
       saveConfig(cfg);
-      log('info', '生成参数已更新', { temperature: cfg.temperature, maxTokens: cfg.maxTokens });
-      json(res, 200, { ok: true, temperature: cfg.temperature, maxTokens: cfg.maxTokens });
+      log('info', '生成参数已更新', { temperature: cfg.temperature, maxTokens: cfg.maxTokens, promptCache: cfg.promptCache });
+      json(res, 200, { ok: true, temperature: cfg.temperature, maxTokens: cfg.maxTokens, promptCache: cfg.promptCache });
       return true;
     }
     json(res, 405, { ok: false, error: '仅支持 GET / POST' });

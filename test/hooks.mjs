@@ -266,8 +266,10 @@ export async function runHooksTests(test, assert, eq) {
       hooks: runner,
     });
     assert(requests.length >= 2, '至少两轮请求');
-    assert(String(requests[1].body.messages[0].content).includes('这是钩子塞的上下文'), '钩子上下文进第二轮系统提示');
-    assert(!String(requests[0].body.messages[0].content).includes('这是钩子塞的上下文'), '第一轮还没有（工具还没跑）');
+    // 系统提示拆成稳定段 + 易变尾两条：钩子上下文走 extraSystem，落在易变尾那条里
+    const sysOf = (req) => req.body.messages.filter((m) => m.role === 'system').map((m) => String(m.content)).join('\n');
+    assert(sysOf(requests[1]).includes('这是钩子塞的上下文'), '钩子上下文进第二轮系统提示');
+    assert(!sysOf(requests[0]).includes('这是钩子塞的上下文'), '第一轮还没有（工具还没跑）');
   });
 
   await test('hooks: round_start 的 cancel 跳过本轮模型调用，turn 无工具收尾', async () => {

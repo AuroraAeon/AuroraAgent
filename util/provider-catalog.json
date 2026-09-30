@@ -36,7 +36,8 @@
             "zh-CN": "Anthropic格式",
             "en-US": "Anthropic Format",
             "zh-TW": "Anthropic格式"
-          }
+          },
+          "promptCache": true
         }
       ],
       "models": [
@@ -78,7 +79,8 @@
             "zh-CN": "国内-Anthropic格式",
             "en-US": "China - Anthropic Format",
             "zh-TW": "國內-Anthropic格式"
-          }
+          },
+          "promptCache": true
         },
         {
           "id": "coding-plan",
@@ -108,7 +110,8 @@
             "zh-CN": "国际站 · Anthropic 格式",
             "en-US": "International - Anthropic Format",
             "zh-TW": "國際站 - Anthropic 格式"
-          }
+          },
+          "promptCache": true
         },
         {
           "id": "international-coding-plan",
@@ -161,7 +164,8 @@
             "zh-CN": "国内-Anthropic格式",
             "en-US": "China - Anthropic Format",
             "zh-TW": "國內-Anthropic格式"
-          }
+          },
+          "promptCache": true
         },
         {
           "id": "international",
@@ -181,7 +185,8 @@
             "zh-CN": "国际站 · Anthropic 格式",
             "en-US": "International - Anthropic Format",
             "zh-TW": "國際站 - Anthropic 格式"
-          }
+          },
+          "promptCache": true
         },
         {
           "id": "kimi-for-coding",
@@ -191,7 +196,8 @@
             "zh-CN": "Kimi For Coding 套餐（模型 k3 / kimi-for-coding）",
             "en-US": "Kimi For Coding plan (models: k3 / kimi-for-coding)",
             "zh-TW": "Kimi For Coding 套餐（模型 k3 / kimi-for-coding）"
-          }
+          },
+          "promptCache": true
         }
       ],
       "models": [
@@ -224,7 +230,8 @@
             "zh-CN": "国内-Anthropic格式-默认",
             "en-US": "China - Anthropic Format - Default",
             "zh-TW": "國內-Anthropic格式-默認"
-          }
+          },
+          "promptCache": true
         },
         {
           "id": "openai",
@@ -244,7 +251,8 @@
             "zh-CN": "国际站 · Anthropic 格式",
             "en-US": "International - Anthropic Format",
             "zh-TW": "國際站 - Anthropic 格式"
-          }
+          },
+          "promptCache": true
         },
         {
           "id": "international-openai",
@@ -317,7 +325,8 @@
             "zh-CN": "国内-Coding Plan-Anthropic格式",
             "en-US": "China - Coding Plan - Anthropic Format",
             "zh-TW": "國內-Coding Plan-Anthropic格式"
-          }
+          },
+          "promptCache": true
         },
         {
           "id": "international-coding-plan",
@@ -433,7 +442,8 @@
             "zh-CN": "API - Anthropic Messages",
             "en-US": "API - Anthropic Messages",
             "zh-TW": "API - Anthropic Messages"
-          }
+          },
+          "promptCache": true
         },
         {
           "id": "token-plan",
@@ -453,7 +463,8 @@
             "zh-CN": "国内 - Token Plan - Anthropic",
             "en-US": "China - Token Plan - Anthropic",
             "zh-TW": "中國 - Token Plan - Anthropic"
-          }
+          },
+          "promptCache": true
         }
       ],
       "models": [
@@ -521,7 +532,8 @@
             "zh-CN": "Anthropic 格式 · 默认",
             "en-US": "Anthropic Format - Default",
             "zh-TW": "Anthropic 格式 - 默認"
-          }
+          },
+          "promptCache": true
         }
       ],
       "models": [
@@ -565,7 +577,8 @@
             "zh-CN": "国内-Anthropic格式",
             "en-US": "China - Anthropic Format",
             "zh-TW": "國內-Anthropic格式"
-          }
+          },
+          "promptCache": true
         },
         {
           "id": "international",

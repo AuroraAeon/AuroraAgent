@@ -42,6 +42,7 @@ import { runHttpGuardTests } from './http-guard.mjs';
 import { runIgnoreTests } from './ignore.mjs';
 import { runRulesTests } from './rules.mjs';
 import { runRipgrepTests } from './ripgrep.mjs';
+import { runPromptCacheTests } from './prompt-cache.mjs';
 import { runSubagentTests } from './subagents.mjs';
 import { runHooksTests } from './hooks.mjs';
 import { runCheckpointTests } from './checkpoint.mjs';
@@ -122,6 +123,7 @@ await runHttpGuardTests(test, assert, eq);
 await runIgnoreTests(test, assert, eq);
 await runRulesTests(test, assert, eq);
 await runRipgrepTests(test, assert, eq);
+await runPromptCacheTests(test, assert, eq);
 await runSubagentTests(test, assert, eq);
 await runHooksTests(test, assert, eq);
 await runCheckpointTests(test, assert, eq);
@@ -938,18 +940,23 @@ await test('上下文组装：记录投影为上游消息', () => {
     { t: 'usage', inputTokens: 10, outputTokens: 5 },
   ];
   const msgs = assembleMessages({ harness: getHarness('standard'), workspace: '/tmp/ws', records });
+  // 系统提示拆成两条：稳定段（harness 提示 / 工作目录 / 规则 / 技能清单）与易变尾（当前时间 /
+  // 本轮追加指令）——前者是提示缓存的断点落点（util/wire.mjs），时间戳因此不会每轮打废缓存
   eq(msgs[0].role, 'system');
   assert(msgs[0].content.includes('/tmp/ws'), '系统提示应带工作目录');
-  eq(msgs[1].content, '你好');
-  eq(msgs[2].content, '你好！');
-  eq(msgs[3].content, '读文件');
-  eq(msgs[4].role, 'assistant');
-  eq(msgs[4].tool_calls[0].function.name, 'read_file');
-  eq(msgs[5].role, 'tool');
-  eq(msgs[5].tool_call_id, 'tc1');
-  eq(msgs.length, 6, 'thinking 与 usage 不应进上下文');
+  assert(!msgs[0].content.includes('当前时间：'), '时间戳不在稳定段里（否则缓存每轮失效）');
+  eq(msgs[1].role, 'system');
+  assert(/^当前时间：\d{4}-/.test(msgs[1].content), '易变尾单独一条系统消息');
+  eq(msgs[2].content, '你好');
+  eq(msgs[3].content, '你好！');
+  eq(msgs[4].content, '读文件');
+  eq(msgs[5].role, 'assistant');
+  eq(msgs[5].tool_calls[0].function.name, 'read_file');
+  eq(msgs[6].role, 'tool');
+  eq(msgs[6].tool_call_id, 'tc1');
+  eq(msgs.length, 7, 'thinking 与 usage 不应进上下文');
   const withSummary = assembleMessages({ harness: getHarness('minimal'), workspace: '/tmp/ws', records: [{ t: 'summary', text: '摘要内容' }, { t: 'user', text: '继续' }] });
-  assert(withSummary[1].content.includes('摘要内容'), 'summary 应投影为系统消息');
+  assert(withSummary[2].content.includes('摘要内容'), 'summary 应投影为系统消息');
 });
 
 await test('上下文组装：悬空 tool_call 补合成结果（中断 / 派生边界）', () => {
@@ -974,7 +981,7 @@ await test('上下文组装：悬空 tool_call 补合成结果（中断 / 派生
   const orphan = assembleMessages({ harness: getHarness('standard'), workspace: '/tmp/ws', records: [
     { t: 'tool_result', id: 'ghost', ok: true, output: 'x' },
   ] });
-  eq(orphan.length, 1, '孤儿 tool_result 应被丢弃（只剩系统消息）');
+  eq(orphan.filter((m) => m.role !== 'system').length, 0, '孤儿 tool_result 应被丢弃（只剩系统消息）');
   // 并行调用里只有一个出结果：另一个补合成结果，两个都保留在 assistant.tool_calls 里
   const partial = assembleMessages({ harness: getHarness('standard'), workspace: '/tmp/ws', records: [
     { t: 'tool_call', id: 'c1', name: 'shell', args: {} },

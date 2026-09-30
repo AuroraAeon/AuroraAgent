@@ -53,6 +53,8 @@ export function catalogProviders() {
       label: catalogLabel(e.label, e.id),
       isDefault: e.default === true,
       supported: SUPPORTED_FORMATS.includes(String(e.format || '')),
+      // 该端点的上游是否支持提示缓存（Anthropic 线路的 cache_control / OpenAI 的 prompt_cache_key）
+      promptCache: e.promptCache === true,
     }));
     return {
       id: String(p.id || ''),
@@ -86,5 +88,7 @@ export function catalogPresetDraft(providerId, endpointId) {
     protocol: endpoint.format,
     baseUrl: endpoint.baseUrl,
     models: provider.models.map((id) => ({ id, contextWindow: 300000 })),
+    // 能力声明随预设进 providers.json：目录里标了 promptCache 的端点，加进来就默认启用缓存
+    ...(endpoint.promptCache ? { capacity: { supportsPromptCache: true } } : {}),
   };
 }
