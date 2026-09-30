@@ -39,6 +39,8 @@ import { createCheckpointRuntime, readCheckpointHistory } from './checkpoint.mjs
 import { restoreCheckpoint } from './checkpoint-restore.mjs';
 import { parseCheckpointArg, formatCheckpointLines, formatCheckpointDiffLines } from './checkpoint-cmd.mjs';
 import { trimRecordsToTurn } from './checkpoint-restore.mjs';
+import { discoverRules } from './rules.mjs';
+import { parseRulesArg, formatRuleLines, formatRuleToggleLines, ruleCandidatePaths } from './rules-cmd.mjs';
 
 const BASE = process.env.AURORAAGENT_BASE_URL || 'https://api.longcat.chat';
 const KEY_PAGE = 'https://longcat.chat/platform/api_keys';
@@ -500,6 +502,39 @@ export async function runTerminal({ argv = [] } = {}) {
     } catch (e) { console.log(p.warning(e?.message || String(e))); }
   };
 
+  /**
+   * /rules 家族：查看 / 开关当前发现的规则（用户指令层）。
+   * 规则文件在文件系统里编辑（<工作目录>/AGENTS.md、<工作目录>/.auroraagent/rules/*.md、
+   * <数据目录>/rules/*.md），这里只做「开 / 关」——与网页设置页「规则」section 共用同一份
+   * toggle 表（config.rules.toggles），一端改另一端下一轮即生效。
+   */
+  const cmdRules = (arg) => {
+    const p = painter();
+    const parsed = parseRulesArg(arg);
+    if (parsed.action === 'error') { console.log(p.warning(parsed.message)); return; }
+    const dataDir = resolveDataDir();
+    const state = () => {
+      const { rules, warnings } = discoverRules({ workspace: meta.workspace, dataDir });
+      return {
+        rules, warnings,
+        toggles: loadConfig().rules?.toggles || {},
+        paths: ruleCandidatePaths({ input: '', records: store.records(meta.id) }),
+      };
+    };
+    const s = state();
+    if (parsed.action === 'list') {
+      for (const line of formatRuleLines(s)) console.log('  ' + p.dim(line));
+      return;
+    }
+    if (!s.rules.some((r) => r.name === parsed.name)) {
+      console.log(p.warning(`没有名为「${parsed.name}」的规则（可用：${s.rules.map((r) => r.name).join('、') || '无'}）`));
+      return;
+    }
+    cfg.rules = { toggles: { ...s.toggles, [parsed.name]: parsed.action === 'on' } };
+    saveConfig(cfg);
+    for (const line of formatRuleToggleLines(parsed.action, parsed.name, s)) console.log('  ' + p.dim(line));
+  };
+
   /** 声明式斜杠命令表：/help 与分发同源；技能派生命令追加进同一张表（/<技能名> 直接调用） */
   const baseCommands = [
     { name: 'help', summary: '显示全部命令', run: printHelp },
@@ -547,6 +582,7 @@ export async function runTerminal({ argv = [] } = {}) {
     { name: 'cron', argHint: '[add <名称> | <表达式> | <内容>|remove|run|on|off <id>]', summary: '定时任务：到期自动在当前会话跑一轮 Agent（无参列出）', run: cmdCron },
     { name: 'hooks', argHint: '[list|events|test <事件名>]', summary: '事件钩子：脚本在 turn 各阶段自动触发（实验特性，无参列出）', run: cmdHooks },
     { name: 'checkpoint', argHint: '[list|diff <轮次>|restore <轮次> [chat]|clean]', summary: '检查点：每轮开始时自动拍工作区快照，可整体回滚（无参列出）', run: cmdCheckpoint },
+    { name: 'rules', argHint: '[list|on <名称>|off <名称>]', summary: '规则：AGENTS.md 等项目约定按条件注入系统提示（无参列出）', run: cmdRules },
     { name: 'btw', argHint: '<问题>', summary: '侧边对话：继承当前会话历史开聊，不落盘不进会话列表；Ctrl+/ 切换、Ctrl+C 丢弃', run: async (arg) => {
       const q = String(arg || '').trim();
       if (!q) { console.log(painter().warning('用法: /btw <问题>（侧边对话，继承当前会话历史，不落盘）')); return; }

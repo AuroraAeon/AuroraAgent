@@ -11,6 +11,9 @@ import {
   parseRuleSource, globToRegExp, matchGlob, ruleActive, discoverRules,
   rulesBlock, collectCandidatePaths, parseRulesConfig, RULE_TOKEN_BUDGET,
 } from '../util/agent/rules.mjs';
+import {
+  parseRulesArg, formatRuleLines, formatRuleLine, formatRuleToggleLines, ruleCandidatePaths,
+} from '../util/agent/rules-cmd.mjs';
 import { assembleMessages } from '../util/agent/context.mjs';
 import { getHarness } from '../util/agent/harness.mjs';
 
@@ -173,5 +176,53 @@ export async function runRulesTests(test, assert, eq) {
     assert(hit[0].content.includes('ts 专属规范'), '路径命中后进');
     const none = assembleMessages(base);
     assert(!none[0].content.includes('【项目规则】'), '无规则不出现规则块');
+  });
+
+  await test('rules-cmd: 参数解析覆盖 list / on / off / 坏输入', () => {
+    eq(parseRulesArg('').action, 'list', '无参列出');
+    eq(parseRulesArg('  ').action, 'list', '空白同无参');
+    eq(parseRulesArg('list').action, 'list', '显式 list');
+    eq(parseRulesArg('ls').action, 'list', 'ls 同义');
+    eq(parseRulesArg('on 项目规范').action, 'on', '开启');
+    eq(parseRulesArg('off 项目规范').name, '项目规范', '关闭并取出名称');
+    eq(parseRulesArg('ON x').action, 'on', '大小写不敏感');
+    eq(parseRulesArg('on').action, 'error', '缺名称报错');
+    eq(parseRulesArg('on   ').action, 'error', '空白名称报错');
+    eq(parseRulesArg('rm x').action, 'error', '未知子命令报错');
+    assert(parseRulesArg('rm x').message.includes('list'), '报错带可用子命令');
+  });
+
+  await test('rules-cmd: 展示行给出来源 / 条件 / 开关，空清单给落地指引', () => {
+    const rules = [
+      { name: 'AGENTS.md', description: '项目宪法', body: 'x', source: 'workspace', path: '/w/AGENTS.md', pathsKind: 'omitted', always: true },
+      { name: 'ts-规范', description: '只管 ts', body: 'y', source: 'workspace-rules', path: '/w/.auroraagent/rules/ts.md', pathsKind: 'array', paths: ['**/*.ts'], always: false },
+      { name: '个人习惯', description: '我的', body: 'z', source: 'data', path: '/d/rules/my.md', pathsKind: 'omitted', always: false },
+      { name: '空数组', description: '单独关掉', body: 'w', source: 'data', path: '/d/rules/e.md', pathsKind: 'array', paths: [], always: false },
+    ];
+    const lines = formatRuleLines({ rules, warnings: ['某文件解析失败'], toggles: { '个人习惯': false }, paths: ['README.md'] });
+    const byName = Object.fromEntries(rules.map((r) => [r.name, formatRuleLine(r, { toggles: { '个人习惯': false }, paths: ['README.md'] })]));
+    assert(byName['AGENTS.md'].includes('宪法') && byName['AGENTS.md'].includes('恒生效') && byName['AGENTS.md'].includes('生效中'), '宪法恒生效且在场');
+    assert(byName['ts-规范'].includes('项目') && byName['ts-规范'].includes('**/*.ts') && byName['ts-规范'].includes('待命中'), '路径未命中时标注待命中');
+    assert(byName['个人习惯'].includes('个人') && byName['个人习惯'].includes('已关闭'), 'toggle 关掉后标注已关闭');
+    assert(byName['空数组'].includes('已单独关闭'), 'paths 空数组是显式关闭');
+    assert(lines.some((l) => l.includes('告警：')), '告警要出现在终端里');
+    assert(lines.at(-1).includes('/rules off'), '末尾给操作提示');
+    const empty = formatRuleLines({ rules: [] });
+    assert(empty.length >= 2 && empty[0].includes('AGENTS.md') && empty[1].includes('frontmatter'), '空清单告诉用户文件放哪儿');
+    eq(formatRuleLines(null).length, 2, 'null 安全');
+  });
+
+  await test('rules-cmd: 开关回执，未知名称列出可用名字', () => {
+    const state = { rules: [{ name: '甲' }, { name: '乙' }] };
+    eq(formatRuleToggleLines('on', '甲', state)[0].includes('已开启'), true, '开启回执');
+    eq(formatRuleToggleLines('off', '乙', state)[0].includes('已关闭'), true, '关闭回执');
+    const miss = formatRuleToggleLines('off', '丙', state)[0];
+    assert(miss.includes('没有名为') && miss.includes('甲') && miss.includes('乙'), '未知名称时列出可用名字');
+    eq(formatRuleToggleLines('off', '丙', { rules: [] })[0].includes('无'), true, '无规则时不炸');
+  });
+
+  await test('rules-cmd: 候选路径与 rules.mjs 同源', () => {
+    const got = ruleCandidatePaths({ input: '看下 src/a.ts', records: [{ t: 'tool_call', name: 'edit_file', args: { path: 'pkg/b.mjs' } }] });
+    assert(got.includes('src/a.ts') && got.includes('pkg/b.mjs'), '终端列规则时的候选路径 = 输入 + 工具证据');
   });
 }
