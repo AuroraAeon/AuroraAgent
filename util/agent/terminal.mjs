@@ -106,7 +106,7 @@ export async function runTerminal({ argv = [] } = {}) {
     if (checkpointRt && checkpointRt.sessionId === sid) return checkpointRt;
     checkpointRt = createCheckpointRuntime({
       workspace, dataDir, sessionId: sid, log: () => {},
-      history: readCheckpointHistory(store.get(sid)),
+      history: readCheckpointHistory(store.get(sid)?.meta),
     });
     return checkpointRt;
   };

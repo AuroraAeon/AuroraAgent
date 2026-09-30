@@ -116,7 +116,7 @@ export function createAgentApi(deps) {
       rt = createCheckpointRuntime({
         workspace, dataDir, sessionId,
         log: (level, msg, extra) => log(level, msg, extra),
-        history: readCheckpointHistory(meta),
+        history: readCheckpointHistory(meta?.meta),
       });
       checkpointRuntimes.set(sessionId, rt);
     }
