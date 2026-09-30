@@ -24,7 +24,7 @@ import { SessionStore } from '../util/agent/session.mjs';
 import { getTool, toolSchemas, anthropicToolSchemas, toolResource, resolveInside, lineDiff, diffToText, renderTodoList } from '../util/agent/tools.mjs';
 import { toolLabel, toolIconKey, toolResourceOf, fmtCost, projectTurns } from '../util/agent/transcript.mjs';
 import { PermissionPolicy, defaultRules, mostRestrictive } from '../util/agent/policy.mjs';
-import { assembleMessages, needsCompaction, planCompaction, compactionMessages, contextWindowOf, estimateMessagesTokens } from '../util/agent/context.mjs';
+import { assembleMessages, needsCompaction, planCompaction, compactionMessages, contextWindowOf, estimateMessagesTokens, findCutIndex, safeCutPoints, droppedWorkSummary } from '../util/agent/context.mjs';
 import { runAgentTurn } from '../util/agent/loop.mjs';
 import { connectMcp, callResultText, McpError } from '../util/mcp/client.mjs';
 import { McpRegistry, validateServerDraft, loadMcpServers, mcpToolName } from '../util/mcp/registry.mjs';
@@ -1021,6 +1021,82 @@ await test('上下文压缩：阈值判定与头尾切分', () => {
   assert(!plain[1].content.includes(skillBody), '普通工具结果仍按上限截断');
   eq(contextWindowOf({}), 128000, '未声明窗口回退 128k');
   eq(contextWindowOf({ capacity: { contextWindow: 262144 } }), 262144, '应读取提供方声明窗口');
+});
+
+await test('上下文压缩：切点必须落在无悬空 tool_call 的边界', () => {
+  // 第 2 个用户轮中间夹着一对未闭合的 tool_call：切在这里会把调用与结果劈成两半
+  const records = [];
+  for (let i = 0; i < 12; i++) {
+    records.push({ t: 'user', text: `问题${i}` });
+    if (i === 1) {
+      records.push({ t: 'tool_call', id: 'c1', name: 'read_file', args: { path: 'a.txt' } });
+      records.push({ t: 'tool_result', id: 'c1', name: 'read_file', ok: true, output: 'x'.repeat(200000) });
+    }
+    records.push({ t: 'assistant', text: `回答${i}` });
+  }
+  const safe = safeCutPoints(records);
+  const dangling = records.findIndex((r) => r.t === 'tool_call');
+  eq(safe[dangling], true, '切在 tool_call 之前是安全的（调用整体归尾部）');
+  eq(safe[dangling + 1], false, '调用已发出、结果未落地时不能切');
+  eq(safe[dangling + 2], true, '结果落地之后恢复安全');
+  const cut = findCutIndex(records, 4, { windowTokens: 100000, ratio: 0.7 });
+  assert(cut >= 0, '应找到切点');
+  const head = records.slice(0, cut);
+  const headCalls = head.filter((r) => r.t === 'tool_call').map((r) => r.id);
+  const headResults = new Set(head.filter((r) => r.t === 'tool_result').map((r) => r.id));
+  assert(headCalls.every((id) => headResults.has(id)), '头部不允许留下悬空调用');
+  // 悬空调用那一轮体量巨大：预算投影应把它整轮摘进头部，而不是留在尾部顶爆窗口
+  assert(head.some((r) => r.t === 'tool_call'), '超预算的大轮应被摘进头部');
+  assert(!records.slice(cut).some((r) => r.t === 'tool_call'), '尾部不应残留未闭合调用');
+});
+
+await test('上下文压缩：预算投影按尾部 token 定切点，太小则放弃', () => {
+  const records = [];
+  for (let i = 0; i < 12; i++) {
+    records.push({ t: 'user', text: `问题${i}` });
+    records.push({ t: 'assistant', text: '答'.repeat(400) });
+  }
+  const wide = findCutIndex(records, 4, { windowTokens: 1000000, ratio: 0.7 });
+  assert(wide >= 0, '窗口宽裕时应按保留轮数切');
+  eq(records[wide].text, '问题8', '宽裕时仍保留最近 4 个用户轮');
+  const tiny = [{ t: 'user', text: 'a' }, { t: 'user', text: 'b' }];
+  eq(findCutIndex(tiny, 4), -1, '用户轮不足时没有切点');
+  // 每个用户轮都大到放不进预算：宁可放弃压缩也不硬切出超预算的半轮
+  const fat = [];
+  for (let i = 0; i < 12; i++) {
+    fat.push({ t: 'user', text: `问题${i}` });
+    fat.push({ t: 'assistant', text: '答'.repeat(60000) });
+  }
+  eq(findCutIndex(fat, 4, { windowTokens: 100000, ratio: 0.7 }), -1, '尾部超预算时放弃压缩');
+  eq(findCutIndex(fat, 4, { windowTokens: 10000000, ratio: 0.7 }) >= 0, true, '窗口足够大时恢复可切');
+});
+
+await test('上下文压缩：被摘掉的工具工作聚成事实清单', () => {
+  const head = [
+    { t: 'tool_call', name: 'read_file', args: { path: 'src/a.ts' } },
+    { t: 'tool_call', name: 'list_dir', args: { path: 'src' } },
+    { t: 'tool_call', name: 'edit_file', args: { path: 'src/a.ts' } },
+    { t: 'tool_call', name: 'write_file', args: { path: 'out/b.md' } },
+    { t: 'tool_call', name: 'shell', args: { command: 'npm test' } },
+    { t: 'tool_call', name: 'grep', args: { pattern: 'TODO' } },
+    { t: 'tool_call', name: 'glob', args: { pattern: '**/*.ts' } },
+    { t: 'tool_call', name: 'web_fetch', args: { url: 'https://example.test/x' } },
+    { t: 'tool_call', name: 'task', args: { task: '跑一遍测试' } },
+    { t: 'tool_call', name: 'skill', args: { name: 'code-review' } },
+    { t: 'tool_call', name: 'todo', args: { items: [] } },
+  ];
+  const sum = droppedWorkSummary(head);
+  assert(sum.includes('src/a.ts'), '读过的文件应列出');
+  assert(sum.includes('out/b.md'), '改过的文件应列出');
+  assert(sum.includes('npm test'), '跑过的命令应列出');
+  assert(sum.includes('TODO'), '检索模式应列出');
+  assert(sum.includes('example.test'), '抓取的链接应列出');
+  assert(sum.includes('code-review'), '加载过的技能应列出');
+  assert(!sum.includes('items'), '无事实可提取的工具不占位');
+  eq(droppedWorkSummary([]), '', '空头部给空清单');
+  const cm = compactionMessages(head);
+  assert(cm[1].content.includes('工具工作清单'), '压缩输入应带上事实清单');
+  assert(cm[0].content.includes('文件路径'), '压缩系统提示应显式要求列文件路径');
 });
 
 // ---------- 单元测试: Agent Loop ----------

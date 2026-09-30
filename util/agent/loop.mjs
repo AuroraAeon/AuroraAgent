@@ -36,6 +36,9 @@ function settlePrice(provider, builtinPrice) {
   };
 }
 
+/** 压缩时至少保留的用户轮数（超预算再往上摘，见 context.mjs 的预算投影） */
+const COMPACTION_KEEP_TURNS = 4;
+
 /** 回答触达长度上限后的续写提醒（finish_reason=length 且无工具调用时追加一次） */
 const LENGTH_CONTINUE_NOTE = '【续写要求】上一轮回答因长度上限被截断。请在已生成内容基础上直接续写余下部分：不要重复已写内容、不要复述前文、不要调用工具。';
 
@@ -239,7 +242,12 @@ export async function runAgentTurn(ctx) {
   const maybeCompact = async (force = false) => {
     const messages = assembleMessages({ harness, workspace: session.workspace, records, skills });
     if (!force && !needsCompaction(messages, { windowTokens: contextWindowOf(activeProvider), ratio: harness.compactRatio })) return;
-    const plan = planCompaction(records);
+    // 切点必须落在无悬空 tool_call 的边界，并按窗口 × ratio 做预算投影
+    // （保留下来的尾部还得给摘要与新内容留地方），见 context.mjs 的 findCutIndex
+    const plan = planCompaction(records, COMPACTION_KEEP_TURNS, {
+      windowTokens: contextWindowOf(activeProvider),
+      ratio: harness.compactRatio,
+    });
     if (!plan) return;
     emit('context_compression_started', { sessionId, turnId, headRecords: plan.head.length });
     try {

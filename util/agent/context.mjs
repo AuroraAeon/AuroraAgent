@@ -98,17 +98,104 @@ export function assembleMessages({ harness, workspace, records = [], skills = []
   return messages;
 }
 
+/** 单条记录的 token 估算（压缩预算投影用：内容 + 工具参数一并计入） */
+function recordTokens(r) {
+  const body = r.t === 'tool_call'
+    ? `${r.name || ''} ${JSON.stringify(r.args || {})}`
+    : `${r.name || ''} ${String(r.output ?? r.text ?? '')}`;
+  return estimateTokens(body) + 4;
+}
+
+/**
+ * 安全切点预扫：下标 i 可作切点，当且仅当 records[0..i-1] 里没有任何「调用已发出、
+ * 结果还没出现」的 tool_call。切点落在悬空调用中间会把一对 tool_call / tool_result
+ * 劈成两半——头部的调用等不到结果，尾部的结果找不到调用，投影出来的消息序列两边都违法，
+ * 上游直接 400。悬空合成只兜得住「转录结尾」那一种，压缩中途不能依赖它。
+ * @returns {boolean[]} 长度 records.length + 1 的安全标记
+ */
+export function safeCutPoints(records = []) {
+  const pending = new Set();
+  const safe = new Array(records.length + 1).fill(false);
+  safe[0] = true;
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i];
+    if (r.t === 'tool_call') pending.add(r.id);
+    else if (r.t === 'tool_result') pending.delete(r.id);
+    safe[i + 1] = pending.size === 0;
+  }
+  return safe;
+}
+
+/**
+ * 定切点：保留最近若干用户轮原文，且满足两条硬约束——
+ *   1. 切点必须落在无悬空 tool_call 的边界（safeCutPoints）；
+ *   2. 保留下来的尾部按目标 token 预算投影（tailBudget = 窗口 × ratio × 0.6）：
+ *      压缩完还得给摘要与新内容留地方，尾部超预算就再多摘几轮。
+ * 用户轮不足 keepTurns + 1、或没有任何安全边界时返回 -1。
+ * @param {number} keepTurns 至少保留的用户轮数（预算允许时是下限）
+ */
+export function findCutIndex(records = [], keepTurns = 4, { windowTokens = DEFAULT_WINDOW, ratio = 0.7 } = {}) {
+  const safe = safeCutPoints(records);
+  const userIdx = [];
+  records.forEach((r, i) => { if (r.t === 'user' && safe[i]) userIdx.push(i); });
+  if (userIdx.length <= keepTurns) return -1;
+  const tailBudget = Math.max(2000, Math.floor(windowTokens * ratio * 0.6));
+  // 从「保留最多」的候选往老走：尾部 token 从 newest 累加到 oldest，最后一个不超预算的即所求
+  const suffix = new Array(records.length + 1).fill(0);
+  for (let i = records.length - 1; i >= 0; i--) suffix[i] = suffix[i + 1] + recordTokens(records[i]);
+  let cut = -1;
+  for (let k = 0; k < userIdx.length; k++) {
+    if (userIdx.length - k < keepTurns) break; // 至少留 keepTurns 个用户轮（尾部含第 k..末轮）
+    if (suffix[userIdx[k]] <= tailBudget) cut = userIdx[k];
+  }
+  if (cut < 6) return -1; // 头部太薄，压缩省不下多少
+  return cut;
+}
+
 /**
  * 压缩规划：保留最近 keepTurns 个用户轮原文，更早的记录进 head 交给模型总结。
- * 记录太少时返回 null（不值得压缩）。
+ * 记录太少或没有安全切点时返回 null（不值得压缩）。
  */
-export function planCompaction(records = [], keepTurns = 4) {
-  const userIdx = [];
-  records.forEach((r, i) => { if (r.t === 'user') userIdx.push(i); });
-  if (userIdx.length <= keepTurns) return null;
-  const cut = userIdx[userIdx.length - keepTurns];
-  if (cut < 6) return null; // 头部太薄，压缩省不下多少
-  return { head: records.slice(0, cut), tail: records.slice(cut) };
+export function planCompaction(records = [], keepTurns = 4, opts = {}) {
+  const cut = findCutIndex(records, keepTurns, opts);
+  if (cut < 0) return null;
+  return { head: records.slice(0, cut), tail: records.slice(cut), cut };
+}
+
+/**
+ * 被摘掉的工具工作聚成一份清单：压缩只留对话摘要时，「读过哪些文件、改过哪些文件、
+ * 跑过哪些命令」这类事实最容易丢，而后续轮次恰恰要靠它们判断该不该再读一遍。
+ * 与模型摘要合并进压缩输入——模型负责叙事，这份清单负责事实。
+ */
+export function droppedWorkSummary(head = []) {
+  const read = new Set(), changed = new Set(), cmds = [], patterns = [], urls = [], tasks = [], skills = [];
+  for (const r of head) {
+    if (r.t !== 'tool_call') continue;
+    const a = r.args || {};
+    const p = a.path ? String(a.path) : '';
+    switch (r.name) {
+      case 'read_file': if (p) read.add(p); break;
+      case 'list_dir': if (p) read.add(`${p}/（列目录）`); break;
+      case 'write_file': case 'edit_file': if (p) changed.add(p); break;
+      case 'shell': if (a.command) cmds.push(String(a.command).slice(0, 120)); break;
+      case 'grep': if (a.pattern) patterns.push(String(a.pattern).slice(0, 80)); break;
+      case 'glob': if (a.pattern) patterns.push(`glob ${String(a.pattern).slice(0, 80)}`); break;
+      case 'web_fetch': if (a.url) urls.push(String(a.url).slice(0, 160)); break;
+      case 'task': tasks.push(String(a.task || '').slice(0, 80)); break;
+      case 'skill': skills.push(String(a.name || '').slice(0, 40)); break;
+      default: break;
+    }
+  }
+  const lines = [];
+  const push = (label, arr) => { if (arr.length) lines.push(`- ${label}：${arr.slice(0, 40).join('、')}`); };
+  push('读过的文件', [...read]);
+  push('改过的文件', [...changed]);
+  push('跑过的命令', cmds);
+  push('检索模式', patterns);
+  push('抓取的链接', urls);
+  push('派发的子任务', tasks);
+  push('加载过的技能', skills);
+  return lines.join('\n');
 }
 
 /** 总结用的消息序列（无工具、纯文本）。
@@ -124,8 +211,15 @@ export function compactionMessages(head = []) {
     if (r.t === 'user' && r.skill) return `[用户 /${r.skill} 技能调用] ${String(r.text || '')}`;
     return `[${r.t}] ${String(r.text || '').slice(0, 1000)}`;
   }).join('\n');
+  const work = droppedWorkSummary(head);
   return [
-    { role: 'system', content: '你是对话压缩器。把下面的早期对话记录压缩成一份摘要，保留：关键事实与决定、涉及的文件路径、工具执行的结论、未解决的问题。带 [技能规范 ...] 或 [用户 /<技能名> 技能调用] 的内容是本次会话必须持续遵循的技能规范，摘要里要原样延续其要点，不得丢弃或改写。用中文，300 字以内，不要客套。' },
-    { role: 'user', content: transcript },
+    { role: 'system', content: [
+      '你是对话压缩器。把下面的早期对话记录压缩成一份摘要，保留：关键事实与决定、涉及的文件路径、工具执行的结论、未解决的问题。',
+      '摘要必须显式列出「涉及的文件路径」清单（读过的、改过的、创建的分开写），后续轮次要靠它判断该不该重新读一遍——漏掉路径就等于白干。',
+      '带 [技能规范 ...] 或 [用户 /<技能名> 技能调用] 的内容是本次会话必须持续遵循的技能规范，摘要里要原样延续其要点，不得丢弃或改写。',
+      '用户消息附带的「工具工作清单」是从记录里直接提取的事实，与你的摘要合并呈现，不要与之矛盾。',
+      '用中文，300 字以内，不要客套。',
+    ].join('\n') },
+    { role: 'user', content: `${work ? `工具工作清单：\n${work}\n\n` : ''}对话记录：\n${transcript}` },
   ];
 }
