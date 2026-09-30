@@ -78,6 +78,9 @@ export type SessionMeta = {
   inputTokens: number; outputTokens: number; cost: number; preview?: string;
 };
 
+/** 会话检索命中：SessionMeta + BM25 分数与命中片段（GET /api/sessions/search） */
+export type SessionSearchHit = SessionMeta & { score: number; snippet: string };
+
 export type SessionRecord = {
   at?: string;
   t: 'user' | 'assistant' | 'thinking' | 'tool_call' | 'tool_result' | 'summary' | 'usage';

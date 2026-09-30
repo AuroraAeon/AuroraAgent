@@ -1,7 +1,7 @@
 /** api-shapes.mjs 的类型声明（实现是零依赖纯函数，Node 测试直接 import 同一份）。 */
 import type {
   CatalogProvider, CircuitHealth, ErrorLogEntry, FailoverQueue, FailoverSettings, Harness, McpServerRow,
-  JobItem, ModelInfo, ProviderRow, QueueItem, SessionMeta, SessionRecord, SettingsInfo, TuiSettings, UsageSummary,
+  JobItem, ModelInfo, ProviderRow, QueueItem, SessionMeta, SessionRecord, SessionSearchHit, SettingsInfo, TuiSettings, UsageSummary,
 } from './types';
 
 /** 模型目录行（ModelInfo） */
@@ -22,6 +22,9 @@ export declare function normalizeSessions(raw: unknown): SessionMeta[];
 
 /** 会话详情：GET /api/agent/sessions/:id */
 export declare function normalizeSessionDetail(raw: unknown): { meta: SessionMeta; records: SessionRecord[] };
+
+/** 会话检索结果：标题 + 转录全文命中，附 BM25 分数与命中片段 */
+export declare function normalizeSessionSearch(raw: unknown): { query: string; sessions: SessionSearchHit[] };
 
 /** 创建 / 查会话回包：{ session } */
 export declare function normalizeSessionResult(raw: unknown): { session: SessionMeta };

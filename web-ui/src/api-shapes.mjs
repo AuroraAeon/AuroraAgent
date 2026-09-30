@@ -136,6 +136,16 @@ export function normalizeSessionDetail(raw) {
   return { ...o, meta: normalizeSessionRows([o.meta])[0] || emptySessionRow(), records: asArray(o.records) };
 }
 
+/** 会话检索结果：标题 + 转录全文命中，附 BM25 分数与命中片段 */
+export function normalizeSessionSearch(raw) {
+  const o = asObject(raw);
+  const rawRows = asArray(o.sessions);
+  return {
+    query: asString(o.query),
+    sessions: normalizeSessionRows(rawRows).map((s, i) => ({ ...s, score: asNumber(rawRows[i]?.score), snippet: asString(rawRows[i]?.snippet) })),
+  };
+}
+
 /** 侧边对话转录：GET /api/agent/side/:id（records 喂投影层，非数组即崩） */
 export function normalizeSideSession(raw) {
   const o = asObject(raw);

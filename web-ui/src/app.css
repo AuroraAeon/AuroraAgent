@@ -165,6 +165,12 @@ html { font-size: var(--ui-font-size, 14px); }
 .sb-act { width:16px; height:16px; border:0; border-radius:4px; background:none; color:var(--faint); display:grid; place-items:center; cursor:pointer; padding:0; }
 .sb-act:hover { color:var(--text); }
 .sb-act-del:hover { color:var(--danger-ink); }
+/* 检索命中行：转录片段换到第二行。.sb-row-main 本就是 flex，靠 basis:100% 换行，不改 DOM 结构。
+   行高从固定 32px 改为自适应——片段是检索才有的信息，平时不占地方 */
+.sb-row.hit { height:auto; min-height:32px; padding-top:3px; padding-bottom:3px; }
+.sb-row.hit .sb-row-main { flex-wrap:wrap; align-items:center; padding:2px 4px; }
+.sb-row-snip { display:none; }
+.sb-row.hit .sb-row-snip { display:block; flex:0 0 100%; min-width:0; font-size:0.7857rem; line-height:1.45; color:var(--faint); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 @keyframes sb-row-in { from { opacity:0; } }
 .sb-empty { color:var(--faint); font-size:0.9286rem; padding:16px 12px; }
 .sb-skel { height:32px; border-radius:8px; display:flex; align-items:center; gap:8px; padding:0 4px 0 10px; }

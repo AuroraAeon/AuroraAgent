@@ -3,11 +3,11 @@ import {
   normalizeCatalogProviders, normalizeDiscoveredModels, normalizeErrorLogPage, normalizeFailoverQueue, normalizeFailoverSettings,
   normalizeFileSearch, normalizeHarnesses, normalizeHealthRows, normalizeJobList, normalizeJobRows, normalizeModels, normalizeMcpServers, normalizeProviderList,
   normalizeProviderRows, normalizeQueueItems, normalizeSessionDetail, normalizeSessionMetaResult, normalizeSessionResult,
-  normalizeSessions, normalizeSettingsInfo, normalizeSideSession, normalizeTuiSaveResult, normalizeTuiSettings,
+  normalizeSessionSearch, normalizeSessions, normalizeSettingsInfo, normalizeSideSession, normalizeTuiSaveResult, normalizeTuiSettings,
   normalizeUsageSummary,
 } from './api-shapes.mjs';
 import { normalizeSkillRows } from './skill-rows.mjs';
-import type { AgentEvent, CatalogProvider, ErrorLogEntry, FailoverQueue, FailoverSettings, GoalState, HookRow, UpdateInfo, Harness, JobItem, McpServerRow, ModelInfo, ProviderRow, QueueItem, SessionMeta, SessionRecord, SettingsInfo, SkillRow, TuiSettings, UsageSummary, WorkspaceInfo } from './types';
+import type { AgentEvent, CatalogProvider, ErrorLogEntry, FailoverQueue, FailoverSettings, GoalState, HookRow, UpdateInfo, Harness, JobItem, McpServerRow, ModelInfo, ProviderRow, QueueItem, SessionMeta, SessionRecord, SessionSearchHit, SettingsInfo, SkillRow, TuiSettings, UsageSummary, WorkspaceInfo } from './types';
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(path, {
@@ -22,6 +22,9 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 export const listSessions = () => api<{ sessions: SessionMeta[] }>('/api/agent/sessions').then(normalizeSessions);
 export const createSession = (body: { name?: string; model?: string; harness?: string; workspace?: string }) =>
   api<{ session: SessionMeta }>('/api/agent/sessions', { method: 'POST', body: JSON.stringify(body) }).then(normalizeSessionResult).then((r) => r.session);
+/** 会话全文检索（标题 + 转录）：侧栏搜索框的数据源，索引在 util/search/ */
+export const searchSessions = (q: string) =>
+  api<{ sessions: SessionSearchHit[] }>(`/api/sessions/search?q=${encodeURIComponent(q)}`).then(normalizeSessionSearch);
 export const getSession = (id: string) => api<{ meta: SessionMeta; records: SessionRecord[] }>(`/api/agent/sessions/${id}`).then(normalizeSessionDetail);
 export const deleteSession = (id: string) => api<{ deleted: boolean }>(`/api/agent/sessions/${id}`, { method: 'DELETE' });
 export const patchSession = (id: string, body: { harness?: string; name?: string; model?: string; provider?: string; permissionMode?: string; planMode?: boolean; titleMode?: string; thinking?: boolean }) =>

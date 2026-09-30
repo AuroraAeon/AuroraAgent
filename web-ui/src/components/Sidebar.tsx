@@ -14,11 +14,15 @@
  *  切换入口统一在 WorkspaceTopOverlay 那枚「静止显品牌砖、hover 显面板图标」的 28px 幽灵钮上
  *  （复刻 ZCode DesktopTopOverlay）；侧栏顶部留出 48px 浮层带（.sidebar 的 padding-top），
  *  展开态浮层正好盖住这条带。 */
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { IconClose, IconCopy, IconGear, IconMessageCirclePlus, IconSearch, IconTrash } from '../icons';
+import { searchSessions } from '../api';
 import { fmtRel } from '../projection';
 import { newSessionLabel } from '../shortcut';
-import type { SessionMeta } from '../types';
+import type { SessionMeta, SessionSearchHit } from '../types';
+
+/** 检索防抖：打字过程中不必每个键都打一次服务端索引 */
+const SEARCH_DEBOUNCE_MS = 180;
 
 type Props = {
   sessions: SessionMeta[];
@@ -42,13 +46,29 @@ export function Sidebar({
 }: Props) {
   const [q, setQ] = useState('');
   const [searchOn, setSearchOn] = useState(false);
+  const [hits, setHits] = useState<SessionSearchHit[] | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const kw = q.trim().toLowerCase();
-  const shown = kw ? sessions.filter((s) => (s.name || '').toLowerCase().includes(kw)) : sessions;
+
+  // 输入即检索：服务端索引（util/search/）覆盖标题 + 转录全文，本地标题过滤只在检索失败时兜底——
+  // 否则一次网络抖动就让搜索框退回「只搜标题」，用户以为会话丢了
+  useEffect(() => {
+    if (!kw) { setHits(null); return; }
+    let alive = true;
+    const timer = setTimeout(() => {
+      searchSessions(kw)
+        .then((r) => { if (alive) setHits(r.sessions); })
+        .catch(() => { if (alive) setHits(null); });
+    }, SEARCH_DEBOUNCE_MS);
+    return () => { alive = false; clearTimeout(timer); };
+  }, [kw]);
+
+  const local = kw ? sessions.filter((s) => (s.name || '').toLowerCase().includes(kw)) : sessions;
+  const shown: (SessionMeta & { snippet?: string })[] = hits && hits.length ? hits : local;
 
   const openSearch = () => { setSearchOn(true); setTimeout(() => searchRef.current?.focus(), 0); };
-  const closeSearch = () => { setSearchOn(false); setQ(''); };
+  const closeSearch = () => { setSearchOn(false); setQ(''); setHits(null); };
 
   return (
     <aside className="sidebar">
@@ -95,7 +115,7 @@ export function Sidebar({
           {!loading && sessions.length === 0 ? <div className="sb-empty">还没有会话</div> : null}
           {!loading && sessions.length > 0 && shown.length === 0 ? <div className="sb-empty">无匹配会话</div> : null}
           {shown.map((s) => (
-            <div key={s.id} className={`sb-row${s.id === currentId ? ' on' : ''}`}>
+            <div key={s.id} className={`sb-row${s.id === currentId ? ' on' : ''}${s.snippet ? ' hit' : ''}`}>
               {/* 前置 16px 槽（ZCode TaskListItem leading slot）：静止留空，正在运行的会话
                   填灰色加载圈——转圈即「这个会话有活在跑」，切过去能看到实时进度 */}
               <span className="sb-row-lead" aria-hidden="true">
@@ -110,6 +130,7 @@ export function Sidebar({
               >
                 <span className="sb-row-title">{s.name || '新会话'}</span>
                 <span className="sb-row-time">{fmtRel(s.updatedAt)}</span>
+                {s.snippet ? <span className="sb-row-snip">{s.snippet}</span> : null}
               </button>
               <span className="sb-row-acts">
                 <button
