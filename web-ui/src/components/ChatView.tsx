@@ -41,7 +41,7 @@ function LiveRow({ live, onDecide, onDecidePlan }: { live: LiveTurn; onDecide?: 
         {/* parts 时间线与历史投影同形态：流式期间即按「文字 → 工具 → 文字」落位，结束后不重排版 */}
         {live.parts.map((p, pi) => (p.kind === 'text'
           ? <Markdown key={`t${pi}`} text={p.text} />
-          : <ToolCard key={p.id} tool={p} onDecide={onDecide} />))}
+          : <ToolCard key={p.id} tool={p} onDecide={onDecide} live subActive={live.subTasks || []} />))}
         {/* 压缩分隔行：四个终态都留一行（含失败与取消）——悄悄回到原上下文会让人以为压缩成功过 */}
         {live.compression ? (
           <div className={`row-system comp-${live.compression.state}`}>

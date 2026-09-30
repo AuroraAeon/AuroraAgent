@@ -272,6 +272,34 @@ export async function runHooksTests(test, assert, eq) {
     assert(!sysOf(requests[0]).includes('这是钩子塞的上下文'), '第一轮还没有（工具还没跑）');
   });
 
+  await test('hooks: 执行痕迹进 extra.hooks（tool_event 与转录各一份，未配 hook 时一个字节都不多带）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aurora-hooktrace-'));
+    keep(dir);
+    writeHook(join(dir, 'hooks'), 'PreToolUse.mjs', 'process.stdout.write(JSON.stringify({context:"x"}))');
+    writeHook(join(dir, 'hooks'), 'PostToolUse.mjs', 'process.stdout.write("{}")');
+    const runner = createHookRunner({ workspace: '', dataDir: dir });
+    const { events, store, session } = await runLoop({
+      framesByCall: [toolFrames('shell', { command: 'echo hi' }), textFrames('done')],
+      hooks: runner,
+    });
+    const done = events.find((e) => e.type === 'tool_event' && e.phase === 'completed');
+    assert(done, '有完成事件');
+    eq(Array.isArray(done.extra?.hooks), true, 'extra.hooks 是数组');
+    eq(done.extra.hooks.length, 2, 'pre / post 各一条痕迹');
+    eq(done.extra.hooks[0].event, 'pre_tool_use', '第一条是执行前');
+    eq(done.extra.hooks[1].event, 'post_tool_use', '第二条是执行后');
+    eq(done.extra.hooks[0].ok, true, '退出码 0 记成功');
+    assert(done.extra.hooks[0].path.endsWith('PreToolUse.mjs'), '带脚本路径');
+    const recs = store.get(session.id).records;
+    const tr = recs.find((r) => r.t === 'tool_result');
+    eq(tr.extra?.hooks?.length, 2, '转录里同样落一份（历史卡片据此渲染）');
+
+    // 对照组：不注入 runner（nullHooks）时没有任何痕迹
+    const bare = await runLoop({ framesByCall: [toolFrames('shell', { command: 'echo hi' }), textFrames('done')] });
+    const bareDone = bare.events.find((e) => e.type === 'tool_event' && e.phase === 'completed');
+    eq(bareDone.extra, undefined, '未配 hook 的会话不带 hooks 字段');
+  });
+
   await test('hooks: round_start 的 cancel 跳过本轮模型调用，turn 无工具收尾', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'aurora-hookrs-'));
     keep(dir);

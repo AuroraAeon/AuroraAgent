@@ -41,6 +41,11 @@ export function applyToolEvent(live: LiveTurn, ev: Extract<AgentEvent, { type: '
     else if (idx < 0) parts.push(view);
   };
   const sub = ev.subAgent ? { subAgent: true, subTask: ev.subTask } : {};
+  // 子代理的工具调用开始透出 = 这个子任务确实在跑了：登记进 live.subTasks，
+  // 供 task 卡把「等待中」的子任务行提到「执行中」（只认看得见的信号，不猜进度）
+  const next: LiveTurn = sub.subTask && !(live.subTasks || []).includes(sub.subTask)
+    ? { ...live, parts: live.parts.slice(), subTasks: [...(live.subTasks || []), sub.subTask] }
+    : live;
   switch (ev.phase) {
     case 'started':
       begin({ kind: 'tool', id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'running', output: '', ...sub });
@@ -67,7 +72,7 @@ export function applyToolEvent(live: LiveTurn, ev: Extract<AgentEvent, { type: '
       else settle({ kind: 'tool', id: ev.toolId, name: ev.toolName, params: ev.params, phase: 'failed', output: ev.output || '', ...sub });
       break;
   }
-  return { ...live, parts };
+  return { ...next, parts };
 }
 
 export const planView = (text: string, decided: PlanView['decided']): PlanView => ({ text, decided });

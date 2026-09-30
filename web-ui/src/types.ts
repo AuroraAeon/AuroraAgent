@@ -197,10 +197,12 @@ export type TuiSettings = {
 export type TodoItem = { text: string; done: boolean };
 export type DiffLine = { type: 'context' | 'add' | 'del' | 'meta'; lineNo: number; text: string };
 export type SubAgentResult = { task: string; ok: boolean; text: string; sessionId: string; rounds: number; tools: number };
+/** 一次 hook 脚本执行痕迹（loop.mjs 的 pre/post_tool_use 汇总进 extra.hooks） */
+export type HookRun = { event: string; path: string; ok: boolean; ms: number; error: string };
 export type ToolImage = { path: string; mime: string; width: number; height: number; url?: string };
 export type ToolShot = ToolImage & { bytes: number; at: number };
 export type ToolActionReceipt = { action: string; ok: boolean; note: string };
-export type ToolExtra = { diff?: DiffLine[]; todos?: TodoItem[]; path?: string; children?: SubAgentResult[]; image?: ToolImage; shot?: ToolShot; actions?: ToolActionReceipt[] };
+export type ToolExtra = { diff?: DiffLine[]; todos?: TodoItem[]; path?: string; children?: SubAgentResult[]; image?: ToolImage; shot?: ToolShot; actions?: ToolActionReceipt[]; hooks?: HookRun[] };
 export type ToolView = { id: string; name: string; params: unknown; phase: 'running' | 'ask' | 'rejected' | 'done' | 'failed'; output: string; requestId?: string; extra?: ToolExtra; subAgent?: boolean; subTask?: string };
 /** 时间线片段：文本段与工具卡交错（历史投影与流式 turn 同形态，切齐两端渲染） */
 export type MsgPart = { kind: 'text'; text: string } | ({ kind: 'tool' } & ToolView);
@@ -219,6 +221,9 @@ export type LiveTurn = {
   usage: { inputTokens: number; outputTokens: number; cost: number; cachedTokens?: number; contextTokens?: number; contextWindow?: number } | null;
   compression: CompressionView | null;
   plan: PlanView | null;
+  /** 已开始冒泡的子代理任务文本（子代理的 tool_event 透出即登记）：据此把 task 卡的子任务行
+   *  从 pending 提到 running——只标记「确实看到它的工具调用在跑」，不猜进度 */
+  subTasks?: string[];
   round: number; startedAt: number;
 };
 

@@ -603,6 +603,15 @@ export async function runAgentTurn(ctx) {
     // post_tool_use：只追加上下文，不改写结果——让模型看到与真实世界不一致的信息比不加钩子更糟
     const post = await fireHook('post_tool_use', { tool: call.name, args: runArgs, ok: out.ok, output: String(out.output).slice(0, 4000) });
     absorbHookExtra(post);
+    // 钩子执行痕迹进 extra.hooks：随转录落盘、随 tool_event 上线，两端各渲染一行「钩子」。
+    // 没有 hook 注册时 logs 为空，一个字节都不多带（不配 hook 的会话看不到任何痕迹）
+    const hookLogs = [...(pre.logs || []), ...(post.logs || [])];
+    if (hookLogs.length) {
+      out.extra = {
+        ...(out.extra && typeof out.extra === 'object' ? out.extra : {}),
+        hooks: hookLogs.map((l) => ({ event: l.event, path: l.path, ok: Boolean(l.ok), ms: Number(l.ms) || 0, error: String(l.error || '') })),
+      };
+    }
     return out;
   };
 
