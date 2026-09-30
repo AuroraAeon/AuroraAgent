@@ -2,7 +2,7 @@
  * LLM 抽象层单元测试（util/llm/*）：工具归一化 + wire 转换 + 错误分类。
  */
 import { normalizeTool, toolAction, toOpenAIFunction, toAnthropicTool } from '../util/llm/tool.mjs';
-import { classifyStatus, classifyError, ERROR_KINDS, QUOTA_WORDING, upstreamHint } from '../util/llm/errors.mjs';
+import { classifyStatus, classifyError, ERROR_KINDS, QUOTA_WORDING, upstreamHint, isContextOverflow } from '../util/llm/errors.mjs';
 import { textOf, systemTextOf, toAnthropicContent, toAnthropicTurns } from '../util/llm/message.mjs';
 import { toolSchemas, anthropicToolSchemas, TOOLS } from '../util/agent/tools.mjs';
 import {
@@ -11,6 +11,7 @@ import {
   FAILOVER_DEFAULTS, FAILOVER_ATTEMPT_LIMITS, FAILOVER_TIMEOUT_DEFAULTS, PREF_TTL_DEFAULTS,
 } from '../util/llm/failover.mjs';
 import { CircuitBreaker, CircuitRegistry, normalizeCircuitConfig, CIRCUIT_DEFAULTS } from '../util/llm/circuit.mjs';
+import { retryableSameProvider, RETRY_DEFAULTS, RETRY_ATTEMPT_LIMITS } from '../util/llm/provider.mjs';
 
 export async function runLlmTests(test, assert, eq) {
   console.log('\nLLM 抽象层单元测试');
@@ -371,5 +372,35 @@ export async function runLlmTests(test, assert, eq) {
     eq(reg.get('p1').config.failureThreshold, 9, '配置热更新生效');
     eq(normalizeCircuitConfig({ failureThreshold: 'x' }).failureThreshold, CIRCUIT_DEFAULTS.failureThreshold, '坏配置回退缺省');
   });
-}
 
+  await test('同提供方重试：只认连接期限流 / 5xx / 网络，中止与熔断不重试', () => {
+    const mk = (kind, extra = {}) => Object.assign(new Error('x'), { kind }, extra);
+    eq(retryableSameProvider(mk('rate_limit')), true, '限流可原地重试');
+    eq(retryableSameProvider(mk('server')), true, '服务端 5xx 可原地重试');
+    eq(retryableSameProvider(mk('network')), true, '网络层失败可原地重试');
+    eq(retryableSameProvider(new TypeError('fetch failed')), true, '尚未分类的 fetch 失败按网络层重试');
+    eq(retryableSameProvider(mk('aborted')), false, '用户主动中止不重试');
+    eq(retryableSameProvider(Object.assign(new Error('x'), { name: 'AbortError' })), false, 'AbortError 不重试');
+    eq(retryableSameProvider(mk('circuit_open')), false, '熔断开闸不重试');
+    eq(retryableSameProvider(mk('semantic')), false, '200 错误 envelope 交给换路判定');
+    eq(retryableSameProvider(mk('auth')), false, '鉴权类重试无意义');
+    eq(retryableSameProvider(mk('quota')), false, '计费类重试无意义');
+    eq(retryableSameProvider(null), false, '空错误不重试');
+    eq(RETRY_DEFAULTS.attempts, 3, '默认 3 次尝试');
+    eq(RETRY_ATTEMPT_LIMITS.min, 1, '最小 1 = 关闭原地重试');
+    eq(RETRY_ATTEMPT_LIMITS.max, 5, '最多 5 次尝试');
+  });
+
+  await test('上下文超长判定：只认窗口溢出措辞，鉴权 / 计费 / 限流不算', () => {
+    const mk = (status, text) => Object.assign(new Error(text), { status, kind: classifyStatus(status, text) });
+    eq(isContextOverflow(mk(400, 'maximum context length is 128000 tokens')), true, '英文窗口溢出');
+    eq(isContextOverflow(mk(400, 'context window exceeded')), true, 'context window exceeded');
+    eq(isContextOverflow(mk(413, 'request entity too large')), true, '载荷过大也算溢出');
+    eq(isContextOverflow(mk(422, 'too many tokens')), true, 'token 数超限也算溢出');
+    eq(isContextOverflow(mk(400, 'invalid api key')), false, '鉴权不是溢出');
+    eq(isContextOverflow(mk(402, 'insufficient quota')), false, '计费不足不是溢出');
+    eq(isContextOverflow(mk(429, 'rate limit exceeded, too many tokens')), false, '限流话术里带 token 也不算溢出');
+    eq(isContextOverflow(mk(500, 'context length exceeded')), false, '服务端 5xx 不按溢出恢复');
+    eq(isContextOverflow(null), false, '空错误不判定');
+  });
+}

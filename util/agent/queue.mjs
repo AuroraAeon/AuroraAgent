@@ -15,6 +15,7 @@
  * 侧边对话（/btw）不入队：它不落盘、不接管 goal，与主对话的互斥语义保持 409 原样。
  */
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, unlinkSync } from 'node:fs';
+import { writeFileAtomic } from '../atomic.mjs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -72,14 +73,10 @@ export class TurnQueue {
     for (const list of this.bySession.values()) {
       for (const item of list) if (LIVE_STATES.includes(item.state)) items.push(item);
     }
-    const tmp = `${this.file}.${process.pid}.tmp`;
     try {
-      mkdirSync(join(this.file, '..'), { recursive: true });
-      writeFileSync(tmp, JSON.stringify({ version: 1, items }, null, 2));
-      renameSync(tmp, this.file);
+      writeFileAtomic(this.file, JSON.stringify({ version: 1, items }, null, 2)); // tmp + fsync + rename + 0600
     } catch (e) {
       this.warn('queue 落盘失败（不影响本次入队）', { error: String(e) });
-      try { if (existsSync(tmp)) unlinkSync(tmp); } catch {}
     }
   }
 

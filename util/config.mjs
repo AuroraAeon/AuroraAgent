@@ -9,8 +9,10 @@ import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { parseGoalConfig } from './agent/goal/config.mjs';
+import { writeFileAtomic } from './atomic.mjs';
 import { parseTuiConfig } from './tui/config.mjs';
 import { parseAgentProxy } from './proxy.mjs';
+import { parseIgnoreConfig } from './ignore.mjs';
 import { parseFailoverConfig, parseFailoverSection, FAILOVER_DEFAULTS } from './llm/failover.mjs';
 
 /** 限时折扣价: 输入 ¥2 / 输出 ¥8 每百万 tokens */
@@ -98,6 +100,10 @@ export function loadConfig({ warn } = {}) {
     goal: parseGoalConfig(saved.goal, warn ? { warn } : {}),
     // tui 段解析（终端标题项序 + 通知三档）落在 tui/config.mjs，同样的单叶容错纪律
     tui: parseTuiConfig(saved.tui, warn ? { warn } : {}),
+    // 忽略文件开关（.auroraagentignore 声明工作目录禁入区）：解析在 ignore.mjs，缺省开
+    ignore: parseIgnoreConfig(saved.ignore),
+    // shell 子进程环境净化（剔除 KEY/TOKEN/SECRET 等凭据形态变量）：缺省开
+    sanitizeChildEnv: saved.sanitizeChildEnv !== false,
     providerFailover: failover.enabled,
     providerFailoverMaxAttempts: failover.maxAttempts,
     // failover 段原样透出（超时三件套 / 熔断五项 / 偏好有效期）：设置页读写与 saveConfig
@@ -113,6 +119,11 @@ function savedFailover() {
     const parsed = parseFailoverConfig(saved, {});
     return { providerFailover: parsed.enabled, providerFailoverMaxAttempts: parsed.maxAttempts };
   } catch { return { providerFailover: FAILOVER_DEFAULTS.enabled, providerFailoverMaxAttempts: FAILOVER_DEFAULTS.maxAttempts }; }
+}
+
+/** 盘上现值（saveConfig 用）：调用方未感知某段时保留盘上原值，防止整体覆写误清 */
+function savedSection(key) {
+  try { return JSON.parse(readFileSync(join(resolveDataDir(), CONFIG_FILE), 'utf8'))[key]; } catch { return undefined; }
 }
 
 /** 盘上现值（saveConfig 用）：调用方未感知 agentProxy 时保留，防止旧调用方整体覆写误清 */
@@ -132,6 +143,8 @@ export function saveConfig(cfg) {
     titleMode: TITLE_MODES.includes(cfg.titleMode) ? cfg.titleMode : DEFAULT_TITLE_MODE,
     goal: parseGoalConfig(cfg.goal),
     tui: parseTuiConfig(cfg.tui),
+    ignore: cfg.ignore !== undefined ? parseIgnoreConfig(cfg.ignore) : (savedSection('ignore') !== undefined ? parseIgnoreConfig(savedSection('ignore')) : parseIgnoreConfig(undefined)),
+    sanitizeChildEnv: cfg.sanitizeChildEnv !== undefined ? cfg.sanitizeChildEnv !== false : savedSection('sanitizeChildEnv') !== false,
     agentProxy: cfg.agentProxy !== undefined ? (parseAgentProxy(cfg.agentProxy) || '') : savedAgentProxy(),
     providerFailover: cfg.providerFailover !== undefined ? parseFailoverConfig(cfg, {}).enabled : savedFailover().providerFailover,
     providerFailoverMaxAttempts: cfg.providerFailoverMaxAttempts !== undefined
@@ -139,5 +152,6 @@ export function saveConfig(cfg) {
     failover: parseFailoverSection(cfg.failover),
   };
   if (!cfg.keyIsOverride) out.apiKey = cfg.apiKey;
-  writeFileSync(join(resolveDataDir(), CONFIG_FILE), JSON.stringify(out, null, 2) + '\n');
+  // 原子落盘 + 0600：配置里可能有 API Key，半截文件与全局可读都是事故（util/atomic.mjs）
+  writeFileAtomic(join(resolveDataDir(), CONFIG_FILE), JSON.stringify(out, null, 2) + '\n');
 }

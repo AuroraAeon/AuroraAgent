@@ -5,6 +5,7 @@
  * 投影（可见历史）由 jsonl 逐行重建，坏行跳过——与 usage.mjs 的容错读取同构。
  */
 import { appendFileSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync, existsSync, statSync } from 'node:fs';
+import { writeFileAtomic } from '../atomic.mjs';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_HARNESS } from './harness.mjs';
@@ -106,9 +107,7 @@ export class SessionStore {
     this.#recordsCache.delete(sid);
     try {
       const p = join(this.dir, `${sid}.jsonl`);
-      const tmp = `${p}.tmp`;
-      writeFileSync(tmp, records.map((r) => JSON.stringify(r)).join('\n') + (records.length ? '\n' : ''));
-      renameSync(tmp, p);
+      writeFileAtomic(p, records.map((r) => JSON.stringify(r)).join('\n') + (records.length ? '\n' : '')); // tmp + fsync + rename + 0600
       return true;
     } catch (e) { this.warn('会话转录重写失败', { id: sid, error: String(e) }); return false; }
   }
@@ -167,9 +166,7 @@ export class SessionStore {
 
   #writeMeta(meta) {
     try {
-      const tmp = `${this.#metaPath(meta.id)}.tmp`;
-      writeFileSync(tmp, JSON.stringify(meta, null, 2));
-      renameSync(tmp, this.#metaPath(meta.id));
+      writeFileAtomic(this.#metaPath(meta.id), JSON.stringify(meta, null, 2)); // tmp + fsync + rename + 0600
     } catch (e) { this.warn('会话元信息写入失败', { id: meta.id, error: String(e) }); }
   }
 }

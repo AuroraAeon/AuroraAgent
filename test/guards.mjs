@@ -37,7 +37,9 @@ function productFiles() {
 }
 
 const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{1F1E6}-\u{1F1FF}]/u;
-const ALLOWED_GLYPHS = new Set(['✓', '✗', '❯', '←', '→', '↑', '↓', '▼', '·', '…', '—', '─', '│', '╭', '╮', '╰', '╯', '▶', '◀', '★']);
+const ALLOWED_GLYPHS = new Set(['✓', '✗', '❯', '←', '→', '↑', '↓', '▼', '·', '…', '—', '─', '│', '╭', '╮', '╰', '╯', '▶', '◀', '★', '\u{1F512}']);
+// \u{1F512} 锁形符号：util/ignore.mjs 的忽略闸门命中标记（LOCK_TEXT_SYMBOL），
+// 与上游 Cline 的 LOCK_TEXT_SYMBOL 同字形——工具输出里要能一眼看出「被禁入区挡住」
 
 export function guardNoEmoji() {
   const bad = [];

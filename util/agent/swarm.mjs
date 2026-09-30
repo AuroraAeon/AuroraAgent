@@ -21,6 +21,7 @@ export function createSpawner(ctx) {
     runTurn, store, usage, provider, model, harness, skills = [], builtinPrice,
     emit, controller, requestPermission, permissionMode = 'ask_when_needed', titleMode = 'local',
     rules = [], gen = {}, extraTools = [], workspace = '', depth = 0, agentProxy = '', log = () => {},
+    sanitizeChildEnv = true, ignoreEnabled = true,
     providerFailover = true, providerFailoverMaxAttempts, failoverCandidates = null,
   } = ctx;
 
@@ -55,6 +56,7 @@ export function createSpawner(ctx) {
         planMode: false, // 计划是父层契约，子代理直接执行
         depth: depth + 1,
         agentProxy, // 子代理与父层共用同一条本机代理出站
+        sanitizeChildEnv, ignoreEnabled, // 环境净化与忽略闸门开关随派发继承
         providerFailover, providerFailoverMaxAttempts, failoverCandidates, // 故障转移配置与候选源随派发继承
         log,
       });

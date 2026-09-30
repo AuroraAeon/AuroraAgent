@@ -208,6 +208,8 @@ export default function App() {
     try {
       await runTurn({ sessionId, input: text, opId }, (ev) => {
         if (ev.type === 'turn_queued') { void refreshQueue(sessionId); return; }
+        // 已被当前 turn 吸收（steering）：不开新回合，队列条刷新后即消失
+        if (ev.type === 'turn_steered') { void refreshQueue(sessionId); return; }
         buf.push(ev);
         if (!flushing) { flushing = true; void flush(); }
       });

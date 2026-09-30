@@ -14,6 +14,7 @@
  *  - 文件损坏 / 缺失按空任务表处理并告警，绝不因为 jobs.json 坏掉挡住服务启动。
  */
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, unlinkSync } from 'node:fs';
+import { writeFileAtomic } from '../atomic.mjs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { nextCronRun } from './cron-expr.mjs';
@@ -118,14 +119,10 @@ export class JobStore {
 
   #flush() {
     const jobs = [...this.jobs.values()];
-    const tmp = `${this.file}.${process.pid}.tmp`;
     try {
-      mkdirSync(join(this.file, '..'), { recursive: true });
-      writeFileSync(tmp, JSON.stringify({ version: 1, jobs }, null, 2));
-      renameSync(tmp, this.file);
+      writeFileAtomic(this.file, JSON.stringify({ version: 1, jobs }, null, 2)); // tmp + fsync + rename + 0600
     } catch (e) {
       this.warn('jobs 落盘失败（不影响本次变更）', { error: String(e) });
-      try { if (existsSync(tmp)) unlinkSync(tmp); } catch {}
     }
   }
 

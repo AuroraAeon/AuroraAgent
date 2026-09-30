@@ -11,10 +11,29 @@ import {
   FAILOVER_DEFAULTS, FAILOVER_ATTEMPT_LIMITS,
 } from './failover.mjs';
 
-/** 连接期重试的默认参数（与历史语义一致：仅网络层失败重试，500ms 递增）。
- *  故障转移开启时改为每提供方只试一次——同提供方重试 3 次再换路会把最坏耗时叠成 ~9s，
- *  而网络层抖动换一家往往更快（对齐 CC Switch：每个 Provider 只尝试一次） */
-const RETRY_OPTS = { attempts: 3 };
+/** 同提供方内重试的默认参数（连接期零产出时的韧性，对齐 Cline 的 retry 配置）：
+ *  默认 3 次尝试（首次 + 2 次原地重试），退避 500ms 起指数增长、封顶 8s。
+ *  仅「流尚未打开、未向调用方发出任何字节」且错误分类为限流 / 5xx / 网络层时重试——
+ *  400 / 鉴权 / 计费类是请求自身的问题，重试只会放大错误（与 failover.mjs 的不转移判定同语义）。
+ *  故障转移开启且仍能换路时不原地重试：换一家往往比在同一家退避等待更快（保持
+ *  「每个 Provider 只尝试一次」的既有语义）；没有别家可接时才回落到原地重试。 */
+export const RETRY_DEFAULTS = { attempts: 3, backoffMs: 500, maxBackoffMs: 8000 };
+/** 原地重试次数钳制范围（1 = 关闭原地重试） */
+export const RETRY_ATTEMPT_LIMITS = { min: 1, max: 5 };
+
+/** 可原地重试判定：连接期零产出 + 限流 / 服务端 5xx / 网络层失败。
+ *  中止（用户主动停止）与熔断开闸绝不重试；200 错误 envelope（semantic）留给换路判定。 */
+export function retryableSameProvider(err) {
+  if (!err) return false;
+  if (err.name === 'AbortError' || err.kind === 'aborted' || err.kind === 'circuit_open' || err.kind === 'semantic') return false;
+  if (err.kind === 'rate_limit' || err.kind === 'server' || err.kind === 'network') return true;
+  return err.name === 'TypeError'; // fetch 网络层失败（尚未分类时）
+}
+
+/** 第 n 次原地重试前的退避（n 从 1 起）：500ms → 1s → 2s → 4s → 封顶 8s */
+function retryBackoffMs(n) {
+  return Math.min(RETRY_DEFAULTS.backoffMs * 2 ** Math.max(0, n - 1), RETRY_DEFAULTS.maxBackoffMs);
+}
 
 /** 全部候选提供方都已熔断：不转移、不计健康度，直接告知用户 */
 function circuitOpenError(provider) {
@@ -35,7 +54,7 @@ function settleCircuit(circuit, providerId, permit, err) {
 async function openOnce(provider, opts, io = {}) {
   const wire = buildChatRequest(provider, opts);
   const resp = await fetchUpstream(wire, {
-    attempts: io.attempts,
+    attempts: 1,
     signal: io.signal,
     timeoutMs: io.nonStreamMs,
     onRetry: io.onRetry,
@@ -60,7 +79,7 @@ async function openOnce(provider, opts, io = {}) {
  * 打开一条上游对话流（可带多提供方故障转移）。
  * @param provider 提供方记录（含 protocol / baseUrl / apiKey / builtin）
  * @param opts     buildChatRequest 的 opts（model / messages / toolNames / extraTools / gen 参数）
- * @param io       { signal, onRetry, retryAttempts, nonStreamMs,
+ * @param io       { signal, onRetry, retryAttempts（同提供方内重试次数，默认 3）, nonStreamMs,
  *                   prime(reader, translate, signal) => reader,
  *                   circuit(CircuitRegistry),
  *                   failover: { enabled, maxAttempts, backoffMs, queue,
@@ -79,6 +98,12 @@ export async function openChatStream(provider, opts, io = {}) {
   );
   // 关闭转移时不查熔断器：不转移就不做健康判断，行为与接入前完全一致
   const circuit = enabled ? (io.circuit || null) : null;
+  // 同提供方内重试预算：io.retryAttempts 可覆盖（goal evaluator 等场景传更小值）
+  const retryAttempts = Math.min(
+    RETRY_ATTEMPT_LIMITS.max,
+    Math.max(RETRY_ATTEMPT_LIMITS.min, Number(io.retryAttempts) || RETRY_DEFAULTS.attempts),
+  );
+  const usedRetries = new Map(); // providerId -> 已用原地重试次数（换路后新提供方重新计数）
   const tried = [];
   let current = provider;
   for (let attempt = 1; ; attempt++) {
@@ -99,20 +124,28 @@ export async function openChatStream(provider, opts, io = {}) {
       continue;
     }
     try {
-      const opened = await openOnce(current, opts, {
-        ...io,
-        attempts: enabled ? 1 : (io.retryAttempts !== undefined ? io.retryAttempts : RETRY_OPTS.attempts),
-      });
+      const opened = await openOnce(current, opts, { ...io, attempts: 1 });
       circuit?.recordSuccess(current.id, permit.usedHalfOpenPermit);
       return opened;
     } catch (e) {
       settleCircuit(circuit, current.id, permit.usedHalfOpenPermit, e);
-      // 未开启 / 次数用尽 / 不可转移 / 已中止：原样抛出，行为与本模块接入前一致
-      if (!enabled || attempt >= maxAttempts || io.signal?.aborted || !isFailoverable(e)) throw e;
-      const next = pickFailoverCandidate(fo.candidates(current), {
+      const switchable = enabled && attempt < maxAttempts && !io.signal?.aborted && isFailoverable(e);
+      const next = switchable ? pickFailoverCandidate(fo.candidates(current), {
         model: opts.model, currentId: current.id, tried, queue: fo.queue,
         available: (id) => circuit ? circuit.isAvailable(id) : null,
-      });
+      }) : null;
+      // 换不到别家（或未开启转移）且错误可原地重试：退避后重试同一家。
+      // attempt 不递增——原地重试不消耗换路预算，两家机制互不挤占
+      const spare = retryAttempts - 1 - (usedRetries.get(current.id) || 0);
+      if (!next && spare > 0 && !io.signal?.aborted && retryableSameProvider(e)) {
+        const n = (usedRetries.get(current.id) || 0) + 1;
+        usedRetries.set(current.id, n);
+        io.onRetry?.(n, e);
+        const wait = retryBackoffMs(n);
+        if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+        continue;
+      }
+      // 未开启 / 次数用尽 / 不可转移 / 已中止：原样抛出，行为与本模块接入前一致
       if (!next) throw e; // 没有别的提供方能接这个模型：把最后一次真实错误抛给调用方
       const failed = current;
       tried.push(failed.id);

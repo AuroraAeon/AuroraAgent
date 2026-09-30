@@ -6,7 +6,7 @@
 import { join } from 'node:path';
 import { rmSync } from 'node:fs';
 import { SessionStore } from './session.mjs';
-import { runAgentTurn } from './loop.mjs';
+import { runAgentTurn, createModelSteer } from './loop.mjs';
 import { getHarness, harnessSummaries } from './harness.mjs';
 import { sseFrame } from './events.mjs';
 import { GoalStore, GoalConflictError } from './goal/store.mjs';
@@ -191,7 +191,10 @@ export function createAgentApi(deps) {
     const titleMode = TITLE_MODES.includes(body.titleMode) ? body.titleMode
       : got.meta.titleMode !== undefined ? got.meta.titleMode : cfg.titleMode;
     const controller = new AbortController();
-    activeTurns.set(sessionId, { controller, side });
+    // 用户中途发言（steering）：Loop 每轮把模型流中断器绑到它身上，HTTP 面在活跃 turn
+    // 收到新提交时 request()——只断当前模型流，不杀在跑工具（loop.mjs 的 createModelSteer）
+    const modelSteer = createModelSteer();
+    activeTurns.set(sessionId, { controller, side, modelSteer });
     // 队列接力的流已在入队回执里写过头部，只能写一次（重复 writeHead 会抛 HEADERS_SENT）
     if (res && !res.headersSent) res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' });
     const emit = (type, payload) => { if (res && !res.writableEnded) res.write(sseFrame(type, payload)); };
@@ -221,12 +224,14 @@ export function createAgentApi(deps) {
         gen: { maxTokens: cfg.maxTokens, temperature: cfg.temperature, thinkingOn: body.thinking !== false },
         emit, controller, permissionMode, planMode, titleMode, extraTools: extraToolsFor(harness, side, sessionId),
         agentProxy: cfg.agentProxy,
+        ignoreEnabled: cfg.ignore?.enabled !== false, sanitizeChildEnv: cfg.sanitizeChildEnv !== false,
         providerFailover: cfg.providerFailover, providerFailoverMaxAttempts: cfg.providerFailoverMaxAttempts,
         failoverCandidates,
         failoverState,
         // 生效超时：故障转移关闭时归零（effectiveTimeouts 单点保证），关闭即完全回到老行为
         failoverTimeouts: effectiveTimeouts(parseFailoverConfig(cfg, {})),
         failoverQueue,
+        modelSteer,
         goalStore: side ? null : goals, goalCfg: cfg.goal,
         requestPermission: ({ requestId }) => new Promise((resolve) => {
           pendingPermissions.set(requestId, { resolve, sessionId });
@@ -243,6 +248,13 @@ export function createAgentApi(deps) {
     } finally {
       unsubJobs();
       cleanupPermissions();
+      // 中途发言未被本轮消化（计划驳回 / 异常收尾 / 恰好赶在收尾之后）：还回队列由泵接力，
+      // 绝不吞掉用户已经发出来的消息
+      const leftover = modelSteer.take();
+      if (leftover) {
+        queue.enqueue(sessionId, { opId: newOpId(), text: leftover, body: { input: leftover } });
+        log('info', '中途发言未被本轮消化，已还回队列', { sessionId });
+      }
       activeTurns.delete(sessionId);
       if (opId && queue.find(sessionId, opId)) queue.finish(sessionId, opId, turnFailed ? 'failed' : 'done');
       // 队列接力：先让出 activeTurns，再摘牌下一条（!has 的二次判断防延迟清理吞掉新工作）
@@ -583,6 +595,16 @@ export function createAgentApi(deps) {
         const emit = (type, payload) => { if (!res.writableEnded) res.write(sseFrame(type, payload)); };
         emit('turn_queued', { sessionId, opId: receipt.item.opId, position: receipt.position, input: raw, duplicate: receipt.duplicate });
         if (receipt.duplicate) { try { res.end(); } catch {} return; }
+        // 用户中途发言（steering）：这条消息并入正在跑的 turn（中断当前模型流、保留已生成内容），
+        // 队列项随即被吸收——泵不会再单独跑它一轮，用户也不必等当前任务结束就能纠偏
+        if (active.modelSteer?.request(raw)) {
+          queue.remove(sessionId, receipt.item.opId);
+          emit('turn_steered', { sessionId, opId: receipt.item.opId, input: raw });
+          try { res.end(); } catch {}
+          publishQueue(sessionId);
+          log('info', '用户中途发言，已并入当前 turn', { sessionId, opId: receipt.item.opId });
+          return;
+        }
         waitingStreams.set(receipt.item.opId, res);
         // 客户端断开：还在排队（未开跑）就摘掉，别让无人认领的流占着队列
         res.on('close', () => {

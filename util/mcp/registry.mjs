@@ -5,7 +5,8 @@
  *                 → 供 loop 的 extraTools 进入请求与执行；每个 MCP 工具经 policy 门控（默认 ask）。
  * 单个服务器连接失败不阻塞其他服务器：错误随 status 透出，UI 与终端可见。
  */
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
+import { writeFileAtomic } from '../atomic.mjs';
 import { join } from 'node:path';
 import { connectMcp, callResultText } from './client.mjs';
 
@@ -21,12 +22,9 @@ export function loadMcpServers(dataDir) {
   } catch { return []; }
 }
 
-/** 原子落盘（tmp + rename） */
+/** 原子落盘（tmp + fsync + rename + 0600，见 util/atomic.mjs）：服务器配置的 env 里可能带密钥 */
 export function saveMcpServers(dataDir, servers) {
-  mkdirSync(dataDir, { recursive: true });
-  const tmp = join(dataDir, `${MCP_FILE}.tmp`);
-  writeFileSync(tmp, JSON.stringify({ servers }, null, 2));
-  renameSync(tmp, join(dataDir, MCP_FILE));
+  writeFileAtomic(join(dataDir, MCP_FILE), JSON.stringify({ servers }, null, 2));
 }
 
 /** 传输类型归一化（对齐 OpenBitFun v1.0.2 #3156 / #3164）：MCP 生态里 streamableHttp 是事实标准拼写，

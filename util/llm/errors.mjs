@@ -27,6 +27,22 @@ export function classifyError(err) {
   return 'unknown';
 }
 
+/** 上下文窗口超长的上游措辞（OpenAI / Anthropic / 中转网关的常见说法，跨协议归纳） */
+const CONTEXT_OVERFLOW_WORDING = /context.{0,16}(?:length|window|limit|size)|too many tokens|maximum context|prompt is too long|request.{0,24}too (?:large|long)|tokens?\s*>\s*\d+|reduce the length/i;
+
+/**
+ * 是否「上下文超长」类错误：压缩一次后原样重放本轮即可恢复（对齐 Cline 的
+ * context-window 恢复路径）。只在 400 / 413 / 422 且措辞命中时判定——宽泛匹配会把
+ * 普通 400 也拖去压缩，白费一轮模型调用。
+ */
+export function isContextOverflow(err) {
+  if (!err) return false;
+  if (err.kind === 'auth' || err.kind === 'quota' || err.kind === 'rate_limit') return false;
+  const status = Number(err.status) || 0;
+  if (status && status !== 400 && status !== 413 && status !== 422) return false;
+  return CONTEXT_OVERFLOW_WORDING.test(String(err.message || ''));
+}
+
 /**
  * 上游错误的中文提示：内置提供方保留美团专属指引，自定义提供方指向设置页。
  * /api/chat 与 Agent Loop 共用，保证两条路径的错误话术一致。

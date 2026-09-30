@@ -21,8 +21,10 @@ export const ERROR_LOG_MAX_LINES = 200;
 export const ERROR_LOG_DETAIL_MAX_BYTES = 4096;
 /** message 上限：错误摘要一行说清，超长按字节截断 */
 export const ERROR_LOG_MESSAGE_MAX_BYTES = 1024;
-/** kind 白名单：只认这几种来源，其它值归一为 backend（不落任意字符串） */
-export const ERROR_LOG_KINDS = ['frontend_crash', 'frontend_unhandled', 'backend', 'backend_request'];
+/** kind 白名单：只认这几种来源，其它值归一为 backend（不落任意字符串）。
+ *  http_guard = 本地请求守卫拒绝的跨站 / 伪造 Host 请求（见 util/http-guard.mjs）——
+ *  本机出现这类流量意味着有恶意页面在试探本地服务，必须留痕可查 */
+export const ERROR_LOG_KINDS = ['frontend_crash', 'frontend_unhandled', 'backend', 'backend_request', 'http_guard'];
 
 export function normalizeErrorKind(kind) {
   return ERROR_LOG_KINDS.includes(kind) ? kind : 'backend';

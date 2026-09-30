@@ -38,6 +38,8 @@ import { runHighlightTests } from './highlight.mjs';
 import { runMarkdownTests } from './markdown.mjs';
 import { runProxyTests, startFetchFixtures } from './proxy.mjs';
 import { runConfigTests } from './config.mjs';
+import { runHttpGuardTests } from './http-guard.mjs';
+import { runIgnoreTests } from './ignore.mjs';
 import { runTuiComponentTests } from './tui-components.mjs';
 import { runPickTests } from './pick.mjs';
 import { runSkillsTests } from './skills.mjs';
@@ -111,6 +113,8 @@ await runHighlightTests(test, assert, eq);
 await runMarkdownTests(test, assert, eq);
 await runProxyTests(test, assert, eq);
 await runConfigTests(test, assert, eq);
+await runHttpGuardTests(test, assert, eq);
+await runIgnoreTests(test, assert, eq);
 await runTuiComponentTests(test, assert, eq);
   await runPickTests(test, assert, eq);
   await runSkillsTests(test, assert, eq);
@@ -1147,10 +1151,16 @@ const toolFrames = (name, args) => [
 ];
 
 /** 一次性 loop 运行环境：临时数据目录 + stub fetch + 事件收集 */
-async function runLoopOnce({ framesByCall, harness = getHarness('standard'), permission = 'allow', seedRecords = [], providerExtra = {}, input = '开始', planMode = false, planDecision = 'approve', sessionName = '', titleMode = 'local', agentProxy = '' }) {
+async function runLoopOnce({ framesByCall, harness = getHarness('standard'), permission = 'allow', seedRecords = [], providerExtra = {}, input = '开始', planMode = false, planDecision = 'approve', sessionName = '', titleMode = 'local', agentProxy = '', wsFiles = {}, ignoreFile = '', sanitizeChildEnv } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'mt-loop-'));
   const ws = join(dir, 'workspace');
   mkdirSync(ws, { recursive: true });
+  for (const [rel, text] of Object.entries(wsFiles)) {
+    const abs = join(ws, rel);
+    mkdirSync(dirname(abs), { recursive: true });
+    writeFileSync(abs, text);
+  }
+  if (ignoreFile) writeFileSync(join(ws, '.auroraagentignore'), ignoreFile);
   const store = new SessionStore(dir);
   const usage = new UsageLedger(dir);
   const session = store.create({ name: sessionName, model: 'm1', harness: harness.id, workspace: ws });
@@ -1180,6 +1190,7 @@ async function runLoopOnce({ framesByCall, harness = getHarness('standard'), per
     planMode,
     titleMode,
     agentProxy,
+    sanitizeChildEnv,
     requestPlanDecision: async () => planDecision,
     log: () => {},
   }).finally(() => { globalThis.fetch = realFetch; });
@@ -1217,6 +1228,46 @@ console.log('\n本机代理 Loop 单测');
     fx.close();
   }
 }
+
+await test('Loop：相邻只读工具并行重叠、写工具串行，结果顺序与模型给出的一致', async () => {
+  const multiTool = (calls) => [
+    { choices: [{ index: 0, delta: { tool_calls: calls.map((c, i) => ({ index: i, id: c.id, type: 'function', function: { name: c.name, arguments: JSON.stringify(c.args) } })) } }] },
+    { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 1, completion_tokens: 1 } },
+  ];
+  const { ws, events, requests, result } = await runLoopOnce({
+    wsFiles: { 'a.txt': 'AAA', 'b.txt': 'BBB' },
+    framesByCall: (n) => (n === 0 ? multiTool([
+      { id: 'c1', name: 'read_file', args: { path: 'a.txt' } },
+      { id: 'c2', name: 'read_file', args: { path: 'b.txt' } },
+      { id: 'c3', name: 'write_file', args: { path: 'c.txt', content: 'CCC' } },
+    ]) : textFrames('完成')),
+  });
+  eq(result.text, '完成', 'turn 应正常收尾');
+  const phases = events.filter((e) => e.type === 'tool_event').map((e) => `${e.phase}:${e.toolId}`);
+  // 两个只读调用并行：两条 started 都早于各自的 completed（串行会是 started→completed 交替）
+  eq(phases.indexOf('started:c1') < phases.indexOf('started:c2'), true, '两条 started 连续发出（并行段）');
+  eq(phases.indexOf('started:c2') < phases.indexOf('completed:c1'), true, '第二条 started 早于第一条 completed（重叠执行）');
+  eq(phases.indexOf('completed:c1') < phases.indexOf('started:c3'), true, '写工具在只读段收尾后才开始（串行）');
+  // 回填顺序严格按 c1 c2 c3：上游按 tool_call_id 匹配，错位即 400
+  const toolIds = requests[1].body.messages.filter((m) => m.role === 'tool').map((m) => m.tool_call_id);
+  eq(JSON.stringify(toolIds), JSON.stringify(['c1', 'c2', 'c3']), 'tool 消息顺序必须与模型给出的一致');
+  eq(readFileSync(join(ws, 'c.txt'), 'utf8'), 'CCC', '写工具应真的落地');
+});
+
+await test('Loop：命中忽略规则的文件工具被拒（禁入区不进上下文）', async () => {
+  const { events, requests } = await runLoopOnce({
+    wsFiles: { 'app.pem': 'SECRET', 'ok.txt': 'fine' },
+    ignoreFile: '*.pem\n',
+    framesByCall: [
+      toolFrames('read_file', { path: 'app.pem' }),
+      textFrames('已了解'),
+    ],
+  });
+  const failed = events.find((e) => e.type === 'tool_event' && e.phase === 'failed');
+  assert(failed && failed.output.includes('禁入区'), '读禁入区文件应失败并说明原因，实际: ' + (failed && failed.output.slice(0, 80)));
+  const toolMsg = requests[1].body.messages.find((m) => m.role === 'tool');
+  assert(!String(toolMsg.content).includes('SECRET'), '禁入区内容绝不能进上下文');
+});
 
 console.log('\n转录投影层单元测试');
 await test('transcript: 工具标签覆盖内置 / 技能 / 子代理 / MCP 推导', () => {
@@ -1403,7 +1454,7 @@ await test('Loop：模型标题失败回退本地推导且不记标题账', asyn
     harness: getHarness('minimal'),
     titleMode: 'model',
   });
-  eq(requests.length, 2, '标题请求应真实发出');
+  eq(requests.length, 4, '标题请求的 5xx 应按同提供方重试再失败（首次 + 2 次原地重试）');
   eq(store.list()[0].name, '帮我把 README 的安装章…', '失败应回退本地推导');
   assert(events.some((e) => e.type === 'session_renamed' && e.mode === 'model'), '仍应推送改名事件');
   eq(usage.read().length, 1, '失败的标题请求不记账');
@@ -1675,6 +1726,8 @@ await test('错误日志：环形保留、坏行容错与清空', () => {
 await test('错误日志：kind 白名单归一化', () => {
   eq(normalizeErrorKind('frontend_unhandled'), 'frontend_unhandled');
   eq(normalizeErrorKind('frontend_crash'), 'frontend_crash');
+  eq(normalizeErrorKind('backend_request'), 'backend_request');
+  eq(normalizeErrorKind('http_guard'), 'http_guard', '守卫拒绝流量是独立 kind（留痕可查）');
   eq(normalizeErrorKind('任意字符串'), 'backend');
   eq(normalizeErrorKind(undefined), 'backend');
 });
@@ -5901,6 +5954,32 @@ await test('/app 防目录穿越（原始 socket 不过滤 ..）', async () => {
     sock.on('error', () => done(''));
   });
   assert(raw.startsWith('HTTP/1.1 403'), '目录穿越必须 403，实际: ' + raw.slice(0, 40));
+});
+
+await test('本地请求守卫：伪造 Host / 异源 Origin / 跨站提交一律 403，豁免路径照常', async () => {
+  const net = await import('node:net');
+  const rawOnce = (path, headers) => new Promise((done) => {
+    const sock = net.connect(WEB_PORT, '127.0.0.1', () => {
+      sock.write(`GET ${path} HTTP/1.1\r\n${headers}\r\nConnection: close\r\n\r\n`);
+    });
+    let buf = '';
+    sock.on('data', (d) => { buf += d; });
+    sock.on('end', () => done(buf));
+    sock.on('error', () => done(''));
+  });
+  const evilHost = await rawOnce('/api/status', 'Host: evil.com');
+  assert(evilHost.startsWith('HTTP/1.1 403'), '伪造 Host（DNS rebinding）应 403，实际: ' + evilHost.slice(0, 60));
+  assert(evilHost.includes('forbidden_origin'), '拒绝话体应带 forbidden_origin');
+  const crossOrigin = await rawOnce('/api/status', `Host: 127.0.0.1:${WEB_PORT}\r\nOrigin: https://evil.com`);
+  assert(crossOrigin.startsWith('HTTP/1.1 403'), '异源 Origin 应 403');
+  const crossSite = await rawOnce('/api/status', `Host: 127.0.0.1:${WEB_PORT}\r\nSec-Fetch-Site: cross-site`);
+  assert(crossSite.startsWith('HTTP/1.1 403'), '无 Origin 的跨站提交应 403');
+  const health = await rawOnce('/api/health', 'Host: evil.com');
+  assert(health.startsWith('HTTP/1.1 200'), '豁免路径（健康检查）即使 Host 坏也放行');
+  const sameOrigin = await rawOnce('/api/health', `Host: 127.0.0.1:${WEB_PORT}\r\nOrigin: http://127.0.0.1:${WEB_PORT}`);
+  assert(sameOrigin.startsWith('HTTP/1.1 200'), '同源请求照常放行');
+  const logs = await (await fetch(`${BASE}/api/logs/errors`)).json();
+  assert(logs.entries.some((e) => e.kind === 'http_guard'), '守卫拒绝应留痕 http_guard 错误日志');
 });
 
   await test('未知路径 404', async () => {

@@ -6,6 +6,7 @@
  * 与 llm/failover-state.mjs 的运行时观测（熔断 / 热切换偏好）分工，互不覆盖。
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { writeFileAtomic } from './atomic.mjs';
 import { join } from 'node:path';
 import { catalogProviders, catalogPresetDraft, SUPPORTED_FORMATS } from './provider-catalog.mjs';
 
@@ -248,11 +249,8 @@ export class ProviderStore {
 
   #save() {
     const payload = JSON.stringify({ version: 1, providers: this.custom, failoverQueue: this.failoverQueue }, null, 2);
-    const tmp = `${this.path}.tmp`;
     try {
-      mkdirSync(join(this.path, '..'), { recursive: true });
-      writeFileSync(tmp, payload);
-      renameSync(tmp, this.path);
+      writeFileAtomic(this.path, payload); // tmp + fsync + rename + 0600（util/atomic.mjs）
     } catch (e) {
       throw new ProviderError(`提供方配置写入失败：${e.message}（请检查数据目录权限）`);
     }

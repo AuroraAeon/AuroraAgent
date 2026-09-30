@@ -9,11 +9,13 @@
  */
 import { randomUUID } from 'node:crypto';
 import { openChatStream } from '../llm/provider.mjs';
+import { isContextOverflow } from '../llm/errors.mjs';
 import { consumeAgentStream, primeUpstreamStream } from '../stream.mjs';
 import { resolveTool, toolResource, toolMessageContent } from './tools.mjs';
 import { findSkill } from './skills.mjs';
 import { PermissionPolicy, defaultRules } from './policy.mjs';
 import { createSpawner } from './swarm.mjs';
+import { IgnoreController } from '../ignore.mjs';
 import { deriveTitle } from './title.mjs';
 import { generateTitleText } from './title-model.mjs';
 import { DEFAULT_SESSION_NAME } from './session.mjs';
@@ -34,6 +36,40 @@ function settlePrice(provider, builtinPrice) {
   };
 }
 
+/** 回答触达长度上限后的续写提醒（finish_reason=length 且无工具调用时追加一次） */
+const LENGTH_CONTINUE_NOTE = '【续写要求】上一轮回答因长度上限被截断。请在已生成内容基础上直接续写余下部分：不要重复已写内容、不要复述前文、不要调用工具。';
+
+/**
+ * 用户中途发言（steering）状态：HTTP 面在活跃 turn 收到新提交时调 request(text)。
+ * 语义：只中断当前模型流（已生成内容保留、在跑的工具不受影响），发言并入上下文后
+ * 继续同一个 turn——用户不必等当前任务跑完就能纠偏（对齐 Cline 的 message steering）。
+ * 直接调 runAgentTurn 的旧调用方（测试 / 终端单次提问）不传即内部自建，行为空转。
+ */
+export function createModelSteer() {
+  const state = { pending: '', abort: null, streaming: false };
+  return {
+    get pending() { return state.pending; },
+    /**
+     * 记下发言并打断当前模型流。只在「有模型流在飞」时接受——返回 true 表示这条消息已被
+     * 当前 turn 吸收（调用方应从队列摘掉它）；权限等待 / 工具执行期间没有流可断，返回 false
+     * 让调用方照旧入队由泵接力（#3212 / #3220 的队列语义不受插话影响）。
+     */
+    request(text) {
+      const t = String(text || '').trim();
+      if (!t || !state.streaming) return false;
+      state.pending = state.pending ? `${state.pending}\n${t}` : t;
+      state.abort?.abort(new Error('用户中途发言'));
+      return true;
+    },
+    /** 取走并清空待消化发言（Loop 在轮边界消费） */
+    take() { const t = state.pending; state.pending = ''; return t; },
+    /** 绑定本轮模型流中断器（每轮开头由 Loop 调用） */
+    bind(abort) { state.abort = abort; state.streaming = true; },
+    /** 模型流阶段结束：此后的提交走队列，不抢话 */
+    release() { state.abort = null; state.streaming = false; },
+  };
+}
+
 /**
  * 跑一个 turn。
  * @param ctx {
@@ -43,6 +79,7 @@ function settlePrice(provider, builtinPrice) {
  *   requestPermission({ toolId, toolName, params, resource }) => 'allow'|'deny'|'always',
  *   requestPlanDecision({ plan }) => 'approve'|'reject'（计划模式必传；缺省即不走计划阶段）,
  *   permissionMode = 'ask_when_needed', planMode = false,
+ *   ignoreEnabled = true（.auroraagentignore 禁入区闸门）, sanitizeChildEnv = true（shell 子进程 env 净化）,
  *   log(level, msg, extra)
  * }
  * @returns {{ turnId, text, rounds, tools, cancelled?, failed?, planRejected? }}
@@ -53,6 +90,10 @@ export async function runAgentTurn(ctx) {
     gen = {}, skills = [], extraTools = [], inputSkill = '', emit, controller, requestPermission, requestPlanDecision,
     permissionMode = 'ask_when_needed', planMode = false, titleMode = DEFAULT_TITLE_MODE, depth = 0,
     agentProxy = '', goalStore = null, goalCfg = null, log = () => {},
+    // 忽略文件闸门开关与 shell 子进程环境净化（配置段见 util/config.mjs）：缺省开
+    ignoreEnabled = true, sanitizeChildEnv = true,
+    // 用户中途发言（steering）状态：HTTP 面持有同一对象，活跃 turn 收到新提交时 request()
+    modelSteer = null,
     // 多提供方故障转移：candidates 由 HTTP 面按模型目录注入（直连 Loop 的旧调用方不传即不转移）
     providerFailover = true, providerFailoverMaxAttempts = FAILOVER_DEFAULTS.maxAttempts, failoverCandidates = null,
     // 熔断器 + 生效超时 + 队列：都由 HTTP 面按配置算好后注入（failover-state.mjs / failover.mjs），
@@ -60,6 +101,7 @@ export async function runAgentTurn(ctx) {
     failoverState = null, failoverTimeouts = null, failoverQueue = null,
   } = ctx;
   const sessionId = session.id;
+  const steer = modelSteer || createModelSteer();
   const turnId = randomUUID();
   const started = Date.now();
   // turn 内粘性：连接期故障转移成功后，后续轮次继续用新提供方（activeProvider），
@@ -192,10 +234,11 @@ export async function runAgentTurn(ctx) {
   const allTools = goalRt ? [...extraTools, ...goalRt.tools] : extraTools;
   if (goalRt) goalRt.bindSpawn(spawn); // 验证档 subagent 派发只读验证子代理
 
-  /** 超长时把早期记录折叠成一条 summary（压缩本身花一轮模型调用，失败不阻塞主流程） */
-  const maybeCompact = async () => {
+  /** 超长时把早期记录折叠成一条 summary（压缩本身花一轮模型调用，失败不阻塞主流程）。
+   *  force=true 时跳过阈值判断（上游已明示上下文超长，estimated 口径偏小也要压） */
+  const maybeCompact = async (force = false) => {
     const messages = assembleMessages({ harness, workspace: session.workspace, records, skills });
-    if (!needsCompaction(messages, { windowTokens: contextWindowOf(activeProvider), ratio: harness.compactRatio })) return;
+    if (!force && !needsCompaction(messages, { windowTokens: contextWindowOf(activeProvider), ratio: harness.compactRatio })) return;
     const plan = planCompaction(records);
     if (!plan) return;
     emit('context_compression_started', { sessionId, turnId, headRecords: plan.head.length });
@@ -248,6 +291,9 @@ export async function runAgentTurn(ctx) {
   };
   if (inputSkill) { skillsLoaded.add(inputSkill); grantSkillTools(inputSkill); }
 
+  // 忽略文件闸门（util/ignore.mjs）：按会话工作目录加载 .auroraagentignore 并热加载，
+  // 文件类工具在 resolveInside 之后过闸。子代理各自 turn 各持一份（工作目录相同则规则相同）
+  const ignore = ignoreEnabled ? new IgnoreController({ workspace: session.workspace, log }).load() : null;
   let messages = assembleMessages({ harness, workspace: session.workspace, records, skills });
   let round = 0;
   let finalText = '';
@@ -255,116 +301,220 @@ export async function runAgentTurn(ctx) {
   let finished = false;
   let currentEntry = null;
 
-  /** 跑一个模型轮：请求上游 → 流式读取 → 落转录 → 记账。返回 { toolCalls, roundText } 或 { failed } */
-  const runRound = async ({ toolNames, extraSystem = '' }) => {
-    await maybeCompact();
-    messages = assembleMessages({ harness, workspace: session.workspace, records, skills, extraSystem });
-    emit('model_round_started', { sessionId, turnId, round });
-    let opened;
-    try {
-      // LLM 抽象层统一入口：构造请求 + 连接期重试 + 中文错误话术 + 协议帧翻译选择；
-      // extraTools（MCP 等外部工具）的 schema 经此进入请求，模型才看得见这些工具
-      opened = await openChatStream(activeProvider, {
-        model, messages, toolNames, extraTools: allTools, ...requestGen(activeProvider),
-      }, { signal: controller.signal, onRetry: (n, e) => log('warn', '上游连接失败，准备重试', { attempt: n, error: String(e) }), ...failoverIo() });
-    } catch (e) {
-      // 中止走统一取消路径（保留已生成内容）；其余（上游非 2xx / 网络失败）以 turn_failed 收尾
-      if (controller.signal.aborted || e?.name === 'AbortError') throw e;
-      log('warn', '上游错误', { kind: e.kind, status: e.status, provider: activeProvider.id, sessionId });
-      emit('turn_failed', { sessionId, turnId, error: e.message, round });
-      return { failed: true };
-    }
-    currentEntry = { controller, usage: null };
-    let roundText = '';
-    let roundThink = '';
-    let consumed;
-    try {
-      consumed = await consumeAgentStream(opened.reader, currentEntry, {
-        onText: (t) => { roundText += t; emit('text_chunk', { sessionId, turnId, text: t }); },
-        onThinking: (t) => { roundThink += t; emit('thinking_chunk', { sessionId, turnId, text: t }); },
-        onToolCallDelta: (i, cur) => emit('tool_event', { sessionId, turnId, phase: 'params_partial', toolId: cur.id || `call_${i}`, toolName: cur.name, params: cur.args }),
-      }, { translate: opened.translate, idleMs: failoverTimeouts?.idleMs || 0 });
-    } catch (e) {
-      // 流已开始后的失败（空闲超时 / 连接中断）：已产出部分内容，不能透明换路，按 turn 失败收尾
-      if (controller.signal.aborted || e?.name === 'AbortError') throw e;
-      log('warn', '上游流式中断', { kind: e.kind, error: String(e), provider: activeProvider.id, sessionId });
-      emit('turn_failed', { sessionId, turnId, error: e.message, round });
-      return { failed: true };
-    }
-    const { toolCalls } = consumed;
+  /** 用户中途发言（steering）收尾：保留已生成内容 → 发言作为用户记录并入上下文 →
+   *  返回空工具调用，外层据此继续下一轮。在跑的工具只认 turn 级 controller，不受影响 */
+  const absorbSteer = (roundText, roundThink) => {
     if (roundThink) store.append(sessionId, { t: 'thinking', text: roundThink });
     if (roundText) {
       store.append(sessionId, { t: 'assistant', text: roundText });
       records.push({ t: 'assistant', text: roundText });
     }
-    recordRoundUsage(currentEntry.usage);
-    return { toolCalls, roundText };
+    if (currentEntry) recordRoundUsage(currentEntry.usage);
+    const steered = steer.take();
+    store.append(sessionId, { t: 'user', text: steered });
+    records.push({ t: 'user', text: steered });
+    emit('message_steered', { sessionId, turnId, text: steered });
+    return { toolCalls: [], roundText, steered: true };
   };
 
-  /** 执行一组工具调用：权限门控（三档 + 会话规则）→ 执行 → 回填模型消息与转录 → 事件 */
-  const runToolCalls = async (calls) => {
-    for (const call of calls) {
-      totalTools++;
-      const toolId = call.id;
-      const t0 = Date.now();
-      store.append(sessionId, { t: 'tool_call', id: toolId, name: call.name, args: safeArgs(call.arguments) });
-      emit('tool_event', { sessionId, turnId, phase: 'started', toolId, toolName: call.name, params: safeArgs(call.arguments) });
-      const tool = resolveTool(call.name, allTools);
-      let ok = true;
-      let output = '';
-      let extra;
-      if (!tool) {
-        ok = false;
-        output = `未知工具：${call.name}。当前模式可用工具：${harness.tools.join('、') || '（无）'}`;
-      } else {
-        const resource = toolResource(call.name, safeArgs(call.arguments));
-        const effect = policy.effective(call.name, resource);
-        if (effect === 'deny') {
-          ok = false;
-          output = '权限策略拒绝执行该操作。';
-          emit('tool_event', { sessionId, turnId, phase: 'rejected', toolId, toolName: call.name, params: safeArgs(call.arguments) });
-        } else if (effect === 'ask') {
-          // requestId 由运行器生成并随事件透出，客户端凭它回传决策（POST /api/agent/permission）
-          const requestId = randomUUID();
-          emit('tool_event', { sessionId, turnId, phase: 'confirmation_needed', toolId, toolName: call.name, params: safeArgs(call.arguments), resource, requestId });
-          const decision = await askPermission({ requestId, sessionId, turnId, toolId, toolName: call.name, params: safeArgs(call.arguments), resource, action: call.name });
-          if (decision === 'deny') {
-            ok = false;
-            output = '用户拒绝了这次操作，未做任何改动。';
-            emit('tool_event', { sessionId, turnId, phase: 'rejected', toolId, toolName: call.name });
-          } else {
-            if (decision === 'always') {
-              sessionRules.push(policy.grantAlways(call.name, resource));
-              store.patch(sessionId, { rules: sessionRules });
-            }
-            emit('tool_event', { sessionId, turnId, phase: 'confirmed', toolId, toolName: call.name });
-          }
+  let overflowRetried = false; // 上下文超长恢复只做一次（压缩无效时不循环重放）
+  let lengthRetried = false;   // 长度截断续写只做一次
+
+  /** 跑一个模型轮：请求上游 → 流式读取 → 落转录 → 记账。
+   *  返回 { toolCalls, roundText } / { failed } / { steered: true }（用户中途发言，本轮不结算） */
+  const runRound = async ({ toolNames, extraSystem = '' }) => {
+    await maybeCompact();
+    // 工具执行期间到达的中途发言：此刻没有模型流可断，先并入上下文再开流
+    const pendingSteer = steer.take();
+    if (pendingSteer) {
+      store.append(sessionId, { t: 'user', text: pendingSteer });
+      records.push({ t: 'user', text: pendingSteer });
+      emit('message_steered', { sessionId, turnId, text: pendingSteer });
+    }
+    messages = assembleMessages({ harness, workspace: session.workspace, records, skills, extraSystem });
+    emit('model_round_started', { sessionId, turnId, round });
+    // 本轮模型流的专用中断器：用户中途发言只断它；turn 级中止经转发同样断流，两条路径在此汇合
+    const roundAbort = new AbortController();
+    steer.bind(roundAbort);
+    const forwardAbort = () => roundAbort.abort(controller.signal.reason);
+    if (controller.signal.aborted) roundAbort.abort(controller.signal.reason);
+    else controller.signal.addEventListener('abort', forwardAbort, { once: true });
+    // 转发器的存活期覆盖「开流 + 读流」整个模型交互：提前摘掉会让 turn 级中止失去断流能力
+    try {
+      let opened;
+      try {
+        // LLM 抽象层统一入口：构造请求 + 连接期重试 + 中文错误话术 + 协议帧翻译选择；
+        // extraTools（MCP 等外部工具）的 schema 经此进入请求，模型才看得见这些工具
+        opened = await openChatStream(activeProvider, {
+          model, messages, toolNames, extraTools: allTools, ...requestGen(activeProvider),
+        }, { signal: roundAbort.signal, onRetry: (n, e) => log('warn', '上游暂时不可用，准备重试', { attempt: n, error: String(e) }), ...failoverIo() });
+      } catch (e) {
+        // 中止走统一取消路径（保留已生成内容）；其余（上游非 2xx / 网络失败）以 turn_failed 收尾
+        if (controller.signal.aborted || e?.name === 'AbortError') throw e;
+        // 用户中途发言：本轮尚未产出，发言并入上下文后直接进下一轮
+        if (steer.pending) return absorbSteer('', '');
+        // 上游报上下文超长：强制压缩一次后原样重放本轮（只一次，压缩无效时把真实错误抛出来）
+        if (!overflowRetried && isContextOverflow(e)) {
+          overflowRetried = true;
+          log('warn', '上游报上下文超长，压缩后重试本轮', { kind: e.kind, status: e.status, sessionId, round });
+          await maybeCompact(true);
+          return runRound({ toolNames, extraSystem });
         }
-        if (ok) {
-          try {
-            // signal 进 ctx：长动作（computer_use 批量操作）可在用户中止时立刻停手，不留野进程
-            const res = await tool.run(safeArgs(call.arguments), { workspace: session.workspace, skills, todoStore, spawn, proxy: agentProxy, skillsLoaded, signal: controller?.signal });
-            // 工具可返回字符串或 { output, extra }：extra 是结构化负载（diff / todos），
-            // 进转录与 tool_event 供两端渲染，但不进模型消息（模型只看 output 文本）
-            if (res && typeof res === 'object') { output = String(res.output ?? ''); extra = res.extra; }
-            else { output = String(res ?? ''); }
-            if (call.name === 'skill') grantSkillTools(safeArgs(call.arguments).name);
-          } catch (e) { ok = false; output = `工具执行失败：${e.message}`; }
-        }
+        log('warn', '上游错误', { kind: e.kind, status: e.status, provider: activeProvider.id, sessionId });
+        emit('turn_failed', { sessionId, turnId, error: e.message, round });
+        return { failed: true };
       }
-      const durationMs = Date.now() - t0;
-      const resultRec = { t: 'tool_result', id: toolId, name: call.name, ok, output, ...(extra ? { extra } : {}) };
-      store.append(sessionId, resultRec);
-      records.push({ t: 'tool_call', id: toolId, name: call.name, args: safeArgs(call.arguments) });
-      records.push(resultRec);
-      messages.push({ role: 'tool', tool_call_id: toolId, content: toolMessageContent(output, extra) });
-      emit('tool_event', { sessionId, turnId, phase: ok ? 'completed' : 'failed', toolId, toolName: call.name, output: String(output).slice(0, 2000), durationMs, ...(extra ? { extra } : {}) });
+      currentEntry = { controller: roundAbort, usage: null };
+      let roundText = '';
+      let roundThink = '';
+      let consumed;
+      try {
+        consumed = await consumeAgentStream(opened.reader, currentEntry, {
+          onText: (t) => { roundText += t; emit('text_chunk', { sessionId, turnId, text: t }); },
+          onThinking: (t) => { roundThink += t; emit('thinking_chunk', { sessionId, turnId, text: t }); },
+          onToolCallDelta: (i, cur) => emit('tool_event', { sessionId, turnId, phase: 'params_partial', toolId: cur.id || `call_${i}`, toolName: cur.name, params: cur.args }),
+        }, { translate: opened.translate, idleMs: failoverTimeouts?.idleMs || 0 });
+      } catch (e) {
+        // 流已开始后的失败（空闲超时 / 连接中断）：已产出部分内容，不能透明换路，按 turn 失败收尾
+        if (controller.signal.aborted || e?.name === 'AbortError') throw e;
+        // 用户中途发言：保留已生成内容，发言并入上下文，进下一轮
+        if (steer.pending) return absorbSteer(roundText, roundThink);
+        log('warn', '上游流式中断', { kind: e.kind, error: String(e), provider: activeProvider.id, sessionId });
+        emit('turn_failed', { sessionId, turnId, error: e.message, round });
+        return { failed: true };
+      }
+      const { toolCalls, finishReason } = consumed;
+      // 长度截断（finish_reason=length）且没有工具调用：先落已生成部分，再带续写要求重放一次，
+      // 避免回答半截腰斩（模型看到自己的前半段，直接续写余下内容）
+      if (finishReason === 'length' && !toolCalls.length && !lengthRetried) {
+        lengthRetried = true;
+        if (roundThink) store.append(sessionId, { t: 'thinking', text: roundThink });
+        if (roundText) {
+          store.append(sessionId, { t: 'assistant', text: roundText });
+          records.push({ t: 'assistant', text: roundText });
+        }
+        recordRoundUsage(currentEntry.usage);
+        log('warn', '上游回答触达长度上限，追问续写', { sessionId, round });
+        const again = await runRound({ toolNames, extraSystem: `${extraSystem}\n\n${LENGTH_CONTINUE_NOTE}` });
+        return { ...again, roundText: roundText + (again.roundText || '') };
+      }
+      if (roundThink) store.append(sessionId, { t: 'thinking', text: roundThink });
+      if (roundText) {
+        store.append(sessionId, { t: 'assistant', text: roundText });
+        records.push({ t: 'assistant', text: roundText });
+      }
+      recordRoundUsage(currentEntry.usage);
+      return { toolCalls, roundText };
+    } finally {
+      // 转发器与插话绑定都活到本轮模型交互结束：提前摘掉会丢掉 turn 级中止的断流能力，
+      // 也会让「流已结束后的提交」被误判成插话而绕开队列
+      controller.signal.removeEventListener('abort', forwardAbort);
+      steer.release();
+    }
+  };
+
+  /** 工具调用记录 + started 事件（顺序敏感：与模型给出的 tool_calls 顺序一致） */
+  const beginCall = (call) => {
+    totalTools++;
+    const args = safeArgs(call.arguments);
+    store.append(sessionId, { t: 'tool_call', id: call.id, name: call.name, args });
+    emit('tool_event', { sessionId, turnId, phase: 'started', toolId: call.id, toolName: call.name, params: args });
+    return args;
+  };
+
+  /** 结果回填（转录 / 模型消息 / completed 事件）：顺序敏感，并行段也按原顺序逐个回填 */
+  const finishCall = (call, args, r) => {
+    const resultRec = { t: 'tool_result', id: call.id, name: call.name, ok: r.ok, output: r.output, ...(r.extra ? { extra: r.extra } : {}) };
+    store.append(sessionId, resultRec);
+    records.push({ t: 'tool_call', id: call.id, name: call.name, args });
+    records.push(resultRec);
+    messages.push({ role: 'tool', tool_call_id: call.id, content: toolMessageContent(r.output, r.extra) });
+    emit('tool_event', { sessionId, turnId, phase: r.ok ? 'completed' : 'failed', toolId: call.id, toolName: call.name, output: String(r.output).slice(0, 2000), durationMs: r.durationMs, ...(r.extra ? { extra: r.extra } : {}) });
+  };
+
+  /** 工具执行体（不含交互）：权限效应由调用方预判（deny 直接拒），返回 { ok, output, extra?, durationMs } */
+  const runToolBody = async ({ call, tool, args, effect }) => {
+    const t0 = Date.now();
+    if (!tool) return { ok: false, output: `未知工具：${call.name}。当前模式可用工具：${harness.tools.join('、') || '（无）'}`, durationMs: Date.now() - t0 };
+    if (effect === 'deny') return { ok: false, output: '权限策略拒绝执行该操作。', durationMs: Date.now() - t0 };
+    try {
+      // signal 进 ctx：长动作（computer_use 批量操作）可在用户中止时立刻停手，不留野进程
+      const res = await tool.run(args, { workspace: session.workspace, skills, todoStore, spawn, proxy: agentProxy, skillsLoaded, signal: controller?.signal, ignore, sanitizeChildEnv });
+      // 工具可返回字符串或 { output, extra }：extra 是结构化负载（diff / todos），
+      // 进转录与 tool_event 供两端渲染，但不进模型消息（模型只看 output 文本）
+      if (call.name === 'skill') grantSkillTools(args.name);
+      if (res && typeof res === 'object') return { ok: true, output: String(res.output ?? ''), extra: res.extra, durationMs: Date.now() - t0 };
+      return { ok: true, output: String(res ?? ''), durationMs: Date.now() - t0 };
+    } catch (e) { return { ok: false, output: `工具执行失败：${e.message}`, durationMs: Date.now() - t0 }; }
+  };
+
+  /** 串行执行单个调用（写操作 / 要问权限 / 未标记并行的工具）：权限交互语义与并行化之前完全一致 */
+  const runSequentialCall = async (call) => {
+    const args = beginCall(call);
+    const tool = resolveTool(call.name, allTools);
+    const resource = tool ? toolResource(call.name, args) : '';
+    const effect = tool ? policy.effective(call.name, resource) : 'allow';
+    if (effect === 'deny') {
+      emit('tool_event', { sessionId, turnId, phase: 'rejected', toolId: call.id, toolName: call.name, params: args });
+      finishCall(call, args, { ok: false, output: '权限策略拒绝执行该操作。', durationMs: 0 });
+      return;
+    }
+    if (effect === 'ask') {
+      // requestId 由运行器生成并随事件透出，客户端凭它回传决策（POST /api/agent/permission）
+      const requestId = randomUUID();
+      emit('tool_event', { sessionId, turnId, phase: 'confirmation_needed', toolId: call.id, toolName: call.name, params: args, resource, requestId });
+      const decision = await askPermission({ requestId, sessionId, turnId, toolId: call.id, toolName: call.name, params: args, resource, action: call.name });
+      if (decision === 'deny') {
+        emit('tool_event', { sessionId, turnId, phase: 'rejected', toolId: call.id, toolName: call.name });
+        finishCall(call, args, { ok: false, output: '用户拒绝了这次操作，未做任何改动。', durationMs: 0 });
+        return;
+      }
+      if (decision === 'always') {
+        sessionRules.push(policy.grantAlways(call.name, resource));
+        store.patch(sessionId, { rules: sessionRules });
+      }
+      emit('tool_event', { sessionId, turnId, phase: 'confirmed', toolId: call.id, toolName: call.name });
+    }
+    finishCall(call, args, await runToolBody({ call, tool, args, effect }));
+  };
+
+  /**
+   * 执行一组工具调用：权限门控（三档 + 会话规则）→ 执行 → 回填模型消息与转录 → 事件。
+   * 相邻的只读类调用（工具带 parallel 标记、且权限效应不是 ask——无需交互决策）经 Promise.all
+   * 重叠执行，读多个文件 / 多次检索不再逐个排队；写操作、要问权限、未标记的工具保持串行。
+   * 无论并行还是串行，结果回填严格按模型给出的顺序——messages 里 tool 消息与
+   * assistant.tool_calls 的顺序因此永远对齐（上游按 id 匹配，错位即 400）。
+   */
+  const runToolCalls = async (calls) => {
+    let idx = 0;
+    while (idx < calls.length) {
+      // 取一段连续的「可并行」调用：遇到写操作 / 要授权 / 未标记工具即断段
+      const group = [];
+      while (idx < calls.length) {
+        const call = calls[idx];
+        const tool = resolveTool(call.name, allTools);
+        const effect = tool ? policy.effective(call.name, toolResource(call.name, safeArgs(call.arguments))) : 'allow';
+        if (!tool?.parallel || effect === 'ask') break;
+        group.push({ call, tool, args: safeArgs(call.arguments), effect });
+        idx += 1;
+      }
+      if (!group.length) { await runSequentialCall(calls[idx]); idx += 1; continue; }
+      // 并行段：记录与 started 事件先按顺序落（deny 的顺手发 rejected），再重叠执行，最后按序回填
+      for (const g of group) {
+        beginCall(g.call);
+        if (g.effect === 'deny') emit('tool_event', { sessionId, turnId, phase: 'rejected', toolId: g.call.id, toolName: g.call.name, params: g.args });
+      }
+      const results = await Promise.all(group.map((g) => runToolBody(g)));
+      group.forEach((g, k) => finishCall(g.call, g.args, results[k]));
     }
   };
 
   /** 预算触顶后的唯一收尾轮：不带工具 + 收尾提醒，只总结进展与停止原因 */
+  let wrapUpRetried = false;
   const runGoalWrapUp = async () => {
-    await runRound({ toolNames: [], extraSystem: GOAL_WRAPUP_NOTE });
+    const r = await runRound({ toolNames: [], extraSystem: GOAL_WRAPUP_NOTE });
+    // 收尾轮被用户发言打断：发言已并入上下文，补一次收尾（只一次，防对话式打断无限续跑）
+    if (r.steered && !wrapUpRetried) { wrapUpRetried = true; await runRound({ toolNames: [], extraSystem: GOAL_WRAPUP_NOTE }); }
   };
 
   const withIds = (toolCalls, roundText) => {
@@ -383,6 +533,8 @@ export async function runAgentTurn(ctx) {
       for (round = 1; round <= Math.min(harness.maxRounds, PLAN_MAX_ROUNDS); round++) {
         const r = await runRound({ toolNames: planNames, extraSystem: PLAN_MODE_PROMPT });
         if (r.failed) return { turnId, text: finalText, rounds: round, tools: totalTools, failed: true };
+        // 用户中途发言：本轮不结算（不提案、不判空闲），直接进下一轮
+        if (r.steered) continue;
         finalText = r.roundText;
         if (!r.toolCalls.length) {
           const planText = String(r.roundText || '').trim();
@@ -418,6 +570,8 @@ export async function runAgentTurn(ctx) {
       const r = await runRound({ toolNames: execToolNames, extraSystem: goalNote });
       goalNote = '';
       if (r.failed) { await goalRt?.finish(); return { turnId, text: finalText, rounds: round, tools: totalTools, failed: true }; }
+      // 用户中途发言：本轮不结算（不入账、不判空闲 / 提案），直接进下一轮
+      if (r.steered) continue;
       finalText = r.roundText;
       if (!r.toolCalls.length) {
         // 无工具轮：goal 在管辖时入账 + 提案结算 / 续跑决策；不在管辖时照旧结束
@@ -450,6 +604,8 @@ export async function runAgentTurn(ctx) {
     log('error', 'turn 运行异常', { sessionId, turnId, error: String(err) });
     emit('turn_failed', { sessionId, turnId, error: String(err), round });
     return { turnId, text: finalText, rounds: round, tools: totalTools, failed: true };
+  } finally {
+    ignore?.close(); // 释放 fs.watch： turn 结束即不再需要热加载
   }
   if (titleMode === 'model') await autoTitle(finalText); // 等终稿出来再花这笔标题钱，失败回退本地推导
   await goalRt?.finish(); // 终态提案结算与最终用量快照先于 turn_completed，客户端按序看到终态

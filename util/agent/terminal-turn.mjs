@@ -172,6 +172,11 @@ export async function runTerminalTurn({ store, usage, session, input, inputSkill
         breakLine();
         write(`  ${painter.accent('切换')} ${p.fromName || p.from} → ${p.toName || p.to} ${painter.dim(`（${SWITCH_REASON_LABELS[p.reason] || p.reason}，第 ${p.attempt} 次尝试）`)}\n`);
         break;
+      case 'message_steered':
+        endToolLine();
+        breakLine();
+        write(`  ${painter.accent('插话')} ${painter.dim('已并入当前任务：')}${String(p.text || '').slice(0, 60)}\n`);
+        break;
       case 'session_renamed':
         endToolLine();
         breakLine();
@@ -210,6 +215,7 @@ export async function runTerminalTurn({ store, usage, session, input, inputSkill
       planMode: session.planMode !== undefined ? session.planMode === true : cfg.planMode === true,
       titleMode: TITLE_MODES.includes(session.titleMode) ? session.titleMode : cfg.titleMode,
       agentProxy: cfg.agentProxy,
+      ignoreEnabled: cfg.ignore?.enabled !== false, sanitizeChildEnv: cfg.sanitizeChildEnv !== false,
       providerFailover: providerFailover !== false && cfg.providerFailover !== false,
       providerFailoverMaxAttempts: providerFailoverMaxAttempts || cfg.providerFailoverMaxAttempts,
       failoverCandidates,

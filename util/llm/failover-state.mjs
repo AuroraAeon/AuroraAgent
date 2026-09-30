@@ -8,6 +8,7 @@
  * 本模块持有 CircuitRegistry 实例：loop.mjs / web.mjs 共用同一份，跨请求记忆才有意义。
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { writeFileAtomic } from '../atomic.mjs';
 import { join } from 'node:path';
 import { CircuitRegistry, normalizeCircuitConfig, CIRCUIT_DEFAULTS } from './circuit.mjs';
 
@@ -107,11 +108,8 @@ export class FailoverState {
 
   #write() {
     const payload = JSON.stringify({ version: 1, circuits: this.circuits.snapshot(), prefs: Object.fromEntries(this.prefs) }, null, 2);
-    const tmp = `${this.path}.tmp`;
     try {
-      mkdirSync(join(this.path, '..'), { recursive: true });
-      writeFileSync(tmp, payload);
-      renameSync(tmp, this.path);
+      writeFileAtomic(this.path, payload); // tmp + fsync + rename + 0600（util/atomic.mjs）
     } catch (e) {
       this.warn('故障转移状态写入失败', { error: String(e) });
     }

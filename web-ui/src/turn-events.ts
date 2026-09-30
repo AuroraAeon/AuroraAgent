@@ -121,6 +121,8 @@ export function createTurnEventHandlers(s: TurnSetters): (ev: AgentEvent) => voi
     else if (ev.type === 'goal_created' || ev.type === 'goal_status_changed' || ev.type === 'goal_usage_updated' || ev.type === 'goal_wait_changed') {
       if (scope === 'main' && setGoal && ev.sessionId === currentIdRef.current) setGoal(ev.goal);
     }
+    // 用户中途发言（steering）：发言已并入当前 turn 的上下文，实时补一条用户消息进视图
+    else if (ev.type === 'message_steered') setMsgs((m) => [...m, { kind: 'user', key: `steer-${ev.turnId}-${m.length}`, text: ev.text }]);
     // 故障转移提示（notice 不进服务端转录，turn 收尾刷新时保留，与 /goal 回执同一机制）
     else if (ev.type === 'provider_switched') setMsgs((m) => [...m, { kind: 'notice', key: `ps-${ev.turnId}-${ev.attempt}`, text: `已切换提供方：${ev.fromName || ev.from} → ${ev.toName || ev.to}（${PROVIDER_SWITCH_REASONS[ev.reason] || ev.reason}，第 ${ev.attempt} 次尝试）` }]);
     else if (ev.type === 'turn_failed') setError(ev.error || '任务失败');

@@ -2,7 +2,9 @@
  * Agent 工具集：十一个内置工具，全部经 JSON Schema 描述参数。
  * 安全边界（文档如实说明）：写类文件工具经 resolveInside 禁锢在会话工作目录；读类工具
  * 额外放开「已加载技能目录」这一只读白名单根，供模型读取技能附属的 references / scripts / assets；
- * shell 以工作目录为 cwd 执行、带超时与输出截断，但无 OS 级沙箱——
+ * 文件类工具在 resolveInside 之后再过 util/ignore.mjs 的忽略闸门（.auroraagentignore 声明的
+ * 禁入区，命中即拒并带锁形标记）；shell 以工作目录为 cwd 执行、带超时与输出截断，子进程环境
+ * 经 sanitizeChildEnv 净化（剔除凭据形态变量），但无 OS 级沙箱——
  * 真正的门控是 policy.mjs 的权限决策与前端确认流。
  */
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'node:fs';
@@ -11,6 +13,7 @@ import { resolve, sep, dirname, join, relative } from 'node:path';
 import { toOpenAIFunction, toAnthropicTool } from '../llm/tool.mjs';
 import { proxyFetch } from '../proxy.mjs';
 import { findSkill, renderSkillContent, skillDirs, SKILL_FOLLOWUP } from './skills.mjs';
+import { IGNORE_FILE_NAME, LOCK_TEXT_SYMBOL } from '../ignore.mjs';
 
 const MAX_OUTPUT = 32 * 1024;   // 单次工具回给模型的文本上限
 const MAX_FETCH = 64 * 1024;    // web_fetch 正文上限
@@ -67,6 +70,38 @@ export function resolveInside(root, p, extraRoots = []) {
     if (r && (abs === r || abs.startsWith(r + sep))) return abs;
   }
   throw new ToolError(`路径越界：${p} 不在工作目录或已加载的技能目录内`, 'path_escape');
+}
+
+/**
+ * 忽略闸门：resolveInside 之后过。命中即拒（中文原因 + 锁形标记），
+ * 让模型知道「文件在，但被用户声明为禁入区」——它会换别的文件，而不是反复重试同一路径。
+ * ctx.ignore 由 Loop 按会话工作目录注入（util/ignore.mjs）；缺省（终端旧调用方 / 单测）不拦。
+ */
+function gateIgnored(ctx, abs, shown) {
+  const ctl = ctx?.ignore;
+  if (!ctl || typeof ctl.isIgnored !== 'function') return;
+  const hit = ctl.isIgnored(abs);
+  if (hit.ignored) {
+    throw new ToolError(`${shown} 被 ${IGNORE_FILE_NAME} 声明为禁入区（匹配规则：${hit.pattern}）${LOCK_TEXT_SYMBOL}`, 'ignored');
+  }
+}
+
+/**
+ * shell 子进程环境净化：剔除凭据形态变量（KEY / TOKEN / SECRET / PASSWORD / CREDENTIAL），
+ * 只留运行命令必需的基础项。模型跑的命令能读走上游 Key 是真实风险——一条 `env | curl …`
+ * 就是事故。enabled=false 可关（排障用），缺省开；白名单内的键即使形态匹配也保留。
+ */
+const CHILD_ENV_KEEP = new Set(['PATH', 'HOME', 'SHELL', 'TMPDIR', 'LANG', 'LC_ALL', 'LC_CTYPE', 'USER', 'LOGNAME', 'TERM', 'TZ', 'PWD', 'ZDOTDIR']);
+const CHILD_ENV_DROP_RE = /(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)/i;
+export function sanitizeChildEnv(env = process.env, enabled = true) {
+  const src = env || {};
+  if (enabled === false) return { ...src };
+  const out = {};
+  for (const k of Object.keys(src)) {
+    if (CHILD_ENV_DROP_RE.test(k) && !CHILD_ENV_KEEP.has(k)) continue;
+    out[k] = src[k];
+  }
+  return out;
 }
 
 /** 读类工具的允许根集合：会话工作目录 + 已加载技能目录（写类工具不放开） */
@@ -135,17 +170,25 @@ export function renderTodoList(items = []) {
 const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', '.venv', '__pycache__', '.next', 'coverage', 'public/app']);
 const MAX_FILE_BYTES = 512 * 1024;
 
-function walkFiles(root, onFile) {
+/** 检索遍历的跳过谓词：目录被跳过即整枝剪掉（忽略规则对目录生效时省掉整棵子树的枚举） */
+function walkFiles(root, onFile, { skipDir = () => false, skipFile = () => false } = {}) {
   let entries;
   try { entries = readdirSync(root, { withFileTypes: true }); } catch { return; }
   for (const ent of entries) {
     const abs = join(root, ent.name);
     if (ent.isDirectory()) {
-      if (!SKIP_DIRS.has(ent.name)) walkFiles(abs, onFile);
+      if (!SKIP_DIRS.has(ent.name) && !skipDir(abs)) walkFiles(abs, onFile, { skipDir, skipFile });
     } else if (ent.isFile()) {
-      onFile(abs);
+      if (!skipFile(abs)) onFile(abs);
     }
   }
+}
+
+/** ctx.ignore 存在时的跳过谓词（不存在 = 不拦，行为与接入前一致） */
+function ignorePredicate(ctx) {
+  const ctl = ctx?.ignore;
+  if (!ctl || typeof ctl.isIgnored !== 'function') return () => false;
+  return (abs) => ctl.isIgnored(abs).ignored;
 }
 
 /** 读文本文件；二进制（含 NUL）或超限返回 null */
@@ -184,6 +227,7 @@ export function globToRegExp(pattern) {
 export const TOOLS = [
   {
     name: 'read_file',
+    parallel: true, // 只读无副作用：相邻的同类调用可并行执行（loop.mjs 的 runToolCalls 据此重叠）
     description: '读取工作目录内的文本文件，返回带行号的内容；范围过大时用 offset/limit 分段读',
     action: 'read_file',
     parameters: {
@@ -197,6 +241,7 @@ export const TOOLS = [
     },
     run(args, ctx) {
       const abs = resolveInside(ctx.workspace, args.path, readRoots(ctx));
+      gateIgnored(ctx, abs, args.path);
       let st;
       try { st = statSync(abs); } catch { throw new ToolError(`文件不存在：${args.path}`, 'not_found'); }
       if (st.isDirectory()) throw new ToolError(`${args.path} 是目录，请改用 list_dir`, 'is_dir');
@@ -212,6 +257,7 @@ export const TOOLS = [
   },
   {
     name: 'list_dir',
+    parallel: true, // 只读无副作用：相邻的同类调用可并行执行（loop.mjs 的 runToolCalls 据此重叠）
     description: '列出工作目录内某个目录的直接子项（目录带 / 后缀）',
     action: 'list_dir',
     parameters: {
@@ -220,6 +266,7 @@ export const TOOLS = [
     },
     run(args, ctx) {
       const abs = resolveInside(ctx.workspace, args.path || '.', readRoots(ctx));
+      gateIgnored(ctx, abs, args.path || '.');
       let st;
       try { st = statSync(abs); } catch { throw new ToolError(`目录不存在：${args.path}`, 'not_found'); }
       if (!st.isDirectory()) throw new ToolError(`${args.path} 不是目录，请改用 read_file`, 'not_dir');
@@ -246,6 +293,7 @@ export const TOOLS = [
     },
     run(args, ctx) {
       const abs = resolveInside(ctx.workspace, args.path);
+      gateIgnored(ctx, abs, args.path);
       mkdirSync(dirname(abs), { recursive: true });
       writeFileSync(abs, String(args.content ?? ''));
       return `已写入 ${args.path}（${String(args.content ?? '').length} 字符）`;
@@ -267,6 +315,7 @@ export const TOOLS = [
     },
     run(args, ctx) {
       const abs = resolveInside(ctx.workspace, args.path);
+      gateIgnored(ctx, abs, args.path);
       const oldStr = String(args.old_string ?? '');
       const newStr = String(args.new_string ?? '');
       if (!oldStr) throw new ToolError('old_string 不能为空', 'bad_args');
@@ -305,7 +354,7 @@ export const TOOLS = [
       const timeout = Math.min(120, Math.max(5, Number(args.timeout_seconds) || 30)) * 1000;
       mkdirSync(ctx.workspace, { recursive: true });
       return new Promise((done, fail) => {
-        const child = spawn('/bin/zsh', ['-lc', cmd], { cwd: ctx.workspace, env: process.env });
+        const child = spawn('/bin/zsh', ['-lc', cmd], { cwd: ctx.workspace, env: sanitizeChildEnv(process.env, ctx?.sanitizeChildEnv !== false) });
         let out = '';
         let err = '';
         let timedOut = false;
@@ -327,6 +376,7 @@ export const TOOLS = [
   },
   {
     name: 'web_fetch',
+    parallel: true, // 只读无副作用：相邻的同类调用可并行执行（loop.mjs 的 runToolCalls 据此重叠）
     description: '抓取一个 http(s) URL 的文本内容（JSON 原样、HTML 截断返回），用于查文档等只读场景',
     action: 'web_fetch',
     parameters: {
@@ -352,6 +402,7 @@ export const TOOLS = [
 
   {
     name: 'grep',
+    parallel: true, // 只读无副作用：相邻的同类调用可并行执行（loop.mjs 的 runToolCalls 据此重叠）
     description: '在工作目录内按正则搜索文件内容，返回 文件:行号: 内容；自动跳过 .git / node_modules / 构建产物，二进制文件不搜',
     action: 'grep',
     parameters: {
@@ -368,10 +419,12 @@ export const TOOLS = [
       let re;
       try { re = new RegExp(String(args.pattern || '')); } catch (e) { throw new ToolError(`正则无效：${e.message}`, 'bad_args'); }
       const root = resolveInside(ctx.workspace, args.path || '.', readRoots(ctx));
+      gateIgnored(ctx, root, args.path || '.');
       const nameRe = args.glob ? fileGlobRe(args.glob) : null;
       const cap = Math.min(200, Math.max(1, Number(args.max_results) || 50));
       const hits = [];
       let scanned = 0;
+      const skip = ignorePredicate(ctx);
       walkFiles(root, (abs) => {
         if (hits.length >= cap) return;
         if (nameRe && !nameRe.test(relative(root, abs).split('/').pop())) return;
@@ -383,7 +436,7 @@ export const TOOLS = [
         for (let i = 0; i < lines.length && hits.length < cap; i++) {
           if (re.test(lines[i])) hits.push(`${rel}:${i + 1}: ${lines[i].trimEnd().slice(0, 300)}`);
         }
-      });
+      }, { skipDir: skip, skipFile: skip });
       if (!hits.length) return `未匹配到 /${args.pattern}/（扫描 ${scanned} 个文本文件）`;
       const more = hits.length >= cap ? `\n[已达上限 ${cap} 条，缩小 pattern 或 path 后重试]` : '';
       return truncate(`匹配 ${hits.length} 条（扫描 ${scanned} 个文本文件）：\n${hits.join('\n')}${more}`);
@@ -391,6 +444,7 @@ export const TOOLS = [
   },
   {
     name: 'glob',
+    parallel: true, // 只读无副作用：相邻的同类调用可并行执行（loop.mjs 的 runToolCalls 据此重叠）
     description: '按文件名模式在工作目录内查找文件（** 跨目录、* 匹配一段、? 匹配单字符），返回相对路径列表',
     action: 'glob',
     parameters: {
@@ -405,15 +459,17 @@ export const TOOLS = [
       const pattern = String(args.pattern || '').trim();
       if (!pattern) throw new ToolError('pattern 不能为空', 'bad_args');
       const root = resolveInside(ctx.workspace, args.path || '.', readRoots(ctx));
+      gateIgnored(ctx, root, args.path || '.');
       const hasSlash = pattern.includes('/');
       const re = globToRegExp(pattern);
       const out = [];
+      const skip = ignorePredicate(ctx);
       walkFiles(root, (abs) => {
         if (out.length >= 500) return;
         const rel = relative(root, abs).split(sep).join('/');
         const target = hasSlash ? rel : rel.split('/').pop();
         if (re.test(target)) out.push(displayPath(ctx, abs));
-      });
+      }, { skipDir: skip, skipFile: skip });
       out.sort();
       if (!out.length) return `未匹配到 ${pattern}`;
       const more = out.length >= 500 ? `\n[已达上限 500 条，缩小 pattern 后重试]` : '';

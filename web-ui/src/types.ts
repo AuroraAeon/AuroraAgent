@@ -13,6 +13,8 @@ export type AgentEvent =
   | { type: 'plan_approved'; sessionId: string; turnId: string; plan: string }
   | { type: 'plan_rejected'; sessionId: string; turnId: string; plan: string }
   | { type: 'provider_switched'; sessionId: string; turnId: string; from: string; fromName?: string; to: string; toName?: string; reason: string; attempt: number }
+  | { type: 'message_steered'; sessionId: string; turnId: string; text: string }
+  | { type: 'turn_steered'; sessionId: string; opId: string; input: string }
   | { type: 'token_usage_updated'; sessionId: string; turnId: string; model: string; inputTokens: number; outputTokens: number; cost: number }
   | { type: 'context_compression_started'; sessionId: string; turnId: string; headRecords: number }
   | { type: 'context_compression_completed'; sessionId: string; turnId: string; keptRecords: number }

@@ -25,6 +25,7 @@ import { createAgentApi } from './util/agent/http.mjs';
 import { handleTuiSettingsApi } from './util/tui/settings-api.mjs';
 import { handleAgentProxyApi } from './util/proxy.mjs';
 import { handleWorkspaceApi } from './util/workspace.mjs';
+import { guardRequest } from './util/http-guard.mjs';
 import { resolveDataDir, loadConfig, saveConfig, PRICE } from './util/config.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -225,6 +226,27 @@ const INSTALLER = join(__dirname, 'tools', 'install-service.mjs');
 const server = createServer(async (req, res) => {
   const cfg = loadConfig();
   const url = req.url.split('?')[0];
+
+  // 本地请求守卫（util/http-guard.mjs）：所有 /api/* 先过闸——Host 回环白名单 + Origin 同源 +
+  // Sec-Fetch-Site 挡跨站提交，本机恶意页面借 DNS rebinding / 跨站 fetch 敲本地 HTTP 面在此被拒。
+  // 静态产物（/app/* 等）不走 /api 前缀，天然不拦；GET /api/chat 豁免（无 GET 处理器，兼容探活）。
+  // 拒绝走 errorlog 留痕（同因 30 秒去重，防恶意页面刷屏），403 话体固定 forbidden_origin
+  if (url.startsWith('/api/') && !(req.method === 'GET' && url === '/api/chat')) {
+    const denied = guardRequest(req, { port: PORT });
+    if (denied) {
+      if (errorDeduper.allow(`http_guard|${denied.body.reason}|${String(req.headers.host || '')}`)) {
+        errorLog.record('http_guard', `拒绝请求 ${req.method} ${url}`, JSON.stringify({
+          reason: denied.body.reason,
+          host: String(req.headers.host || ''),
+          origin: String(req.headers.origin || ''),
+          site: String(req.headers['sec-fetch-site'] || ''),
+          ua: String(req.headers['user-agent'] || '').slice(0, 120),
+        }));
+      }
+      res.writeHead(denied.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      return res.end(JSON.stringify(denied.body));
+    }
+  }
 
   // AuroraAgent 工作台（web-ui 构建产物，随仓库提交、运行时零构建）：/ 与 /app 同一份 index.html
   if (req.method === 'GET' && (url === '/' || url === '/index.html' || url === '/app' || url.startsWith('/app/'))) {
