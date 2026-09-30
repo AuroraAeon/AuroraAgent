@@ -2,6 +2,22 @@
 
 本文件记里程碑版本（Keep a Changelog 格式，中文）。逐提交的发布笔记由 `npm run docs:notes` 从 git 历史生成，进文档站 `release-notes` 页。
 
+## [7.4.0](https://github.com/AuroraAeon/AuroraAgent/compare/v7.3.2...v7.4.0) (2026-09-30)
+
+
+### Features
+
+* 定时任务与屏幕操作——cron 工具 / jobs 调度 / computer_use 截图（[#3149](https://github.com/AuroraAeon/AuroraAgent/issues/3149) / [#3191](https://github.com/AuroraAeon/AuroraAgent/issues/3191) 本地化） ([b55b9ea](https://github.com/AuroraAeon/AuroraAgent/commit/b55b9eaebc6c2e49334a3ce4ca7b8efb8ca78d3b))
+* 提供方预设目录——14 家厂商端点与模型 ID 一键预填 ([875455c](https://github.com/AuroraAeon/AuroraAgent/commit/875455c558502b805aec8eb433b0b455e6d37724))
+* 消息队列——活跃 turn 期间提交自动排队，前一条结算后由泵接力 ([47cc839](https://github.com/AuroraAeon/AuroraAgent/commit/47cc839742bd1c9481ab050ca0c0812daa1ae010))
+
+
+### Bug Fixes
+
+* **web-ui:** API 边界全量归一化——响应形状漂移不再白屏任何面板 ([0cc59c6](https://github.com/AuroraAeon/AuroraAgent/commit/0cc59c683a40ab1b8a3dce95c815abfe9014cd0b))
+* **web-ui:** 技能目录响应边界归一化——字段缺失不再把设置页白屏 ([22a534e](https://github.com/AuroraAeon/AuroraAgent/commit/22a534efc60b0ac86ac6fe53dc611910ba854f2e))
+* 运行时核心修复——悬空 tool_call 补合成结果、MCP 传输类型归一、新模型默认 300K ([6ea0bcf](https://github.com/AuroraAeon/AuroraAgent/commit/6ea0bcf253c75ec85b6f3150879dfcf173679168))
+
 ## [7.3.2](https://github.com/AuroraAeon/AuroraAgent/compare/v7.3.1...v7.3.2) (2026-09-29)
 
 
