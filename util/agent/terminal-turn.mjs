@@ -152,6 +152,12 @@ export async function runTerminalTurn({ store, usage, session, input, inputSkill
         write(painter.dim(`  ↳ tokens 输入 ${p.inputTokens} · 输出 ${p.outputTokens} · 约 ¥${fmtCost(p.cost)}\n`));
         onUsage?.({ inputTokens: p.inputTokens, outputTokens: p.outputTokens, cost: p.cost });
         break;
+      case 'checkpoint_created':
+        endToolLine();
+        breakLine();
+        write(painter.dim(`  ↳ 已记录第 ${p.turnIndex} 轮快照（${p.kind === 'git' ? 'git' : '内容镜像'}，/checkpoint 可回滚）
+`));
+        break;
       case 'context_compression_started':
         endToolLine();
         breakLine();

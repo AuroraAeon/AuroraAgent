@@ -35,6 +35,10 @@ import { JobStore } from '../jobs/store.mjs';
 import { formatJobLines, parseCronArg, pickJob } from './cron-cmd.mjs';
 import { createHookRunner } from './hooks/index.mjs';
 import { parseHooksArg, formatHookLines, formatHookEventLines, formatHookTestLines } from './hooks-cmd.mjs';
+import { createCheckpointRuntime, readCheckpointHistory } from './checkpoint.mjs';
+import { restoreCheckpoint } from './checkpoint-restore.mjs';
+import { parseCheckpointArg, formatCheckpointLines, formatCheckpointDiffLines } from './checkpoint-cmd.mjs';
+import { trimRecordsToTurn } from './checkpoint-restore.mjs';
 
 const BASE = process.env.AURORAAGENT_BASE_URL || 'https://api.longcat.chat';
 const KEY_PAGE = 'https://longcat.chat/platform/api_keys';
@@ -93,6 +97,17 @@ export async function runTerminal({ argv = [] } = {}) {
   // MCP 注册表（实验特性门控）：启用时后台连接并发现工具，/mcp 查看状态
   const mcp = experimentalEnabled('MCP') ? new McpRegistry({ dataDir }) : null;
   if (mcp) mcp.refresh().catch(() => {});
+  // 检查点运行时按会话持有（历史跨轮累积）：终端与网页各一份 store，但快照本体在仓库 .git
+  // 或数据目录 backups/，两端看到的是同一批检查点。切会话时按新会话的工作目录重建
+  let checkpointRt = null;
+  const checkpointFor = (sid, workspace) => {
+    if (checkpointRt && checkpointRt.sessionId === sid) return checkpointRt;
+    checkpointRt = createCheckpointRuntime({
+      workspace, dataDir, sessionId: sid, log: () => {},
+      history: readCheckpointHistory(store.get(sid)),
+    });
+    return checkpointRt;
+  };
   // 事件钩子运行器（实验特性门控）：按工作目录缓存——项目钩子与个人钩子的发现根不同，
   // 切换会话（换工作目录）时看到的是那一份目录的钩子。门控关闭时恒空转
   const hookRunners = new Map();
@@ -440,6 +455,51 @@ export async function runTerminal({ argv = [] } = {}) {
     for (const line of formatHookTestLines(parsed.event, outcome)) console.log('  ' + p.dim(line));
   };
 
+  /**
+   * /checkpoint 家族：查看 / 预览 / 回滚当前会话的检查点。
+   * 每轮用户发言开始时自动拍一张（util/agent/checkpoint.mjs），这里只做「看得见、看得懂、
+   * 敢回滚」——restore 前先给 diff 预览，回滚本身带事务（失败自动回到恢复前的工作区）。
+   */
+  const cmdCheckpoint = async (arg) => {
+    const p = painter();
+    const parsed = parseCheckpointArg(arg);
+    if (parsed.action === 'list') {
+      const rt = checkpointFor(meta.id, meta.workspace);
+      for (const line of formatCheckpointLines(rt.entries)) console.log('  ' + p.dim(line));
+      console.log(p.dim('  /checkpoint diff <轮次> 预览 · /checkpoint restore <轮次> [chat] 回滚 · /checkpoint clean 清空'));
+      return;
+    }
+    if (parsed.action === 'error') { console.log(p.warning(parsed.message)); return; }
+    if (busy) { console.log(p.warning('正在生成中，等这一轮结束后再回滚')); return; }
+    const rt = checkpointFor(meta.id, meta.workspace);
+    const entry = rt.entries.find((e) => e.turnIndex === parsed.turnIndex);
+    if (!entry) {
+      console.log(p.warning(`第 ${parsed.turnIndex} 轮没有检查点（可用：${rt.entries.map((e) => e.turnIndex).join('、') || '无'}）`));
+      return;
+    }
+    if (parsed.action === 'diff') {
+      for (const line of formatCheckpointDiffLines(store.records(meta.id), parsed.turnIndex, rt.entries)) console.log('  ' + p.dim(line));
+      return;
+    }
+    if (parsed.action === 'clean') {
+      await rt.close();
+      console.log(p.dim('✓ 已清掉当前会话的全部检查点'));
+      return;
+    }
+    try {
+      const r = await restoreCheckpoint(meta.workspace, entry, { dataDir, sessionId: meta.id, log: () => {} });
+      const what = r.kind === 'mirror' ? `还原 ${r.restored} 个文件、删掉 ${r.removed} 个本轮新建文件` : '工作区已回到那一轮';
+      console.log(p.dim(`✓ 已回滚到第 ${parsed.turnIndex} 轮：${what}`));
+      if (parsed.withChat) {
+        const cut = trimRecordsToTurn(store.records(meta.id), parsed.turnIndex);
+        if (cut.trimmed > 0) store.replaceRecords(meta.id, cut.records);
+        console.log(p.dim(`✓ 对话已裁到第 ${parsed.turnIndex} 轮（删掉之后 ${cut.trimmed} 条记录）`));
+      } else {
+        console.log(p.dim('  对话记录保留（要连对话一起裁：/checkpoint restore <轮次> chat）'));
+      }
+    } catch (e) { console.log(p.warning(e?.message || String(e))); }
+  };
+
   /** 声明式斜杠命令表：/help 与分发同源；技能派生命令追加进同一张表（/<技能名> 直接调用） */
   const baseCommands = [
     { name: 'help', summary: '显示全部命令', run: printHelp },
@@ -486,6 +546,7 @@ export async function runTerminal({ argv = [] } = {}) {
     { name: 'queue', argHint: '[send|drop <序号>|clear]', summary: '消息队列：生成中提交的消息在此排队（无参列出，send 立即发送，drop 移除）', run: cmdQueue },
     { name: 'cron', argHint: '[add <名称> | <表达式> | <内容>|remove|run|on|off <id>]', summary: '定时任务：到期自动在当前会话跑一轮 Agent（无参列出）', run: cmdCron },
     { name: 'hooks', argHint: '[list|events|test <事件名>]', summary: '事件钩子：脚本在 turn 各阶段自动触发（实验特性，无参列出）', run: cmdHooks },
+    { name: 'checkpoint', argHint: '[list|diff <轮次>|restore <轮次> [chat]|clean]', summary: '检查点：每轮开始时自动拍工作区快照，可整体回滚（无参列出）', run: cmdCheckpoint },
     { name: 'btw', argHint: '<问题>', summary: '侧边对话：继承当前会话历史开聊，不落盘不进会话列表；Ctrl+/ 切换、Ctrl+C 丢弃', run: async (arg) => {
       const q = String(arg || '').trim();
       if (!q) { console.log(painter().warning('用法: /btw <问题>（侧边对话，继承当前会话历史，不落盘）')); return; }

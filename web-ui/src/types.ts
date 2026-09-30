@@ -16,6 +16,7 @@ export type AgentEvent =
   | { type: 'message_steered'; sessionId: string; turnId: string; text: string }
   | { type: 'turn_steered'; sessionId: string; opId: string; input: string }
   | { type: 'token_usage_updated'; sessionId: string; turnId: string; model: string; inputTokens: number; outputTokens: number; cost: number }
+  | { type: 'checkpoint_created'; sessionId: string; turnId: string; turnIndex: number; kind: 'git' | 'mirror'; ref: string }
   | { type: 'context_compression_started'; sessionId: string; turnId: string; headRecords: number }
   | { type: 'context_compression_completed'; sessionId: string; turnId: string; keptRecords: number }
   | { type: 'context_compression_failed'; sessionId: string; turnId: string; error: string }

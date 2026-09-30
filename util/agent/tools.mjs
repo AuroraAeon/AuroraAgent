@@ -87,6 +87,15 @@ function gateIgnored(ctx, abs, shown) {
 }
 
 /**
+ * 检查点镜像钩子（非 git 工作区的回滚靠它）：写落笔前把被改文件的原内容抄进本轮镜像。
+ * git 仓库由 checkpoint.mjs 的 stash 快照管，这里恒为空转（capture 内部判 mirror 是否存在）。
+ * ctx.checkpoint 由 Loop 按会话注入；缺省（终端旧调用方 / 单测）不抄。
+ */
+function captureForCheckpoint(ctx, abs) {
+  ctx?.checkpoint?.capture?.(abs);
+}
+
+/**
  * shell 子进程环境净化：剔除凭据形态变量（KEY / TOKEN / SECRET / PASSWORD / CREDENTIAL），
  * 只留运行命令必需的基础项。模型跑的命令能读走上游 Key 是真实风险——一条 `env | curl …`
  * 就是事故。enabled=false 可关（排障用），缺省开；白名单内的键即使形态匹配也保留。
@@ -294,6 +303,7 @@ export const TOOLS = [
     run(args, ctx) {
       const abs = resolveInside(ctx.workspace, args.path);
       gateIgnored(ctx, abs, args.path);
+      captureForCheckpoint(ctx, abs); // 检查点镜像（非 git 工作区）：落笔前抄下原内容
       mkdirSync(dirname(abs), { recursive: true });
       writeFileSync(abs, String(args.content ?? ''));
       return `已写入 ${args.path}（${String(args.content ?? '').length} 字符）`;
@@ -328,6 +338,7 @@ export const TOOLS = [
         throw new ToolError(`要替换的文本在 ${args.path} 中出现 ${count} 次：请提供更多上下文以精确定位，或设 replace_all=true`, 'not_unique');
       }
       const next = args.replace_all ? parts.join(newStr) : text.replace(oldStr, newStr);
+      captureForCheckpoint(ctx, abs); // 检查点镜像（非 git 工作区）：落笔前抄下原内容
       writeFileSync(abs, next);
       const diff = lineDiff(text, next);
       return {

@@ -20,6 +20,7 @@ import { IgnoreController } from '../ignore.mjs';
 import { discoverRules, collectCandidatePaths } from './rules.mjs';
 import { discoverAgentConfigs, subagentTools } from './subagents.mjs';
 import { nullHooks } from './hooks/index.mjs';
+import { writeCheckpointHistory } from './checkpoint.mjs';
 import { deriveTitle } from './title.mjs';
 import { generateTitleText } from './title-model.mjs';
 import { DEFAULT_SESSION_NAME } from './session.mjs';
@@ -112,6 +113,9 @@ export async function runAgentTurn(ctx) {
     failoverState = null, failoverTimeouts = null, failoverQueue = null,
     // hook 运行器（util/agent/hooks/）：由 HTTP 面按工作目录注入；直连 Loop 的旧调用方不传即空转
     hooks = nullHooks,
+    // 检查点运行时（util/agent/checkpoint.mjs）：由 HTTP 面按会话持有（历史跨轮累积）；
+    // 侧边对话 / 子代理不传——侧边不落盘无从回滚，子代理的快照该由父轮统一负责
+    checkpoints = null,
   } = ctx;
   // input 单独声明：prompt_submit 钩子可改写入参（overrideInput），落库 / 标题 / 规则候选路径都认改写后的值
   let input = ctx.input;
@@ -173,6 +177,24 @@ export async function runAgentTurn(ctx) {
     if (sys) hookExtra += `${hookExtra ? '\n\n' : ''}【钩子追加的系统提示】\n${sys}`;
     if (text) hookExtra += `${hookExtra ? '\n\n' : ''}【钩子追加的上下文】\n${text}`;
   };
+
+  // 检查点快照（util/agent/checkpoint.mjs）：每个用户轮开始前给工作目录拍一张照，之后可整体
+  // 回滚到这一照而会话历史照样留着。git 仓库走 stash + 私有 ref，非 git 仓库降级为内容镜像
+  // （write_file / edit_file 落笔前经 ctx.checkpoint.capture 抄原内容）。只在顶层轮做——
+  // 子代理的改动算父轮的，侧边对话不落盘无从回滚
+  const turnIndex = (session.turns || 0) + 1;
+  if (checkpoints && checkpoints.enabled !== false && depth === 0) {
+    try {
+      const entry = await checkpoints.beginTurn(turnIndex, `第 ${turnIndex} 轮`);
+      if (entry) {
+        store.patch(sessionId, { checkpoints: writeCheckpointHistory(checkpoints.entries) });
+        emit('checkpoint_created', { sessionId, turnId, turnIndex, kind: entry.kind, ref: entry.ref });
+      }
+    } catch (e) {
+      // 快照失败不该让 turn 开不了工：本轮只是「回滚不可用」，照常跑
+      log('warn', '检查点快照失败，本轮回滚不可用', { sessionId, turnIndex, error: String(e?.message || e) });
+    }
+  }
 
   // prompt_submit：用户记录落盘前最后一道改写机会（overrideInput 换输入 / cancel 掐掉这个 turn）
   const submitHook = await fireHook('prompt_submit', { input, ...(inputSkill ? { skill: inputSkill } : {}) });
@@ -544,7 +566,7 @@ export async function runAgentTurn(ctx) {
     let out;
     try {
       // signal 进 ctx：长动作（computer_use 批量操作）可在用户中止时立刻停手，不留野进程
-      const res = await tool.run(runArgs, { workspace: session.workspace, skills, todoStore, spawn, proxy: agentProxy, skillsLoaded, signal: controller?.signal, ignore, sanitizeChildEnv });
+      const res = await tool.run(runArgs, { workspace: session.workspace, skills, todoStore, spawn, proxy: agentProxy, skillsLoaded, signal: controller?.signal, ignore, sanitizeChildEnv, checkpoint: checkpoints });
       // 工具可返回字符串或 { output, extra }：extra 是结构化负载（diff / todos），
       // 进转录与 tool_event 供两端渲染，但不进模型消息（模型只看 output 文本）
       if (call.name === 'skill') grantSkillTools(runArgs.name);

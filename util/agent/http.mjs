@@ -25,6 +25,8 @@ import { subscribeJobEvents, publishJobEvent } from '../jobs/bus.mjs';
 import { PERMISSION_MODES, TITLE_MODES, experimentalEnabled } from '../config.mjs';
 import { McpRegistry } from '../mcp/registry.mjs';
 import { createHookRunner } from './hooks/index.mjs';
+import { createCheckpointRuntime, readCheckpointHistory } from './checkpoint.mjs';
+import { restoreCheckpoint, trimRecordsToTurn, filesTouchedAfter } from './checkpoint-restore.mjs';
 import { HOOK_EVENTS } from './hooks/events.mjs';
 
 const HOOK_EVENT_NAMES = HOOK_EVENTS;
@@ -85,6 +87,22 @@ export function createAgentApi(deps) {
       hookRunners.set(key, runner);
     }
     return runner;
+  };
+  // 检查点运行时按会话持有：历史跨轮累积，快照本体在仓库 .git（git 工作区）或数据目录
+  // backups/（非 git 工作区）。删会话时 close() 清 ref + 清镜像，否则 .git 里越积越多
+  const checkpointRuntimes = new Map();
+  const checkpointFor = (sessionId, workspace) => {
+    let rt = checkpointRuntimes.get(sessionId);
+    if (!rt) {
+      const meta = sessions.get(sessionId);
+      rt = createCheckpointRuntime({
+        workspace, dataDir, sessionId,
+        log: (level, msg, extra) => log(level, msg, extra),
+        history: readCheckpointHistory(meta),
+      });
+      checkpointRuntimes.set(sessionId, rt);
+    }
+    return rt;
   };
   const cronRuntimes = new Map();
   const cronRuntimeFor = (sessionId) => {
@@ -243,6 +261,8 @@ export function createAgentApi(deps) {
         ignoreEnabled: cfg.ignore?.enabled !== false, sanitizeChildEnv: cfg.sanitizeChildEnv !== false,
         // hook 运行器（util/agent/hooks/）：按会话工作目录取（项目钩子与个人钩子的发现根不同）
         hooks: hookRunnerFor(sessionMeta.workspace),
+        // 检查点运行时（util/agent/checkpoint.mjs）：侧边对话不传（不落盘无从回滚）
+        checkpoints: side ? null : checkpointFor(sessionId, sessionMeta.workspace),
         // 规则 toggle 表（用户显式关掉的规则不注入系统提示；见 util/agent/rules.mjs）
         ruleToggles: cfg.rules?.toggles || {},
         // 声明式子代理（util/agent/subagents.mjs）：目录由 Loop 自己按数据目录发现，
@@ -342,6 +362,59 @@ export function createAgentApi(deps) {
       });
     }
 
+    // —— 检查点（快照回滚）：列表 / 恢复 / 清理 ——
+    if (req.method === 'GET' && url === '/api/agent/checkpoints') {
+      const q = new URL(req.url, 'http://localhost').searchParams;
+      const sessionId = q.get('sessionId') || '';
+      const meta = sessionId ? sessions.get(sessionId) : null;
+      if (!meta) return json(res, 400, { error: { message: '缺少或未知的 sessionId' } });
+      const rt = checkpointFor(sessionId, meta.workspace);
+      return json(res, 200, { sessionId, kind: rt.kind, checkpoints: rt.describe() });
+    }
+
+    if (req.method === 'DELETE' && url === '/api/agent/checkpoints') {
+      const body = await readBody(req, 64 * 1024);
+      const sessionId = String(body.sessionId || '');
+      if (!sessionId || !sessions.get(sessionId)) return json(res, 400, { error: { message: '缺少或未知的 sessionId' } });
+      const rt = checkpointRuntimes.get(sessionId);
+      if (rt) { checkpointRuntimes.delete(sessionId); await rt.close().catch(() => {}); }
+      return json(res, 200, { ok: true, cleared: true });
+    }
+
+    if (req.method === 'POST' && url === '/api/agent/checkpoints/restore') {
+      const body = await readBody(req, 256 * 1024);
+      const sessionId = String(body.sessionId || '');
+      const meta = sessionId ? sessions.get(sessionId) : null;
+      if (!meta) return json(res, 400, { error: { message: '缺少或未知的 sessionId' } });
+      const turnIndex = Number(body.turnIndex);
+      if (!Number.isInteger(turnIndex) || turnIndex < 1) return json(res, 400, { error: { message: 'turnIndex 必须是正整数' } });
+      const rt = checkpointFor(sessionId, meta.workspace);
+      const entry = rt.entries.find((e) => e.turnIndex === turnIndex);
+      if (!entry) return json(res, 404, { error: { message: `第 ${turnIndex} 轮没有检查点（可用轮次：${rt.entries.map((e) => e.turnIndex).join('、') || '无'}）` } });
+      const restoreFiles = body.restoreFiles !== false; // 默认连工作区一起回滚
+      const restoreChat = body.restoreChat === true;     // 默认只回滚工作区，不动对话
+      let worktree = null;
+      if (restoreFiles) {
+        try {
+          worktree = await restoreCheckpoint(meta.workspace, entry, { dataDir, sessionId, log: (l, m, e) => log(l, m, e) });
+        } catch (e) {
+          return json(res, 409, { error: { message: e?.message || String(e) } });
+        }
+      }
+      let trimmed = 0;
+      if (restoreChat) {
+        const records = sessions.records(sessionId);
+        const cut = trimRecordsToTurn(records, turnIndex);
+        trimmed = cut.trimmed;
+        if (trimmed > 0) sessions.replaceRecords(sessionId, cut.records);
+      }
+      return json(res, 200, {
+        ok: true, turnIndex, kind: entry.kind,
+        worktree, trimmed,
+        filesAfter: filesTouchedAfter(sessions.records(sessionId), turnIndex),
+      });
+    }
+
     if (req.method === 'POST' && url === '/api/agent/sessions') {
       const body = await readBody(req, 1024 * 1024);
       const cfg = loadConfig();
@@ -384,6 +457,9 @@ export function createAgentApi(deps) {
       // computer_use 截图随会话一起清（shots/<会话 id>/），别让数据目录无限涨
       computerRuntimes.delete(sessionMatch[1]);
       rmSync(join(dataDir, 'shots', sessionMatch[1]), { recursive: true, force: true });
+      // 检查点快照随之作废：git 私有 ref 与内容镜像都不该在会话删除后继续占地方
+      const cpRt = checkpointRuntimes.get(sessionMatch[1]);
+      if (cpRt) { checkpointRuntimes.delete(sessionMatch[1]); void cpRt.close().catch(() => {}); }
       return json(res, 200, { deleted });
     }
     // 切换模式 / 改名 / 换模型：下一轮 turn 生效（进行中的 turn 不受影响）

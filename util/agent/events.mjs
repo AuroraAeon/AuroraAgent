@@ -21,6 +21,7 @@ export const EVENT_TYPES = [
   'message_steered',
   'turn_steered',
   'token_usage_updated',
+  'checkpoint_created',
   'context_compression_started',
   'context_compression_completed',
   'context_compression_failed',
