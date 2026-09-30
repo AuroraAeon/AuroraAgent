@@ -8,6 +8,7 @@
  * 工具集执行；权限三档（permissionMode）叠加在规则集之上，见 policy.mjs。
  */
 import { randomUUID } from 'node:crypto';
+import { dirname } from 'node:path';
 import { openChatStream } from '../llm/provider.mjs';
 import { isContextOverflow } from '../llm/errors.mjs';
 import { consumeAgentStream, primeUpstreamStream } from '../stream.mjs';
@@ -16,6 +17,7 @@ import { findSkill } from './skills.mjs';
 import { PermissionPolicy, defaultRules } from './policy.mjs';
 import { createSpawner } from './swarm.mjs';
 import { IgnoreController } from '../ignore.mjs';
+import { discoverRules, collectCandidatePaths } from './rules.mjs';
 import { deriveTitle } from './title.mjs';
 import { generateTitleText } from './title-model.mjs';
 import { DEFAULT_SESSION_NAME } from './session.mjs';
@@ -240,7 +242,7 @@ export async function runAgentTurn(ctx) {
   /** 超长时把早期记录折叠成一条 summary（压缩本身花一轮模型调用，失败不阻塞主流程）。
    *  force=true 时跳过阈值判断（上游已明示上下文超长，estimated 口径偏小也要压） */
   const maybeCompact = async (force = false) => {
-    const messages = assembleMessages({ harness, workspace: session.workspace, records, skills });
+    const messages = assembleMessages({ harness, workspace: session.workspace, records, skills, ...ruleOpts() });
     if (!force && !needsCompaction(messages, { windowTokens: contextWindowOf(activeProvider), ratio: harness.compactRatio })) return;
     // 切点必须落在无悬空 tool_call 的边界，并按窗口 × ratio 做预算投影
     // （保留下来的尾部还得给摘要与新内容留地方），见 context.mjs 的 findCutIndex
@@ -302,7 +304,20 @@ export async function runAgentTurn(ctx) {
   // 忽略文件闸门（util/ignore.mjs）：按会话工作目录加载 .auroraagentignore 并热加载，
   // 文件类工具在 resolveInside 之后过闸。子代理各自 turn 各持一份（工作目录相同则规则相同）
   const ignore = ignoreEnabled ? new IgnoreController({ workspace: session.workspace, log }).load() : null;
-  let messages = assembleMessages({ harness, workspace: session.workspace, records, skills });
+  // 规则（用户指令层，rules.mjs）：项目 AGENTS.md / .auroraagent/rules + 数据目录 rules，
+  // 每个 turn 开头发现一次（规则文件改动在下轮生效，不值得为它起 watch）；条件激活的候选
+  // 路径 = 本轮发言里提到的路径 + 会话记录里工具真正碰过的路径
+  const ruleToggles = ctx.ruleToggles || {};
+  // 侧边对话是内存门面（无 .dir），此时只发现工作区规则、不找数据目录个人规则
+  const { rules, warnings: ruleWarns } = discoverRules({ workspace: session.workspace, dataDir: store.dir ? dirname(store.dir) : '' });
+  for (const w of ruleWarns) log('warn', '规则加载告警', { sessionId, detail: w });
+  const rulePaths = () => {
+    const fromInput = collectCandidatePaths({ input, records: [] });
+    const fromHistory = collectCandidatePaths({ records });
+    return [...new Set([...fromInput, ...fromHistory])];
+  };
+  const ruleOpts = () => ({ rules, ruleToggles, rulePaths: rulePaths() });
+  let messages = assembleMessages({ harness, workspace: session.workspace, records, skills, ...ruleOpts() });
   let round = 0;
   let finalText = '';
   let totalTools = 0;
@@ -339,7 +354,7 @@ export async function runAgentTurn(ctx) {
       records.push({ t: 'user', text: pendingSteer });
       emit('message_steered', { sessionId, turnId, text: pendingSteer });
     }
-    messages = assembleMessages({ harness, workspace: session.workspace, records, skills, extraSystem });
+    messages = assembleMessages({ harness, workspace: session.workspace, records, skills, extraSystem, ...ruleOpts() });
     emit('model_round_started', { sessionId, turnId, round });
     // 本轮模型流的专用中断器：用户中途发言只断它；turn 级中止经转发同样断流，两条路径在此汇合
     const roundAbort = new AbortController();

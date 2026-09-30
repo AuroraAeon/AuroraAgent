@@ -24,6 +24,7 @@ import { handleGenerationApi } from './util/settings-generation.mjs';
 import { createAgentApi } from './util/agent/http.mjs';
 import { handleTuiSettingsApi } from './util/tui/settings-api.mjs';
 import { handleAgentProxyApi } from './util/proxy.mjs';
+import { handleRulesApi } from './util/agent/rules-api.mjs';
 import { handleWorkspaceApi } from './util/workspace.mjs';
 import { guardRequest } from './util/http-guard.mjs';
 import { resolveDataDir, loadConfig, saveConfig, PRICE } from './util/config.mjs';
@@ -436,6 +437,13 @@ const server = createServer(async (req, res) => {
   // 生成参数与 API Key（/api/settings/generation、/api/settings/key，实现见 util/settings-generation.mjs；下一轮请求即时生效）
   if (url.startsWith('/api/settings/generation') || url.startsWith('/api/settings/key')) {
     if (await handleGenerationApi(req, res, url, { loadConfig, saveConfig, log })) return;
+  }
+
+  // 规则开关（/api/settings/rules，实现见 util/agent/rules-api.mjs；下一轮请求即时生效）
+  if (url.startsWith('/api/settings/rules')) {
+    // 规则按「会话工作目录」发现：前端传当前会话的 workspace（?workspace=），缺省回落进程 cwd
+    const ws = new URL(req.url, 'http://localhost').searchParams.get('workspace') || process.cwd();
+    if (await handleRulesApi(req, res, url, { loadConfig, saveConfig, log, workspace: ws, dataDir: DATA_DIR })) return;
   }
 
   // Agent 沙箱代理（/api/settings/proxy，实现见 util/proxy.mjs；web_fetch 等出站请求即时生效）

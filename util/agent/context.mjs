@@ -7,6 +7,7 @@
 import { estimateTokens } from '../sse.mjs';
 import { toolMessageContent } from './tools.mjs';
 import { skillCatalogBlock } from './skills.mjs';
+import { rulesBlock, collectCandidatePaths, RULE_TOKEN_BUDGET } from './rules.mjs';
 
 const DEFAULT_WINDOW = 128000;
 
@@ -15,6 +16,15 @@ const DEFAULT_WINDOW = 128000;
  *  消息序列以「带 tool_calls 的 assistant 消息」收尾，OpenAI 兼容上游直接 400，Anthropic 也会拒收，
  *  派生与会话恢复后的第一轮必炸。 */
 const INTERRUPTED_TOOL_RESULT = '[工具执行被中断，未产生结果]';
+
+/**
+ * 规则条件激活的候选路径：会话记录里工具真正碰过的文件（硬证据）。
+ * 用户当前这句话的路径由调用方经 assembleMessages 的 rules 入参提前算好（loop.mjs），
+ * 这里只补「历史证据」——两者合并才是一次完整的请求上下文。
+ */
+function ruleCandidatePaths(records = []) {
+  return collectCandidatePaths({ records });
+}
 
 /** 提供方声明的上下文窗口；未声明或非法时回退 128k */
 export function contextWindowOf(provider) {
@@ -41,15 +51,21 @@ export function needsCompaction(messages, { windowTokens = DEFAULT_WINDOW, ratio
  * tool_call / tool_result 成对投影为 assistant.tool_calls + role:tool；
  * summary 记录投影为系统消息（早期摘要）；thinking / usage 不回填（省 token 且不污染上下文）。
  */
-export function assembleMessages({ harness, workspace, records = [], skills = [], extraSystem = '' }) {
+export function assembleMessages({ harness, workspace, records = [], skills = [], extraSystem = '', rules = [], ruleToggles = null, ruleBudget = RULE_TOKEN_BUDGET, rulePaths = null } = {}) {
   const catalog = skillCatalogBlock(skills); // L1 目录：带 token 预算，超预算的技能只留 /<名称> 显式入口
+  // 规则（用户指令层）拼在 extraSystem 之前：它是项目约定，优先级高于本轮临时指令；
+  // 超预算的规则降级为 name + description，绝不整块丢弃（rulesBlock）
+  const rulesSeg = rulesBlock(rules, { paths: rulePaths || ruleCandidatePaths(records), toggles: ruleToggles, budget: ruleBudget });
   const system = [
     harness.systemPrompt,
     '',
     `工作目录：${workspace}`,
     `当前时间：${new Date().toISOString()}`,
     '文件工具只能访问工作目录内的路径；修改用户文件前先说清将要改什么。',
-  ].join('\n') + (catalog ? `\n\n${catalog}` : '') + (extraSystem ? `\n\n${extraSystem}` : '');
+  ].join('\n')
+    + (rulesSeg.block ? `\n\n${rulesSeg.block}` : '')
+    + (catalog ? `\n\n${catalog}` : '')
+    + (extraSystem ? `\n\n${extraSystem}` : '');
   const messages = [{ role: 'system', content: system }];
   const pending = [];
   // 预扫：有真实 tool_result 的调用 id，其余即悬空调用（中断残留），flush 时补合成结果。

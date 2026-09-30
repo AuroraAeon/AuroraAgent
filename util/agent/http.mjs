@@ -225,6 +225,8 @@ export function createAgentApi(deps) {
         emit, controller, permissionMode, planMode, titleMode, extraTools: extraToolsFor(harness, side, sessionId),
         agentProxy: cfg.agentProxy,
         ignoreEnabled: cfg.ignore?.enabled !== false, sanitizeChildEnv: cfg.sanitizeChildEnv !== false,
+        // 规则 toggle 表（用户显式关掉的规则不注入系统提示；见 util/agent/rules.mjs）
+        ruleToggles: cfg.rules?.toggles || {},
         providerFailover: cfg.providerFailover, providerFailoverMaxAttempts: cfg.providerFailoverMaxAttempts,
         failoverCandidates,
         failoverState,

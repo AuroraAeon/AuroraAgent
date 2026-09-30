@@ -13,6 +13,7 @@ import { writeFileAtomic } from './atomic.mjs';
 import { parseTuiConfig } from './tui/config.mjs';
 import { parseAgentProxy } from './proxy.mjs';
 import { parseIgnoreConfig } from './ignore.mjs';
+import { parseRulesConfig } from './agent/rules.mjs';
 import { parseFailoverConfig, parseFailoverSection, FAILOVER_DEFAULTS } from './llm/failover.mjs';
 
 /** 限时折扣价: 输入 ¥2 / 输出 ¥8 每百万 tokens */
@@ -104,6 +105,8 @@ export function loadConfig({ warn } = {}) {
     ignore: parseIgnoreConfig(saved.ignore),
     // shell 子进程环境净化（剔除 KEY/TOKEN/SECRET 等凭据形态变量）：缺省开
     sanitizeChildEnv: saved.sanitizeChildEnv !== false,
+    // 规则 toggle 表（用户显式关掉的规则不注入）：解析在 agent/rules.mjs，缺省全开
+    rules: parseRulesConfig(saved),
     providerFailover: failover.enabled,
     providerFailoverMaxAttempts: failover.maxAttempts,
     // failover 段原样透出（超时三件套 / 熔断五项 / 偏好有效期）：设置页读写与 saveConfig
@@ -145,6 +148,7 @@ export function saveConfig(cfg) {
     tui: parseTuiConfig(cfg.tui),
     ignore: cfg.ignore !== undefined ? parseIgnoreConfig(cfg.ignore) : (savedSection('ignore') !== undefined ? parseIgnoreConfig(savedSection('ignore')) : parseIgnoreConfig(undefined)),
     sanitizeChildEnv: cfg.sanitizeChildEnv !== undefined ? cfg.sanitizeChildEnv !== false : savedSection('sanitizeChildEnv') !== false,
+    rules: cfg.rules !== undefined ? parseRulesConfig(cfg.rules) : parseRulesConfig(savedSection('rules')),
     agentProxy: cfg.agentProxy !== undefined ? (parseAgentProxy(cfg.agentProxy) || '') : savedAgentProxy(),
     providerFailover: cfg.providerFailover !== undefined ? parseFailoverConfig(cfg, {}).enabled : savedFailover().providerFailover,
     providerFailoverMaxAttempts: cfg.providerFailoverMaxAttempts !== undefined
