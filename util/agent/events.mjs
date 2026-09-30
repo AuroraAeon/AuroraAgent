@@ -25,6 +25,7 @@ export const EVENT_TYPES = [
   'context_compression_started',
   'context_compression_completed',
   'context_compression_failed',
+  'context_compression_cancelled',
   'goal_created',
   'goal_status_changed',
   'goal_usage_updated',

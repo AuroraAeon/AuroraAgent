@@ -27,7 +27,7 @@ import { generateTitleText } from './title-model.mjs';
 import { DEFAULT_SESSION_NAME } from './session.mjs';
 import { DEFAULT_TITLE_MODE } from '../config.mjs';
 import { PLAN_MAX_ROUNDS, PLAN_MODE_PROMPT, planExecutionNote, planToolNames } from './plan.mjs';
-import { assembleMessages, needsCompaction, planCompaction, compactionMessages, contextWindowOf } from './context.mjs';
+import { assembleMessages, needsCompaction, planCompaction, compactionMessages, contextWindowOf, estimateMessagesTokens } from './context.mjs';
 import { FAILOVER_DEFAULTS, semanticFailure } from '../llm/failover.mjs';
 import { createGoalRuntime } from './goal/runtime.mjs';
 import { GOAL_WRAPUP_NOTE } from './goal/continuation.mjs';
@@ -213,6 +213,10 @@ export async function runAgentTurn(ctx) {
   store.patch(sessionId, { turns: (session.turns || 0) + 1 });
 
   let totIn = 0, totOut = 0, totCost = 0;
+  // 当前上下文占用（估算口径，与压缩阈值同一把尺子）：供前端的上下文窗口进度条显示。
+  // 每轮组装完 messages 就地更新——recordRoundUsage 定义在 messages 之前，用可变壳避开 TDZ
+  const ctxSize = { tokens: 0, window: 0 };
+
   const recordRoundUsage = (u, stopped = false) => {
     const price = priceOf();
     const inTok = u?.prompt_tokens || 0;
@@ -226,7 +230,7 @@ export async function runAgentTurn(ctx) {
     store.append(sessionId, { t: 'usage', inputTokens: inTok, outputTokens: outTok, cost, ...(cachedTok ? { cachedTokens: cachedTok } : {}), ...(cacheWriteTok ? { cacheWriteTokens: cacheWriteTok } : {}) });
     store.patch(sessionId, { inputTokens: totIn, outputTokens: totOut, cost: totCost });
     usage.record({ kind: 'agent', requestId: turnId, sessionId, model, provider: activeProvider.id, ms: Date.now() - started, inputTokens: inTok, outputTokens: outTok, reasoningTokens: u?.completion_tokens_details?.reasoning_tokens || 0, cost: Number(cost.toFixed(6)), stopped, ...(cachedTok ? { cachedTokens: cachedTok } : {}), ...(cacheWriteTok ? { cacheWriteTokens: cacheWriteTok } : {}) });
-    emit('token_usage_updated', { sessionId, turnId, model, inputTokens: inTok, outputTokens: outTok, cost: Number(cost.toFixed(6)), cachedTokens: cachedTok, cacheWriteTokens: cacheWriteTok });
+    emit('token_usage_updated', { sessionId, turnId, model, inputTokens: inTok, outputTokens: outTok, cost: Number(cost.toFixed(6)), cachedTokens: cachedTok, cacheWriteTokens: cacheWriteTok, contextTokens: ctxSize.tokens, contextWindow: ctxSize.window });
   };
 
   /** 附加请求记账（titleMode=model 的标题轮 / goal 验证轮）：同一套单价，进账本与会话汇总，但不进转录与轮次脚注（渲染口径与本地模式一致） */
@@ -344,6 +348,12 @@ export async function runAgentTurn(ctx) {
       records = store.records(sessionId);
       emit('context_compression_completed', { sessionId, turnId, keptRecords: plan.tail.length });
     } catch (e) {
+      // 用户按停止不算失败：中止信号在场时单独发 cancelled，让前端显示「已取消」而不是红字报错
+      if (controller?.signal?.aborted) {
+        log('info', '上下文压缩被用户中止，沿用原上下文', { sessionId, turnId });
+        emit('context_compression_cancelled', { sessionId, turnId });
+        return;
+      }
       log('warn', '上下文压缩失败，沿用原上下文', { error: String(e) });
       emit('context_compression_failed', { sessionId, turnId, error: String(e) });
     }
@@ -404,6 +414,8 @@ export async function runAgentTurn(ctx) {
   };
   const ruleOpts = () => ({ rules, ruleToggles, rulePaths: rulePaths() });
   let messages = assembleMessages({ harness, workspace: session.workspace, records, skills, ...(hookExtra ? { extraSystem: hookExtra } : {}), ...ruleOpts() });
+  ctxSize.tokens = estimateMessagesTokens(messages);
+  ctxSize.window = contextWindowOf(provider);
   let round = 0;
   let finalText = '';
   let totalTools = 0;
@@ -460,6 +472,7 @@ export async function runAgentTurn(ctx) {
       emit('message_steered', { sessionId, turnId, text: pendingSteer });
     }
     messages = assembleMessages({ harness, workspace: session.workspace, records, skills, extraSystem: sysExtra, ...ruleOpts() });
+    ctxSize.tokens = estimateMessagesTokens(messages);
     emit('model_round_started', { sessionId, turnId, round });
     // 本轮模型流的专用中断器：用户中途发言只断它；turn 级中止经转发同样断流，两条路径在此汇合
     const roundAbort = new AbortController();

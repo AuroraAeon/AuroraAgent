@@ -329,6 +329,39 @@ html { font-size: var(--ui-font-size, 14px); }
   display:flex; align-items:center; gap:7px; color:var(--think); font-size:0.8929rem;
   background:var(--think-soft); border:1px solid var(--line); border-radius:9px; padding:7px 11px;
 }
+/* 上下文窗口占用（ContextMeter）：容器查询切条 / 环二态。
+   外壳自带 container-type，量的是自己的行内宽——侧栏收回、窗口变小就自动换环 */
+.ctxmeter-wrap { container-type:inline-size; }
+.ctxmeter {
+  display:flex; align-items:center; gap:8px;
+  font-size:0.8214rem; color:var(--dim);
+  background:var(--surface); border:1px solid var(--line); border-radius:9px; padding:6px 11px;
+}
+.ctxmeter-label { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ctxmeter-cache { flex:none; color:var(--faint); }
+.ctxmeter-bar { flex:1; min-width:48px; height:4px; border-radius:99px; background:var(--line-strong); overflow:hidden; }
+.ctxmeter-bar > i { display:block; height:100%; border-radius:99px; background:var(--accent); transition:width .25s var(--ease); }
+.ctxmeter.warn .ctxmeter-bar > i { background:var(--warn); }
+.ctxmeter.crit .ctxmeter-bar > i { background:var(--danger-ink); }
+.ctxmeter-ring { display:none; flex:none; width:18px; height:18px; transform:rotate(-90deg); }
+.ctxmeter-ring circle { fill:none; stroke-width:2.5; }
+.ctxmeter-ring-track { stroke:var(--line-strong); }
+.ctxmeter-ring-fill { stroke:var(--accent); stroke-linecap:round; transition:stroke-dasharray .25s var(--ease); }
+.ctxmeter.warn .ctxmeter-ring-fill { stroke:var(--warn); }
+.ctxmeter.crit .ctxmeter-ring-fill { stroke:var(--danger-ink); }
+/* 窄容器：条让位给环，标签自行截断（ellipsis 已在 .ctxmeter-label 上） */
+@container (max-width:420px) {
+  .ctxmeter-bar { display:none; }
+  .ctxmeter-ring { display:block; }
+}
+/* 压缩分隔行（ChatView）：四态共用一个底色，用左侧圆点区分，失败 / 取消不算报错但要看得见 */
+.comp-dot { flex:none; width:7px; height:7px; border-radius:50%; background:var(--faint); }
+.comp-dot.running { background:var(--accent); animation:pulse 1.1s var(--ease) infinite; }
+.comp-dot.done { background:var(--ok-ink); }
+.comp-dot.failed { background:var(--danger-ink); }
+.comp-dot.cancelled { background:var(--faint); }
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+@media (prefers-reduced-motion: reduce) { .comp-dot.running { animation:none; } }
 .row-notice {
   display:flex; align-items:center; gap:7px; color:var(--dim); font-size:0.8929rem;
   background:var(--surface); border:1px solid var(--line); border-radius:9px; padding:7px 11px;

@@ -111,11 +111,16 @@ export function createTurnEventHandlers(s: TurnSetters): (ev: AgentEvent) => voi
           inputTokens: (l.usage?.inputTokens || 0) + ev.inputTokens,
           outputTokens: (l.usage?.outputTokens || 0) + ev.outputTokens,
           cost: Number(((l.usage?.cost || 0) + ev.cost).toFixed(6)),
+          ...(ev.cachedTokens ? { cachedTokens: (l.usage?.cachedTokens || 0) + ev.cachedTokens } : {}),
+          // 上下文占用取最后一轮的现值（前面的轮次已被折叠 / 已被替换，累加没有意义）
+          ...(ev.contextTokens != null ? { contextTokens: ev.contextTokens } : {}),
+          ...(ev.contextWindow != null ? { contextWindow: ev.contextWindow } : {}),
         },
       } : l));
-    } else if (ev.type === 'context_compression_started') setLive((l) => (l ? { ...l, compression: '正在折叠早期对话…' } : l));
-    else if (ev.type === 'context_compression_completed') setLive((l) => (l ? { ...l, compression: `已折叠早期对话，保留近期 ${ev.keptRecords} 条记录` } : l));
-    else if (ev.type === 'context_compression_failed') setLive((l) => (l ? { ...l, compression: null } : l));
+    } else if (ev.type === 'context_compression_started') setLive((l) => (l ? { ...l, compression: { text: '正在压缩上下文…', state: 'running' } } : l));
+    else if (ev.type === 'context_compression_completed') setLive((l) => (l ? { ...l, compression: { text: `已压缩上下文，保留近期 ${ev.keptRecords} 条记录`, state: 'done' } } : l));
+    else if (ev.type === 'context_compression_failed') setLive((l) => (l ? { ...l, compression: { text: '上下文压缩失败，沿用原上下文', state: 'failed' } } : l));
+    else if (ev.type === 'context_compression_cancelled') setLive((l) => (l ? { ...l, compression: { text: '上下文压缩已取消，沿用原上下文', state: 'cancelled' } } : l));
     // goal 事件仅投影到当前会话（对齐 MiniMax goal-flow.project 的 sessionId 首行校验：
     // 运行中切换 / 新建会话后，旧会话 turn 流仍在推送，不能污染新会话的横幅）
     else if (ev.type === 'goal_created' || ev.type === 'goal_status_changed' || ev.type === 'goal_usage_updated' || ev.type === 'goal_wait_changed') {

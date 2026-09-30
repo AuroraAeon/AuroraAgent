@@ -15,11 +15,12 @@ export type AgentEvent =
   | { type: 'provider_switched'; sessionId: string; turnId: string; from: string; fromName?: string; to: string; toName?: string; reason: string; attempt: number }
   | { type: 'message_steered'; sessionId: string; turnId: string; text: string }
   | { type: 'turn_steered'; sessionId: string; opId: string; input: string }
-  | { type: 'token_usage_updated'; sessionId: string; turnId: string; model: string; inputTokens: number; outputTokens: number; cost: number }
+  | { type: 'token_usage_updated'; sessionId: string; turnId: string; model: string; inputTokens: number; outputTokens: number; cost: number; cachedTokens?: number; cacheWriteTokens?: number; contextTokens?: number; contextWindow?: number }
   | { type: 'checkpoint_created'; sessionId: string; turnId: string; turnIndex: number; kind: 'git' | 'mirror'; ref: string }
   | { type: 'context_compression_started'; sessionId: string; turnId: string; headRecords: number }
   | { type: 'context_compression_completed'; sessionId: string; turnId: string; keptRecords: number }
   | { type: 'context_compression_failed'; sessionId: string; turnId: string; error: string }
+  | { type: 'context_compression_cancelled'; sessionId: string; turnId: string }
   | { type: 'goal_created'; sessionId: string; goal: GoalState }
   | { type: 'goal_status_changed'; sessionId: string; goal: GoalState; statusReason: string | null; lastVerification: GoalVerification | null }
   | { type: 'goal_usage_updated'; sessionId: string; goal: GoalState }
@@ -211,10 +212,12 @@ export type MsgView =
 
 /** 进行中的 turn（流式渲染，与历史投影共用 parts 时间线与 ToolCard） */
 export type PlanView = { text: string; decided: 'pending' | 'approved' | 'rejected' };
+/** 转录里的压缩分隔行：四个终态都留一行，别让「失败了」悄无声息地回到原上下文 */
+export type CompressionView = { text: string; state: 'running' | 'done' | 'failed' | 'cancelled' };
 export type LiveTurn = {
   turnId: string; parts: MsgPart[]; thinking: string;
-  usage: { inputTokens: number; outputTokens: number; cost: number } | null;
-  compression: string | null;
+  usage: { inputTokens: number; outputTokens: number; cost: number; cachedTokens?: number; contextTokens?: number; contextWindow?: number } | null;
+  compression: CompressionView | null;
   plan: PlanView | null;
   round: number; startedAt: number;
 };

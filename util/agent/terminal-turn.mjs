@@ -161,17 +161,22 @@ export async function runTerminalTurn({ store, usage, session, input, inputSkill
       case 'context_compression_started':
         endToolLine();
         breakLine();
-        write(painter.dim('  ↳ 上下文超限，正在折叠早期对话…\n'));
+        write(painter.dim('  ↳ 正在压缩上下文…\n'));
         break;
       case 'context_compression_completed':
         endToolLine();
         breakLine();
-        write(painter.dim(`  ↳ 已折叠，保留近期 ${p.keptRecords} 条记录\n`));
+        write(painter.dim(`  ↳ 已压缩上下文，保留近期 ${p.keptRecords} 条记录\n`));
         break;
       case 'context_compression_failed':
         endToolLine();
         breakLine();
-        write(painter.dim(`  ↳ 折叠失败，沿用原上下文：${p.error}\n`));
+        write(painter.dim(`  ↳ 上下文压缩失败，沿用原上下文：${p.error}\n`));
+        break;
+      case 'context_compression_cancelled':
+        endToolLine();
+        breakLine();
+        write(painter.dim('  ↳ 上下文压缩已取消，沿用原上下文\n'));
         break;
       case 'provider_switched':
         endToolLine();

@@ -7,6 +7,7 @@ import { TodoPanel } from './Todo';
 import { PlanCard } from './PlanCard';
 import { fmtCostYen } from '../projection';
 import { TurnNavigator } from './TurnNavigator';
+import { ContextMeter } from './ContextMeter';
 import { IconChevronDown, IconSpark } from '../icons';
 import type { LiveTurn, MsgView, TodoItem } from '../types';
 
@@ -40,7 +41,13 @@ function LiveRow({ live, onDecide, onDecidePlan }: { live: LiveTurn; onDecide?: 
         {live.parts.map((p, pi) => (p.kind === 'text'
           ? <Markdown key={`t${pi}`} text={p.text} />
           : <ToolCard key={p.id} tool={p} onDecide={onDecide} />))}
-        {live.compression ? <div className="row-system">{live.compression}</div> : null}
+        {/* 压缩分隔行：四个终态都留一行（含失败与取消）——悄悄回到原上下文会让人以为压缩成功过 */}
+        {live.compression ? (
+          <div className={`row-system comp-${live.compression.state}`}>
+            <span className={`comp-dot ${live.compression.state}`} aria-hidden="true" />
+            {live.compression.text}
+          </div>
+        ) : null}
         {live.usage ? (
           <div className="usage-foot">
             输入 {live.usage.inputTokens} · 输出 {live.usage.outputTokens} · 费用 {fmtCostYen(live.usage.cost)}
@@ -122,6 +129,10 @@ export function ChatView({ messages, live, hasSession, onDecide, onPick, todos, 
     <div className="chat-wrap">
       <div className="chat-scroll" id="chatScroll" ref={scrollRef} onScroll={onScroll}>
         <div className="chat-inner">
+          {/* 上下文窗口占用：只有真拿到估算值才显示（估算为 0 说明后端没给，别显示个 0% 吓人） */}
+          {live?.usage?.contextTokens ? (
+            <ContextMeter tokens={live.usage.contextTokens} window={live.usage.contextWindow || 0} cached={live.usage.cachedTokens} />
+          ) : null}
           <TodoPanel todos={todos} />
           {messages.map((m) => <Message key={m.key} msg={m} onDecide={onDecide} />)}
           {live ? <LiveRow live={live} onDecide={onDecide} onDecidePlan={onDecidePlan} /> : null}
