@@ -25,7 +25,7 @@ import { getTool, toolSchemas, anthropicToolSchemas, toolResource, resolveInside
 import { toolLabel, toolIconKey, toolResourceOf, fmtCost, projectTurns } from '../util/agent/transcript.mjs';
 import { PermissionPolicy, defaultRules, mostRestrictive } from '../util/agent/policy.mjs';
 import { assembleMessages, needsCompaction, planCompaction, compactionMessages, contextWindowOf, estimateMessagesTokens, findCutIndex, safeCutPoints, droppedWorkSummary } from '../util/agent/context.mjs';
-import { runAgentTurn } from '../util/agent/loop.mjs';
+import { runAgentTurn, createModelSteer } from '../util/agent/loop.mjs';
 import { connectMcp, callResultText, McpError } from '../util/mcp/client.mjs';
 import { McpRegistry, validateServerDraft, loadMcpServers, mcpToolName } from '../util/mcp/registry.mjs';
 import { UsageLedger } from '../util/usage.mjs';
@@ -1235,7 +1235,7 @@ const toolFrames = (name, args) => [
 ];
 
 /** 一次性 loop 运行环境：临时数据目录 + stub fetch + 事件收集 */
-async function runLoopOnce({ framesByCall, harness = getHarness('standard'), permission = 'allow', seedRecords = [], providerExtra = {}, input = '开始', planMode = false, planDecision = 'approve', sessionName = '', titleMode = 'local', agentProxy = '', wsFiles = {}, ignoreFile = '', sanitizeChildEnv } = {}) {
+async function runLoopOnce({ framesByCall, harness = getHarness('standard'), permission = 'allow', seedRecords = [], providerExtra = {}, input = '开始', planMode = false, planDecision = 'approve', sessionName = '', titleMode = 'local', agentProxy = '', wsFiles = {}, ignoreFile = '', sanitizeChildEnv, steer = null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'mt-loop-'));
   const ws = join(dir, 'workspace');
   mkdirSync(ws, { recursive: true });
@@ -1256,9 +1256,11 @@ async function runLoopOnce({ framesByCall, harness = getHarness('standard'), per
   let call = 0;
   globalThis.fetch = async (url, opts = {}) => {
     requests.push({ url: String(url), body: JSON.parse(opts.body || '{}'), signal: opts.signal });
-    if (opts.signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
-    const scripted = typeof framesByCall === 'function' ? framesByCall(call, requests.at(-1)) : framesByCall[Math.min(call, framesByCall.length - 1)];
-    call++;
+    if (opts.signal?.aborted) throw opts.signal.reason || Object.assign(new Error('aborted'), { name: 'AbortError' });
+    // 计数必须在脚本回调之前推进：回调里抛错（模拟中途断流 / 上游失败）时也不能把序号卡住，
+    // 否则后续每轮都拿到同一个 n，一次抛错会被误演成「每轮都抛」
+    const n = call++;
+    const scripted = typeof framesByCall === 'function' ? framesByCall(n, requests.at(-1)) : framesByCall[Math.min(n, framesByCall.length - 1)];
     if (scripted instanceof Response) return scripted;
     if (Array.isArray(scripted)) return sseResp(scripted);
     return sseResp(scripted.frames, scripted.status);
@@ -1276,6 +1278,7 @@ async function runLoopOnce({ framesByCall, harness = getHarness('standard'), per
     agentProxy,
     sanitizeChildEnv,
     requestPlanDecision: async () => planDecision,
+    modelSteer: steer || undefined,
     log: () => {},
   }).finally(() => { globalThis.fetch = realFetch; });
   return { dir, ws, store, usage, session, events, requests, result, permCalls };
@@ -1336,6 +1339,133 @@ await test('Loop：相邻只读工具并行重叠、写工具串行，结果顺�
   const toolIds = requests[1].body.messages.filter((m) => m.role === 'tool').map((m) => m.tool_call_id);
   eq(JSON.stringify(toolIds), JSON.stringify(['c1', 'c2', 'c3']), 'tool 消息顺序必须与模型给出的一致');
   eq(readFileSync(join(ws, 'c.txt'), 'utf8'), 'CCC', '写工具应真的落地');
+});
+
+await test('Loop：连接期限流后同提供方内原地重试，恢复后照常收尾', async () => {
+  const { events, requests, result } = await runLoopOnce({
+    framesByCall: (n) => (n === 0
+      ? { frames: [{ choices: [{ index: 0, delta: { content: 'too many requests' } }] }], status: 429 }
+      : textFrames('恢复后的回答')),
+  });
+  eq(requests.length, 2, '第一次 429 后原地重试一次');
+  eq(result.text, '恢复后的回答', '重试成功后内容照常产出');
+  eq(result.failed, undefined, 'turn 不失败');
+  assert(events.some((e) => e.type === 'turn_completed'), '正常收尾');
+});
+
+await test('Loop：流已产出字节后失败不原地重试（透明重试会重复扣费）', async () => {
+  const { requests, result, events } = await runLoopOnce({
+    framesByCall: () => new Response(new ReadableStream({
+      start(c) {
+        c.enqueue(new TextEncoder().encode('data: {"choices":[{"index":0,"delta":{"content":"半截"}}]}\n\n'));
+        // 已向调用方发出字节后才失败：重试会让用户看到两遍半截回答
+        c.error(Object.assign(new TypeError('network down'), { kind: 'network' }));
+      },
+    }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } }),
+  });
+  eq(requests.length, 1, '有产出就不再原地重试');
+  assert(events.some((e) => e.type === 'turn_failed'), '以 turn_failed 收尾');
+  eq(result.failed, true, '上报失败');
+});
+
+await test('Loop：不可原地重试的错误（400 请求自身问题）不重试', async () => {
+  const { requests, result } = await runLoopOnce({
+    framesByCall: () => ({ frames: [{ choices: [{ index: 0, delta: { content: 'bad request' } }] }], status: 400 }),
+  });
+  eq(requests.length, 1, '400 是请求自身问题，重试只会放大错误');
+  eq(result.failed, true, '直接失败');
+});
+
+await test('Loop：上下文超长只压缩重放一次，恢复后照常收尾', async () => {
+  const overflow = () => ({ frames: [{ choices: [{ index: 0, delta: { content: "This model's maximum context length is 128000 tokens." } }] }], status: 400 });
+  // 历史要长到确有可切点（findCutIndex 要求头部 ≥6 条记录且用户轮 > keepTurns），
+  // 否则 planCompaction 返回 null、压缩请求根本不会发生
+  const seed = [];
+  for (let i = 0; i < 12; i++) {
+    seed.push({ t: 'user', text: `第${i}个问题，${'x'.repeat(120)}` });
+    seed.push({ t: 'assistant', text: `第${i}个回答，${'y'.repeat(120)}` });
+  }
+  const { requests, events, result } = await runLoopOnce({
+    seedRecords: seed,
+    framesByCall: (n) => (n === 0 ? overflow() : textFrames('【摘要】早期讨论了十二个问题')),
+  });
+  eq(requests.length, 3, '超长错误只触发一次压缩重放（原轮 + 压缩 + 重放）');
+  assert(events.some((e) => e.type === 'context_compression_started'), '走过压缩');
+  assert(events.some((e) => e.type === 'context_compression_completed'), '压缩完成');
+  eq(requests[0].body.messages[0].role, 'system', '第一次请求是主轮次（报超长）');
+  assert(String(requests[1].body.messages[1].content).includes('第0个问题'), '第二次请求是压缩摘要（消息 0 是压缩器系统提示）');
+  eq(result.text, '【摘要】早期讨论了十二个问题', '重放后内容照常');
+  eq(result.failed, undefined, 'turn 成功');
+});
+
+await test('Loop：压缩无效时不循环重放，把真实错误抛出来', async () => {
+  const overflow = () => ({ frames: [{ choices: [{ index: 0, delta: { content: 'maximum context length exceeded' } }] }], status: 400 });
+  const { requests, result } = await runLoopOnce({
+    seedRecords: [{ t: 'user', text: '历史'.repeat(200) }],
+    framesByCall: () => overflow(),
+  });
+  eq(requests.length, 2, '只重放一次（不无限循环）');
+  eq(result.failed, true, '把真实错误交给用户');
+});
+
+await test('Loop：长度截断续写只追问一次，前后半段拼成完整回答', async () => {
+  const lenFrame = (txt) => [
+    { choices: [{ index: 0, delta: { content: txt } }] },
+    { choices: [{ index: 0, delta: {}, finish_reason: 'length' }], usage: { prompt_tokens: 5, completion_tokens: 5 } },
+  ];
+  const { requests, result } = await runLoopOnce({
+    framesByCall: (n) => (n <= 1 ? lenFrame(n === 0 ? '前半段' : '后半段也触顶') : textFrames('第三段')),
+  });
+  eq(requests.length, 2, '第二次仍触顶就不再追问');
+  eq(result.text, '前半段后半段也触顶', '前后半段拼成完整回答');
+  eq(result.failed, undefined, 'turn 正常收尾');
+});
+
+await test('Loop：中途发言只断当前模型流，发言并入上下文后继续', async () => {
+  const steer = createModelSteer();
+  eq(steer.request(''), false, '空发言不被接受');
+  eq(steer.request('没在飞'), false, '没有模型流在飞时不抢话（走队列）');
+  const { events, requests, result, ws, store, session } = await runLoopOnce({
+    steer,
+    framesByCall: (n, req) => {
+      if (n === 0) {
+        const ok = steer.request('顺便把结论也写上');
+        assert(ok === true, '模型流在飞时发言被当前 turn 吸收');
+        throw req.signal.reason; // 模拟 fetch 因这一断而失败
+      }
+      if (n === 1) return toolFrames('write_file', { path: 'a.txt', content: 'AAA\n结论\n' });
+      return textFrames('写好了');
+    },
+    wsFiles: { 'a.txt': 'AAA\n' },
+  });
+  const steered = events.find((e) => e.type === 'message_steered');
+  assert(steered && steered.text === '顺便把结论也写上', '发出 message_steered 事件');
+  eq(requests.length, 3, '插话后照常跑后续轮');
+  eq(result.text, '写好了', 'turn 正常收尾');
+  eq(readFileSync(join(ws, 'a.txt'), 'utf8'), 'AAA\n结论\n', '在跑的工具照常落地');
+  const recs = store.records(session.id);
+  assert(recs.some((r) => r.t === 'user' && r.text === '顺便把结论也写上'), '发言作为用户记录并入上下文');
+});
+
+await test('Loop：工具执行期间的发言不被吸收，走队列由泵接力', async () => {
+  const steer = createModelSteer();
+  let absorbed = 'unset';
+  const { events, result } = await runLoopOnce({
+    steer,
+    wsFiles: { 'a.txt': 'AAA' },
+    framesByCall: (n) => {
+      if (n === 0) {
+        // 此刻模型流已结束、工具即将开跑：steer.streaming 为 false，request 应返回 false
+        setTimeout(() => { absorbed = steer.request('工具跑的时候说一句'); }, 0);
+        return toolFrames('shell', { command: 'sleep 0.3' });
+      }
+      return textFrames('完成');
+    },
+  });
+  eq(absorbed, false, '工具执行期间没有模型流可断，发言交给队列');
+  const done = events.find((e) => e.type === 'tool_event' && e.phase === 'completed');
+  assert(done && !events.some((e) => e.type === 'tool_event' && e.phase === 'failed'), '在跑的工具没被打断');
+  eq(result.failed, undefined, 'turn 正常收尾');
 });
 
 await test('Loop：命中忽略规则的文件工具被拒（禁入区不进上下文）', async () => {
