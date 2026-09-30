@@ -19,10 +19,13 @@ export const DEFAULT_SESSION_NAME = '新会话';
 export class SessionStore {
   #recordsCache = new Map();
 
-  constructor(dataDir, { warn = () => {} } = {}) {
+  constructor(dataDir, { warn = () => {}, onChange = null } = {}) {
     this.dir = join(dataDir, 'sessions');
     this.defaultWorkspace = join(dataDir, 'workspace');
     this.warn = warn;
+    // 写入观察者：会话全文检索索引（util/search/index.mjs）借此增量更新，
+    // 不必在每次搜索时重读全部转录。传 null 时零开销（终端客户端就是这么用的）
+    this.onChange = typeof onChange === 'function' ? onChange : null;
     try { mkdirSync(this.dir, { recursive: true }); } catch (e) { this.warn('sessions 目录创建失败', { error: String(e) }); }
   }
 
@@ -50,8 +53,11 @@ export class SessionStore {
       cost: 0,
     };
     this.#writeMeta(meta);
+    this.#notify('create', meta.id, meta);
     return meta;
   }
+
+  #notify(type, id, payload) { if (this.onChange) this.onChange({ type, id, ...payload }); }
 
   /** 全部会话元信息，按更新时间倒序 */
   list() {
@@ -98,6 +104,7 @@ export class SessionStore {
     this.#recordsCache.delete(String(id || ''));
     try {
       appendFileSync(join(this.dir, `${id}.jsonl`), `${JSON.stringify({ at: new Date().toISOString(), ...record })}\n`);
+      this.#notify('append', id, { record });
     } catch (e) { this.warn('会话转录写入失败', { id, error: String(e) }); }
   }
 
@@ -108,6 +115,7 @@ export class SessionStore {
     try {
       const p = join(this.dir, `${sid}.jsonl`);
       writeFileAtomic(p, records.map((r) => JSON.stringify(r)).join('\n') + (records.length ? '\n' : '')); // tmp + fsync + rename + 0600
+      this.#notify('replace', sid, { records });
       return true;
     } catch (e) { this.warn('会话转录重写失败', { id: sid, error: String(e) }); return false; }
   }
@@ -118,6 +126,7 @@ export class SessionStore {
     if (!meta) return null;
     const next = { ...meta, ...changes, id: meta.id, updatedAt: new Date().toISOString() };
     this.#writeMeta(next);
+    this.#notify('patch', next.id, { changes, meta: next });
     return next;
   }
 
@@ -138,6 +147,7 @@ export class SessionStore {
       updatedAt: now,
     };
     this.#writeMeta(next);
+    this.#notify('fork', next.id, { meta: next });
     const records = this.records(meta.id);
     if (records.length) {
       try {
@@ -155,6 +165,7 @@ export class SessionStore {
       const p = join(this.dir, f);
       if (existsSync(p)) { try { rmSync(p, { force: true }); ok = true; } catch (e) { this.warn('会话删除失败', { id: sid, error: String(e) }); } }
     }
+    this.#notify('remove', sid, {});
     return ok;
   }
 

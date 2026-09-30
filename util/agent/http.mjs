@@ -14,6 +14,7 @@ import { applyUserGoalAction, setUserGoalObjective, clearUserGoal, GOAL_BAD_INPU
 import { subscribeGoalEvents, publishGoalEvent } from './goal/bus.mjs';
 import { loadSkills, findSkill, skillInvocationText } from './skills.mjs';
 import { searchWorkspaceFiles } from './files.mjs';
+import { SessionSearchIndex, recordTextOf } from '../search/index.mjs';
 import { SideSession } from './side-session.mjs';
 import { TurnQueue, newOpId } from './queue.mjs';
 import { JobStore } from '../jobs/store.mjs';
@@ -34,6 +35,8 @@ import { parseFailoverConfig, effectiveTimeouts } from '../llm/failover.mjs';
 
 const SESSION_RE = /^\/api\/agent\/sessions\/([0-9a-f-]{36})$/;
 const SESSION_FORK_RE = /^\/api\/agent\/sessions\/([0-9a-f-]{36})\/fork$/;
+// 会话检索：/api/sessions/search 与 /api/agent/sessions/search 同义（后者留给将来按会话分组的路由空间）
+const SESSION_SEARCH_RE = /^\/api\/(?:agent\/)?sessions\/search$/;
 const GOAL_GET_RE = /^\/api\/agent\/goal\/([0-9a-f-]{36})$/;
 const GOAL_ACTION_RE = /^\/api\/agent\/goal\/(pause|resume|stop|budget|edit|clear)$/;
 const GOAL_EVENTS_RE = /^\/api\/agent\/events$/;
@@ -63,7 +66,22 @@ export function createAgentApi(deps) {
   // 熔断器与运行时状态（failover-state.mjs）：跨 turn 共享才有多请求记忆的意义
   const failoverState = deps.failoverState || null;
   const failoverQueue = providerStore ? () => providerStore.failoverQueueIds() : null;
-  const sessions = new SessionStore(dataDir, { warn: (m, e) => log('warn', m, e) });
+  // 会话全文检索索引：转录写入即增量更新（SessionStore 的 onChange 观察者），
+  // 搜索时只重新分词指纹变过的会话。终态内存占用 = 倒排索引，不常驻转录原文
+  const searchIndex = new SessionSearchIndex(join(dataDir, 'sessions'), { warn: (m, e) => log('warn', m, e) });
+  const sessions = new SessionStore(dataDir, {
+    warn: (m, e) => log('warn', m, e),
+    onChange: (ev) => {
+      try {
+        if (ev.type === 'append') searchIndex.add(ev.id, recordTextOf(ev.record));
+        // create 时转录文件还没落：直接把会话名当首个可检索文本（标题权重最高）
+        else if (ev.type === 'create') searchIndex.add(ev.id, ev.meta?.name, ev.meta?.name);
+        else if (ev.type === 'replace' || ev.type === 'fork') searchIndex.reindexFromFile(ev.id);
+        else if (ev.type === 'patch' && ev.changes && ev.changes.name !== undefined) searchIndex.reindexFromFile(ev.id, ev.changes.name);
+        else if (ev.type === 'remove') searchIndex.remove(ev.id);
+      } catch (e) { log('warn', '会话检索索引更新失败', { id: ev.id, error: String(e) }); }
+    },
+  });
   // Goal 存储：<数据目录>/goals/<sessionId>.json（一会话一个目标）
   const goals = new GoalStore(dataDir, { warn: (m, e) => log('warn', m, e) });
   // 技能目录：内置 skills/ + 用户 <数据目录>/skills/（进程启动时加载一次）
@@ -445,6 +463,15 @@ export function createAgentApi(deps) {
         return { ...m, preview: lastUser ? String(lastUser.text || '').slice(0, 80) : '' };
       });
       return json(res, 200, { sessions: rows });
+    }
+
+    // 会话全文检索（标题 + 转录）：侧栏搜索框的数据源。分词与排序在 util/search/
+    if (req.method === 'GET' && SESSION_SEARCH_RE.test(url)) {
+      const q = String(new URL(req.url, 'http://localhost').searchParams.get('q') || '').slice(0, 200);
+      if (!q.trim()) return json(res, 400, { error: { message: '缺少查询词 q' } });
+      const hits = searchIndex.search(q, { limit: 20 });
+      const byId = new Map(sessions.list().map((m) => [m.id, m]));
+      return json(res, 200, { query: q, sessions: hits.map((h) => ({ ...(byId.get(h.id) || { id: h.id }), score: h.score, snippet: h.snippet })) });
     }
 
     const sessionMatch = SESSION_RE.exec(url);

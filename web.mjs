@@ -600,7 +600,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (url.startsWith('/api/agent') || url.startsWith('/api/mcp') || url.startsWith('/api/files') || url.startsWith('/api/jobs')) { await agentApi(req, res, url); return; }
+  if (url.startsWith('/api/agent') || url.startsWith('/api/mcp') || url.startsWith('/api/files') || url.startsWith('/api/jobs') || url.startsWith('/api/sessions')) { await agentApi(req, res, url); return; }
 
   // 工作区上下文（GET /api/workspace，实现见 util/workspace.mjs）：Header 工作区卡片数据源
   if (await handleWorkspaceApi(req, res, url)) return;

@@ -42,6 +42,7 @@ import { runHttpGuardTests } from './http-guard.mjs';
 import { runIgnoreTests } from './ignore.mjs';
 import { runRulesTests } from './rules.mjs';
 import { runRipgrepTests } from './ripgrep.mjs';
+import { runSearchTests } from './search.mjs';
 import { runPromptCacheTests } from './prompt-cache.mjs';
 import { runSubagentTests } from './subagents.mjs';
 import { runHooksTests } from './hooks.mjs';
@@ -123,6 +124,7 @@ await runHttpGuardTests(test, assert, eq);
 await runIgnoreTests(test, assert, eq);
 await runRulesTests(test, assert, eq);
 await runRipgrepTests(test, assert, eq);
+await runSearchTests(test, assert, eq);
 await runPromptCacheTests(test, assert, eq);
 await runSubagentTests(test, assert, eq);
 await runHooksTests(test, assert, eq);
@@ -4480,6 +4482,31 @@ await test('PATCH /api/agent/sessions/:id 切换模式 / 改名 / 换模型', as
   eq(detail.meta.harness, 'ultimate', '失败的 PATCH 不应改动会话');
   eq((await fetch(`${AGENT}/sessions/nope`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 404, '未知会话 404');
   await fetch(`${AGENT}/sessions/${s.id}`, { method: 'DELETE' });
+});
+
+await test('GET /api/sessions/search 转录全文检索（标题 + 内容）', async () => {
+  const s = await createAgentSession();
+  await fetch(`${AGENT}/sessions/${s.id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: '检查点回滚' }),
+  });
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: '我想把工作区回滚到上一个检查点' }),
+  });
+  await drainAgentStream(openAgentStream(resp));
+  const hit = await (await fetch(`${BASE}/api/sessions/search?q=${encodeURIComponent('检查点')}`)).json();
+  assert(hit.sessions.some((x) => x.id === s.id), '按标题应能搜到该会话');
+  const hitBody = await (await fetch(`${BASE}/api/sessions/search?q=${encodeURIComponent('回滚')}`)).json();
+  assert(hitBody.sessions.some((x) => x.id === s.id), '按转录正文应能搜到该会话');
+  assert(hitBody.sessions[0].snippet, '应带回命中片段');
+  const miss = await (await fetch(`${BASE}/api/sessions/search?q=${encodeURIComponent('量子纠缠')}`)).json();
+  eq(miss.sessions.length, 0, '无关词应零命中');
+  eq((await fetch(`${BASE}/api/sessions/search`)).status, 400, '缺查询词应 400');
+  // 删掉的会话应立即搜不到
+  await fetch(`${AGENT}/sessions/${s.id}`, { method: 'DELETE' });
+  const gone = await (await fetch(`${BASE}/api/sessions/search?q=${encodeURIComponent('检查点')}`)).json();
+  assert(!gone.sessions.some((x) => x.id === s.id), '删除的会话不应再被搜到');
 });
 
 await test('POST /api/agent/sessions/:id/fork 复制历史到新会话，源会话只读不动', async () => {
