@@ -1,7 +1,7 @@
 /** 单条消息渲染：用户 / 助手（思考 + 正文 + 工具 + 用量脚注）/ 系统（压缩提示）。 */
 import { memo, useEffect, useRef, useState } from 'react';
 import { Markdown } from '../markdown';
-import { IconAlert, IconBrain, IconChevronRight, IconTag } from '../icons';
+import { IconAlert, IconBrain, IconChevronRight, IconRefresh, IconTag } from '../icons';
 import { isReasoningSummaryOverflowing, normalizeThinkingText, resolveReasoningStreamingSummary } from '../reasoning.mjs';
 import type { MsgView } from '../types';
 
@@ -66,17 +66,32 @@ function ThinkingBlock({ text, streaming = false }: { text: string; streaming?: 
 type Props = {
   msg: MsgView;
   onDecide?: (requestId: string, decision: 'allow' | 'deny' | 'always') => void;
+  /** 用户轮的轮次序号（从 1 数）：有检查点时才显示「回滚到此」入口 */
+  turnIndex?: number;
+  onRollback?: (turnIndex: number) => void;
 };
 
 // 历史消息 memo：流式期间 App 每个 token 都会重渲染，未 memo 时整段历史的 Markdown
 // 会被反复重新解析（长会话掉帧的主因）。msg / onDecide 引用稳定时才跳过。
 // 行根元素带 hist 类：CSS 对其 content-visibility:auto，视口外的历史行跳过渲染
 // （对齐 ZCode 时间线做法；contain-intrinsic-size:auto 记住上次高度，滚动条不跳）。
-export const Message = memo(function Message({ msg, onDecide }: Props) {
+export const Message = memo(function Message({ msg, onDecide, turnIndex, onRollback }: Props) {
   if (msg.kind === 'user') {
     return (
       <div className="row row-user hist is-user" data-turn-key={msg.key}>
         <div className="bubble-user">{msg.text}</div>
+        {/* 回滚入口：悬停现形（不占常态版面）。只在该轮真有过快照时由调用方给 turnIndex */}
+        {turnIndex && onRollback ? (
+          <button
+            type="button"
+            className="row-rollback"
+            title={`回滚到第 ${turnIndex} 轮之前（撤销这一轮之后的文件改动）`}
+            onClick={() => onRollback(turnIndex)}
+          >
+            <IconRefresh size={12} />
+            <span>回滚到此</span>
+          </button>
+        ) : null}
       </div>
     );
   }

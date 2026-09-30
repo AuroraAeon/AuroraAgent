@@ -4536,6 +4536,34 @@ await test('POST /api/agent/sessions/:id/fork 复制历史到新会话，源会�
   await fetch(`${AGENT}/sessions/${f.id}`, { method: 'DELETE' });
 });
 
+await test('检查点：预览列出这一轮之后动过的文件，坏参数与无检查点各有说法', async () => {
+  const s = await createAgentSession();
+  // 检查点由 Loop 在真实 turn 开头拍（test/checkpoint.mjs 覆盖）；这里直接在会话文件里
+  // 造一份历史，专测 HTTP 面的预览口径：meta.checkpoints + 转录里的 tool_call
+  const metaPath = join(tmpDataDir, 'sessions', `${s.id}.meta.json`);
+  const meta = JSON.parse(readFileSync(metaPath, 'utf8'));
+  meta.checkpoints = { entries: [{ turnIndex: 1, kind: 'mirror', dir: '/tmp/bk', at: 1700000000000, note: '第 1 轮' }] };
+  writeFileSync(metaPath, JSON.stringify(meta));
+  appendFileSync(join(tmpDataDir, 'sessions', `${s.id}.jsonl`), [
+    { t: 'user', text: '改一下文件' },
+    { t: 'tool_call', id: 'c1', name: 'write_file', args: { path: 'a.txt' } },
+    { t: 'tool_result', id: 'c1', name: 'write_file', ok: true, output: 'ok' },
+    { t: 'tool_call', id: 'c2', name: 'read_file', args: { path: 'b.txt' } },
+    { t: 'tool_result', id: 'c2', name: 'read_file', ok: true, output: 'ok' },
+  ].map((r) => `${JSON.stringify(r)}\n`).join(''));
+  const p = await (await fetch(`${AGENT}/checkpoints/preview?sessionId=${s.id}&turnIndex=1`)).json();
+  eq(p.kind, 'mirror', 'kind 透出');
+  eq(p.note, '第 1 轮', '备注透出');
+  eq(JSON.stringify(p.files), JSON.stringify(['a.txt', 'b.txt']), '预览列出这一轮之后动过的文件');
+  const miss = await fetch(`${AGENT}/checkpoints/preview?sessionId=${s.id}&turnIndex=9`);
+  eq(miss.status, 404, '没有该轮检查点给 404');
+  const badIdx = await fetch(`${AGENT}/checkpoints/preview?sessionId=${s.id}&turnIndex=0`);
+  eq(badIdx.status, 400, '轮次号非正整数给 400');
+  const noSession = await fetch(`${AGENT}/checkpoints/preview?turnIndex=1`);
+  eq(noSession.status, 400, '缺 sessionId 给 400');
+  await fetch(`${AGENT}/sessions/${s.id}`, { method: 'DELETE' });
+});
+
 await test('Agent turn：titleMode=model 经上游总结标题并记账', async () => {
   const s = (await (await fetch(`${AGENT}/sessions`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),

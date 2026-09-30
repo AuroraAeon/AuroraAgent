@@ -10,6 +10,7 @@ import { ScopedErrorBoundary } from './ScopedErrorBoundary';
 import { ChatView } from './components/ChatView';
 import { Composer } from './components/Composer';
 import { SettingsDialog } from './components/SettingsDialog';
+import { CheckpointDialog } from './components/CheckpointDialog';
 import { projectRecords } from './projection';
 import {
   abortTurn, checkUpdate, clearGoal, createGoal, createSession, deleteSession, editGoal, forkSession, getAgentQueue, getGoal, getSession, getSettings, goalAction,
@@ -43,6 +44,8 @@ export default function App() {
   // 侧边对话（/btw）：null = 没开过；live / busy 与主对话同构但完全独立
   const [side, setSide] = useState<{ msgs: MsgView[]; live: LiveTurn | null; busy: boolean } | null>(null);
   const [sideActive, setSideActive] = useState(false); // 当前显示哪条对话（Ctrl+/ 切换）
+  // 回滚到某一轮之前（该轮有检查点才给入口）；null = 弹窗关闭
+  const [rollbackTurn, setRollbackTurn] = useState<number | null>(null);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [goal, setGoal] = useState<GoalState | null>(null);
   const [goalPrefill, setGoalPrefill] = useState<{ text: string; nonce: number; onlyIfEmpty?: boolean }>({ text: '', nonce: 0 });
@@ -666,6 +669,14 @@ export default function App() {
     try { await abortTurn(currentId); } catch { /* 中断失败不阻塞界面，流结束自会收尾 */ }
   }, [currentId]);
 
+  /** 回滚到某一轮之前：生成中 / 侧边对话都拒绝（一个没有稳定基线，一个不落盘无从回滚） */
+  const requestRollback = (turnIndex: number) => {
+    if (busy) { toast.error('生成中无法回滚', { description: '等这一轮结束，或先停止生成' }); return; }
+    if (sideActive) { toast.error('侧边对话不支持回滚', { description: '侧边对话不落盘，没有检查点可回' }); return; }
+    if (!currentId) return;
+    setRollbackTurn(turnIndex);
+  };
+
   // 原始创建（删除当前会话后的空列表恢复等内部路径走这里，不受「新会话」守卫约束）
   const createSessionNow = async () => {
     try {
@@ -922,6 +933,7 @@ export default function App() {
             onDecidePlan={decidePlan}
             onPick={sideActive ? sendSide : send}
             todos={sideActive ? [] : todos}
+            onRollback={requestRollback}
           />
           {!sideActive && goal ? <GoalBar goal={goal} onAction={decideGoal} /> : null}
           <Composer
@@ -957,6 +969,14 @@ export default function App() {
           />
         </main>
       </ScopedErrorBoundary>
+      {rollbackTurn && currentId ? (
+        <CheckpointDialog
+          sessionId={currentId}
+          turnIndex={rollbackTurn}
+          onClose={() => setRollbackTurn(null)}
+          onDone={() => { void openSession(currentId, false); }}
+        />
+      ) : null}
       <SettingsDialog
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}

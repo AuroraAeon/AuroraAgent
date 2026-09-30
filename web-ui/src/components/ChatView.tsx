@@ -74,13 +74,17 @@ type Props = {
   onPick: (text: string) => void;
   todos: TodoItem[];
   onDecidePlan?: (decision: 'approve' | 'reject') => void;
+  /** 回滚到某一轮之前（该轮有检查点才给入口） */
+  onRollback?: (turnIndex: number) => void;
 };
 
-export function ChatView({ messages, live, hasSession, onDecide, onPick, todos, onDecidePlan }: Props) {
+export function ChatView({ messages, live, hasSession, onDecide, onPick, todos, onDecidePlan, onRollback }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true); // 用户是否贴底：贴底才跟随滚动，上翻读历史时不抢滚动位置
   const [atBottom, setAtBottom] = useState(true);
+  // 用户轮计数器（渲染期自增，与后端 turnIndex 对齐）：map 是同步的，重渲染会重新数一遍
+  let userSeq = 0;
   // 选中引用：在转录里划词后浮出引用钮，点击把这段原文以 Markdown 引用块塞进输入框。
   // 选区监听挂在 document 上（mouseup 才是「选完了」的时刻），但只认落在本滚动区内的选区——
   // 在侧栏或设置里划词不该蹦出引用钮。按钮用 mousedown preventDefault 保住选区，
@@ -163,7 +167,12 @@ export function ChatView({ messages, live, hasSession, onDecide, onPick, todos, 
             <ContextMeter tokens={live.usage.contextTokens} window={live.usage.contextWindow || 0} cached={live.usage.cachedTokens} />
           ) : null}
           <TodoPanel todos={todos} />
-          {messages.map((m) => <Message key={m.key} msg={m} onDecide={onDecide} />)}
+          {/* 用户轮序号从 1 数：与后端 turnIndex（session.turns + 1）同口径，检查点按它取 */}
+          {messages.map((m) => {
+            if (m.kind !== 'user') return <Message key={m.key} msg={m} onDecide={onDecide} />;
+            userSeq += 1;
+            return <Message key={m.key} msg={m} onDecide={onDecide} turnIndex={userSeq} onRollback={onRollback} />;
+          })}
           {live ? <LiveRow live={live} onDecide={onDecide} onDecidePlan={onDecidePlan} /> : null}
           <div ref={endRef} />
           {live && !atBottom ? (

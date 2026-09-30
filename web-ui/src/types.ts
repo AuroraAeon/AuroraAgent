@@ -214,6 +214,11 @@ export type MsgView =
 
 /** 进行中的 turn（流式渲染，与历史投影共用 parts 时间线与 ToolCard） */
 export type PlanView = { text: string; decided: 'pending' | 'approved' | 'rejected' };
+/** 检查点（每个用户轮开始前的工作区快照）：列表项与回滚预览 */
+export type CheckpointEntry = { turnIndex: number; kind: string; ref?: string; dir?: string; at: number; createdAt?: number; note?: string };
+export type CheckpointPreview = { sessionId: string; turnIndex: number; kind: string; note: string; at: number; files: string[] };
+export type CheckpointRestoreResult = { ok: boolean; turnIndex: number; kind: string; worktree: string | null; trimmed: number; filesAfter: string[] };
+
 /** 转录里的压缩分隔行：四个终态都留一行，别让「失败了」悄无声息地回到原上下文 */
 export type CompressionView = { text: string; state: 'running' | 'done' | 'failed' | 'cancelled' };
 export type LiveTurn = {

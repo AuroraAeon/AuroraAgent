@@ -392,6 +392,23 @@ export function createAgentApi(deps) {
       return json(res, 200, { sessionId, kind: rt.kind, checkpoints: rt.describe() });
     }
 
+    // 回滚预览：先让用户看见「这一轮之后动了哪些文件」再决定，别上来就改工作区
+    if (req.method === 'GET' && url === '/api/agent/checkpoints/preview') {
+      const q = new URL(req.url, 'http://localhost').searchParams;
+      const sessionId = q.get('sessionId') || '';
+      const meta = sessionId ? sessions.get(sessionId) : null;
+      if (!meta) return json(res, 400, { error: { message: '缺少或未知的 sessionId' } });
+      const turnIndex = Number(q.get('turnIndex'));
+      if (!Number.isInteger(turnIndex) || turnIndex < 1) return json(res, 400, { error: { message: 'turnIndex 必须是正整数' } });
+      const rt = checkpointFor(sessionId, meta.workspace);
+      const entry = rt.entries.find((e) => e.turnIndex === turnIndex);
+      if (!entry) return json(res, 404, { error: { message: `第 ${turnIndex} 轮没有检查点（可用轮次：${rt.entries.map((e) => e.turnIndex).join('、') || '无'}）` } });
+      return json(res, 200, {
+        sessionId, turnIndex, kind: entry.kind, note: entry.note || '', at: entry.at || 0,
+        files: filesTouchedAfter(sessions.records(sessionId), turnIndex),
+      });
+    }
+
     if (req.method === 'DELETE' && url === '/api/agent/checkpoints') {
       const body = await readBody(req, 64 * 1024);
       const sessionId = String(body.sessionId || '');

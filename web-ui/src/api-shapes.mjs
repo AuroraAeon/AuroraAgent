@@ -146,6 +146,50 @@ export function normalizeSessionSearch(raw) {
   };
 }
 
+/** 检查点列表（GET /api/agent/checkpoints）：轮次号必填，其余可选（git ref / 镜像目录） */
+export function normalizeCheckpointEntries(raw) {
+  const o = asObject(raw);
+  return {
+    sessionId: asString(o.sessionId),
+    kind: asString(o.kind),
+    checkpoints: rows(o.checkpoints, (c) => ({
+      turnIndex: asCount(c?.turnIndex),
+      kind: asString(c?.kind),
+      ref: typeof c?.ref === 'string' ? c.ref : undefined,
+      dir: typeof c?.dir === 'string' ? c.dir : undefined,
+      at: asCount(c?.at),
+      createdAt: asOptionalNumber(c?.createdAt),
+      note: typeof c?.note === 'string' ? c.note : undefined,
+    })),
+  };
+}
+
+/** 回滚预览（GET /api/agent/checkpoints/preview）：这一轮之后动过的文件清单 */
+export function normalizeCheckpointPreview(raw) {
+  const o = asObject(raw);
+  return {
+    sessionId: asString(o.sessionId),
+    turnIndex: asCount(o.turnIndex),
+    kind: asString(o.kind),
+    note: asString(o.note),
+    at: asCount(o.at),
+    files: asStringArray(o.files),
+  };
+}
+
+/** 回滚结果（POST /api/agent/checkpoints/restore） */
+export function normalizeCheckpointRestore(raw) {
+  const o = asObject(raw);
+  return {
+    ok: asBool(o.ok, false),
+    turnIndex: asCount(o.turnIndex),
+    kind: asString(o.kind),
+    worktree: typeof o.worktree === 'string' ? o.worktree : null,
+    trimmed: asCount(o.trimmed),
+    filesAfter: asStringArray(o.filesAfter),
+  };
+}
+
 /** 侧边对话转录：GET /api/agent/side/:id（records 喂投影层，非数组即崩） */
 export function normalizeSideSession(raw) {
   const o = asObject(raw);

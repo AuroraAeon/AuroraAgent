@@ -1,6 +1,7 @@
 /** api-shapes.mjs 的类型声明（实现是零依赖纯函数，Node 测试直接 import 同一份）。 */
 import type {
-  CatalogProvider, CircuitHealth, ErrorLogEntry, FailoverQueue, FailoverSettings, Harness, McpServerRow,
+  CatalogProvider, CheckpointEntry, CheckpointPreview, CheckpointRestoreResult, CircuitHealth, ErrorLogEntry,
+  FailoverQueue, FailoverSettings, Harness, McpServerRow,
   JobItem, ModelInfo, ProviderRow, QueueItem, SessionMeta, SessionRecord, SessionSearchHit, SettingsInfo, TuiSettings, UsageSummary,
 } from './types';
 
@@ -33,6 +34,9 @@ export declare function normalizeSessionResult(raw: unknown): { session: Session
 export declare function normalizeSessionMetaResult(raw: unknown): { meta: SessionMeta };
 
 /** 侧边对话转录：GET /api/agent/side/:id */
+export declare function normalizeCheckpointEntries(raw: unknown): { sessionId: string; kind: string; checkpoints: CheckpointEntry[] };
+export declare function normalizeCheckpointPreview(raw: unknown): CheckpointPreview;
+export declare function normalizeCheckpointRestore(raw: unknown): CheckpointRestoreResult;
 export declare function normalizeSideSession(raw: unknown): { records: SessionRecord[] };
 
 /** 模型目录：GET /api/models */

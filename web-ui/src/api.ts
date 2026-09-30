@@ -1,13 +1,14 @@
 /** API 客户端：全部走 web.mjs 的同源 /api/*；turn 用 fetch 读 SSE（EventSource 不支持 POST） */
 import {
-  normalizeCatalogProviders, normalizeDiscoveredModels, normalizeErrorLogPage, normalizeFailoverQueue, normalizeFailoverSettings,
+  normalizeCatalogProviders, normalizeCheckpointEntries, normalizeCheckpointPreview, normalizeCheckpointRestore,
+  normalizeDiscoveredModels, normalizeErrorLogPage, normalizeFailoverQueue, normalizeFailoverSettings,
   normalizeFileSearch, normalizeHarnesses, normalizeHealthRows, normalizeJobList, normalizeJobRows, normalizeModels, normalizeMcpServers, normalizeProviderList,
   normalizeProviderRows, normalizeQueueItems, normalizeSessionDetail, normalizeSessionMetaResult, normalizeSessionResult,
   normalizeSessionSearch, normalizeSessions, normalizeSettingsInfo, normalizeSideSession, normalizeTuiSaveResult, normalizeTuiSettings,
   normalizeUsageSummary,
 } from './api-shapes.mjs';
 import { normalizeSkillRows } from './skill-rows.mjs';
-import type { AgentEvent, CatalogProvider, ErrorLogEntry, FailoverQueue, FailoverSettings, GoalState, HookRow, UpdateInfo, Harness, JobItem, McpServerRow, ModelInfo, ProviderRow, QueueItem, SessionMeta, SessionRecord, SessionSearchHit, SettingsInfo, SkillRow, TuiSettings, UsageSummary, WorkspaceInfo } from './types';
+import type { AgentEvent, CatalogProvider, CheckpointEntry, CheckpointPreview, CheckpointRestoreResult, ErrorLogEntry, FailoverQueue, FailoverSettings, GoalState, HookRow, UpdateInfo, Harness, JobItem, McpServerRow, ModelInfo, ProviderRow, QueueItem, SessionMeta, SessionRecord, SessionSearchHit, SettingsInfo, SkillRow, TuiSettings, UsageSummary, WorkspaceInfo } from './types';
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(path, {
@@ -36,6 +37,18 @@ export const getUsage = (lite = false) => api<UsageSummary>(`/api/usage${lite ? 
 /** 版本更新检查（默认走 6 小时缓存；force=1 强制重查 GitHub Releases） */
 export const checkUpdate = (force = false) => api<UpdateInfo>(`/api/update/check${force ? '?force=1' : ''}`);
 export const getWorkspace = (path: string) => api<WorkspaceInfo>(`/api/workspace?path=${encodeURIComponent(path)}`);
+/** 检查点（每个用户轮的工作区快照）：列表 / 回滚预览 / 恢复 / 清理 */
+export const listCheckpoints = (sessionId: string) =>
+  api<{ sessionId: string; kind: string; checkpoints: CheckpointEntry[] }>(`/api/agent/checkpoints?sessionId=${encodeURIComponent(sessionId)}`).then(normalizeCheckpointEntries);
+export const previewCheckpoint = (sessionId: string, turnIndex: number) =>
+  api<CheckpointPreview>(`/api/agent/checkpoints/preview?sessionId=${encodeURIComponent(sessionId)}&turnIndex=${turnIndex}`).then(normalizeCheckpointPreview);
+export const restoreCheckpoint = (sessionId: string, turnIndex: number, opts: { restoreFiles?: boolean; restoreChat?: boolean } = {}) =>
+  api<CheckpointRestoreResult>('/api/agent/checkpoints/restore', {
+    method: 'POST',
+    body: JSON.stringify({ sessionId, turnIndex, restoreFiles: opts.restoreFiles !== false, restoreChat: opts.restoreChat === true }),
+  }).then(normalizeCheckpointRestore);
+export const clearCheckpoints = (sessionId: string) =>
+  api<{ ok: boolean; cleared: boolean }>('/api/agent/checkpoints', { method: 'DELETE', body: JSON.stringify({ sessionId }) });
 /** 错误日志：查看最近 N 条 / 清空 */
 export const listErrorLogs = (limit = 50) => api<{ ok: boolean; entries: ErrorLogEntry[]; total: number }>(`/api/logs/errors?limit=${limit}`).then(normalizeErrorLogPage);
 export const clearErrorLogs = () => api<{ ok: boolean; cleared: number }>('/api/logs/errors', { method: 'DELETE' });

@@ -10,6 +10,7 @@
 import { deepStrictEqual } from 'node:assert';
 import {
   normalizeCatalogProviders,
+  normalizeCheckpointEntries, normalizeCheckpointPreview, normalizeCheckpointRestore,
   normalizeDiscoveredModels, normalizeErrorLogPage, normalizeFailoverQueue, normalizeFailoverSettings,
   normalizeFileSearch, normalizeHarnesses, normalizeHealthRows, normalizeModels, normalizeMcpServers,
   normalizeProviderList, normalizeProviderRows, normalizeQueueItems, normalizeSessionDetail, normalizeSessionMetaResult,
@@ -203,5 +204,33 @@ export async function runApiShapesTests(test, assert, eq) {
     };
     render();
     assert(true, '崩点表达式回放不抛');
+  });
+
+  await test('api-shapes: 检查点三件套（列表 / 预览 / 回滚结果）恒等与容错', () => {
+    const full = {
+      sessionId: 's1', kind: 'mirror',
+      checkpoints: [
+        { turnIndex: 2, kind: 'git', ref: 'refs/auroraagent/checkpoints/s1/2', at: 1700000000000, createdAt: 1700000000000, note: '第 2 轮' },
+        { turnIndex: 1, kind: 'mirror', dir: '/bk/s1/1', at: 1699999999000 },
+      ],
+    };
+    deepEq(normalizeCheckpointEntries(full), full, '检查点列表恒等');
+    const prev = { sessionId: 's1', turnIndex: 1, kind: 'mirror', note: '第 1 轮', at: 1699999999000, files: ['a.txt', 'b.txt'] };
+    deepEq(normalizeCheckpointPreview(prev), prev, '预览恒等');
+    const res = { ok: true, turnIndex: 1, kind: 'mirror', worktree: null, trimmed: 0, filesAfter: ['a.txt'] };
+    deepEq(normalizeCheckpointRestore(res), res, '回滚结果恒等');
+    const empty = normalizeCheckpointEntries({});
+    eq(empty.checkpoints.length, 0, '整个响应缺失给空列表（回滚入口不崩）');
+    eq(empty.kind, '', 'kind 缺失回退空串');
+    const weird = normalizeCheckpointEntries({ checkpoints: [null, { turnIndex: 'x', kind: 5 }, { turnIndex: 3 }] }).checkpoints;
+    eq(weird.length, 2, '非对象行剔除');
+    eq(weird[0].turnIndex, 0, 'turnIndex 非数字回退 0');
+    eq(weird[0].kind, '', 'kind 非字符串回退空串');
+    eq(weird[1].ref, undefined, 'ref 缺席不伪造');
+    const badPrev = normalizeCheckpointPreview({ files: 'x', turnIndex: null });
+    eq(badPrev.files.length, 0, 'files 非数组回退空列表');
+    eq(badPrev.turnIndex, 0, 'turnIndex 非数字回退 0');
+    eq(normalizeCheckpointRestore({}).ok, false, '回滚结果缺失 ok 落回 false');
+    eq(normalizeCheckpointRestore({ worktree: 7 }).worktree, null, 'worktree 非字符串落回 null');
   });
 }
