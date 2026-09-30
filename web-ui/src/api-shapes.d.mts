@@ -1,7 +1,7 @@
 /** api-shapes.mjs 的类型声明（实现是零依赖纯函数，Node 测试直接 import 同一份）。 */
 import type {
   CatalogProvider, CircuitHealth, ErrorLogEntry, FailoverQueue, FailoverSettings, Harness, McpServerRow,
-  ModelInfo, ProviderRow, QueueItem, SessionMeta, SessionRecord, SettingsInfo, TuiSettings, UsageSummary,
+  JobItem, ModelInfo, ProviderRow, QueueItem, SessionMeta, SessionRecord, SettingsInfo, TuiSettings, UsageSummary,
 } from './types';
 
 /** 模型目录行（ModelInfo） */
@@ -64,6 +64,12 @@ export declare function normalizeTuiSettings(raw: unknown): TuiSettings;
 
 /** 保存终端偏好回包：{ ok, tui } */
 export declare function normalizeTuiSaveResult(raw: unknown): { ok: boolean; tui: TuiSettings['tui'] };
+
+/** 定时任务行（JobItem） */
+export declare function normalizeJobRows(raw: unknown): JobItem[];
+
+/** 任务列表回包：GET /api/jobs */
+export declare function normalizeJobList(raw: unknown): { jobs: JobItem[] };
 
 /** 文件搜索：GET /api/files/search */
 export declare function normalizeFileSearch(raw: unknown): { files: string[] };

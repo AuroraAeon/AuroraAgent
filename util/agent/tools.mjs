@@ -15,6 +15,40 @@ import { findSkill, renderSkillContent, skillDirs, SKILL_FOLLOWUP } from './skil
 const MAX_OUTPUT = 32 * 1024;   // 单次工具回给模型的文本上限
 const MAX_FETCH = 64 * 1024;    // web_fetch 正文上限
 const MAX_ENTRIES = 500;        // list_dir 条数上限
+const MAX_IMAGE_BYTES = 1.5 * 1024 * 1024; // 工具结果图片（截图）内联进消息序列的体积上限
+const IMAGE_CACHE_MAX = 8;                  // base64 缓存张数（历史每轮都会重放同一张图）
+const IMAGE_DATA_URL_CACHE = new Map();
+
+/**
+ * 工具结果的多模态图片负载 → OpenAI 形状的 tool 消息 content。
+ * computer_use 的截图经 extra.image = { path, mime, width, height } 随结果回传：模型要能
+ * 「看见」屏幕，故把图片转成 data URL 与文本一起进消息序列；无图片（或文件已不在）时保持
+ * 纯字符串，历史行为不变。Anthropic 侧由 llm/message.mjs 的 toAnthropicContent 翻成 image block。
+ * 同一张图会被历史每轮重放读到，按 path+size+mtime 缓存 base64，避免长会话里反复读盘。
+ */
+export function toolMessageContent(output, extra) {
+  const img = extra && extra.image;
+  const text = String(output ?? '');
+  if (!img || !img.path) return text;
+  let url = '';
+  try {
+    const st = statSync(img.path);
+    if (st.isFile() && st.size > 0 && st.size <= MAX_IMAGE_BYTES) {
+      const key = `${img.path}|${st.size}|${Math.floor(st.mtimeMs)}`;
+      let hit = IMAGE_DATA_URL_CACHE.get(key);
+      if (hit === undefined) {
+        hit = `data:${img.mime || 'image/png'};base64,${readFileSync(img.path).toString('base64')}`;
+        if (IMAGE_DATA_URL_CACHE.size >= IMAGE_CACHE_MAX) IMAGE_DATA_URL_CACHE.clear();
+        IMAGE_DATA_URL_CACHE.set(key, hit);
+      }
+      url = hit;
+    }
+  } catch { /* 截图文件已不在（清理 / 换数据目录）时只回文本，不让整轮请求失败 */ }
+  if (!url) return text;
+  // 文本为空时给一句占位：个别上游拒绝「只有图片」的 tool content
+  return [{ type: 'text', text: text || '（截图如下）' }, { type: 'image_url', image_url: { url } }];
+}
+
 
 export class ToolError extends Error {
   constructor(message, code = 'tool_error') {
@@ -527,5 +561,7 @@ export function toolResource(name, args) {
   const a = args || {};
   if (name === 'shell') return String(a.command || '');
   if (name === 'web_fetch') return String(a.url || '');
+  // computer_use：资源是「哪块屏幕」，按目标应用区分，方便「总是允许」只放行某个应用
+  if (name === 'computer_use') return `screen:${a.app || '前台界面'}`;
   return String(a.path || '');
 }

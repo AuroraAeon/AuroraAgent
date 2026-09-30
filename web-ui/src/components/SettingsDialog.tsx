@@ -4,7 +4,7 @@
 import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import {
-  IconAlert, IconChart, IconClose, IconGear, IconGlobe, IconKey, IconList, IconPalette, IconShield, IconTerminal, IconWrench,
+  IconAlert, IconChart, IconClock, IconClose, IconGear, IconGlobe, IconKey, IconList, IconPalette, IconShield, IconTerminal, IconWrench,
 } from '../icons';
 import { ProvidersPanel } from './ProvidersPanel';
 import { SkillsPanel } from './SkillsPanel';
@@ -16,8 +16,9 @@ import { UsagePanel } from './UsagePanel';
 import { ErrorLogPanel } from './ErrorLogPanel';
 import { GeneralPanel } from './GeneralPanel';
 import { AppearancePanel } from './AppearancePanel';
+import { JobsPanel } from './JobsPanel';
 
-type SectionId = 'general' | 'appearance' | 'providers' | 'skills' | 'mcp' | 'terminal' | 'network' | 'failover' | 'usage' | 'errlog';
+type SectionId = 'general' | 'appearance' | 'providers' | 'skills' | 'mcp' | 'jobs' | 'terminal' | 'network' | 'failover' | 'usage' | 'errlog';
 
 type SectionIcon = (p: { size?: number }) => ReactNode;
 
@@ -29,6 +30,7 @@ const SECTIONS: { id: SectionId; label: string; icon: SectionIcon }[] = [
   { id: 'network', label: '网络', icon: IconGlobe },
   { id: 'skills', label: '技能', icon: IconWrench },
   { id: 'mcp', label: 'MCP 工具', icon: IconList },
+  { id: 'jobs', label: '定时任务', icon: IconClock },
   { id: 'terminal', label: '终端', icon: IconTerminal },
   { id: 'usage', label: '用量', icon: IconChart },
   { id: 'errlog', label: '错误日志', icon: IconAlert },
@@ -66,6 +68,7 @@ export function SettingsDialog({ open, onClose, onProvidersChanged }: Props) {
       case 'providers': return <ProvidersPanel onProvidersChanged={onProvidersChanged} />;
       case 'skills': return <SkillsPanel />;
       case 'mcp': return <McpPanel />;
+      case 'jobs': return <JobsPanel />;
       case 'terminal': return <TuiPanel />;
       case 'network': return <ProxyPanel />;
       case 'failover': return <FailoverPanel />;

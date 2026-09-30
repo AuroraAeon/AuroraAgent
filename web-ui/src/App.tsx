@@ -13,7 +13,7 @@ import { SettingsDialog } from './components/SettingsDialog';
 import { projectRecords } from './projection';
 import {
   abortTurn, checkUpdate, clearGoal, createGoal, createSession, deleteSession, editGoal, forkSession, getAgentQueue, getGoal, getSession, getSettings, goalAction,
-  listHarnesses, listMcpServers, listModels, listSkills, listProviders, listSessions, patchSession, promoteQueueItem, removeQueueItem, respondPermission, respondPlan, runTurn,
+  listHarnesses, listJobs, listMcpServers, listModels, listSkills, listProviders, listSessions, patchSession, promoteQueueItem, removeQueueItem, respondPermission, respondPlan, runTurn,
   saveApiKey, saveGeneration,
 } from './api';
 import { GOAL_COMMAND_HELP, formatGoalReceipt, formatGoalSummary, parseGoalCommand } from '../../util/agent/goal/command.mjs';
@@ -421,6 +421,16 @@ export default function App() {
           const lines = rows.map((r) => `${r.name}（${r.transport}）${r.enabled === false ? ' · 已停用' : r.connected ? ` · 已连接 · ${r.tools} 个工具` : ' · 未连接'}`);
           notice(`MCP 服务器：\n${lines.join('\n')}`);
         } catch (e) { notice(`MCP 未开启：${e instanceof Error ? e.message : String(e)}`); }
+        return;
+      }
+      case 'cron': {
+        if (!currentId) { notice('当前没有会话：定时任务要绑定一个会话'); return; }
+        try {
+          const rows = (await listJobs()).filter((j) => j.sessionId === currentId);
+          if (!rows.length) { notice('当前会话没有定时任务。设置 → 定时任务可新建；也可以直接让模型用 cron 工具自建。'); return; }
+          const lines = rows.map((j) => `${j.name} · ${j.schedule.kind === 'cron' ? `cron ${j.schedule.expr}` : `每 ${Math.round(j.schedule.everyMs / 60000)} 分钟`} · ${j.enabled ? '启用' : '停用'} · id=${j.id.slice(0, 8)}`);
+          notice(`当前会话的定时任务：\n${lines.join('\n')}`);
+        } catch (e) { notice(`读取定时任务失败：${e instanceof Error ? e.message : String(e)}`); }
         return;
       }
       case 'title': {

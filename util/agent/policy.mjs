@@ -42,6 +42,10 @@ export function defaultRules() {
     { action: 'create_goal', resource: '*', effect: 'allow' },
     { action: 'update_goal', resource: '*', effect: 'allow' },
     { action: 'get_goal', resource: '*', effect: 'allow' },
+    // cron 定时任务（util/agent/cron-tool.mjs）：到期会在目标会话跑一轮 Agent（花 token），必须问
+    { action: 'cron', resource: '*', effect: 'ask' },
+    // computer_use 屏幕操作（util/agent/computer.mjs）：会真的点击 / 输入 / 激活应用，每次调用都要用户显式确认
+    { action: 'computer_use', resource: '*', effect: 'ask' },
     // MCP 工具（mcp__<服务器>__<工具>）默认 ask：外部系统副作用必须确认；
     // evaluate 对未命中规则本就回退 ask，此处显式声明便于阅读与 grep
     { action: 'mcp__*', resource: '*', effect: 'ask' },

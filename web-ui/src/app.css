@@ -409,6 +409,22 @@ html { font-size: var(--ui-font-size, 14px); }
 .md tbody tr:last-child td { border-bottom:0; }
 .md thead th { background:var(--code-bg); font-weight:650; color:var(--text); }
 
+/* ---------- 图片（截图 / Markdown 内联图，见 zoom-image.tsx） ---------- */
+/* 缩略图按钮：去掉按钮外观只留图片，点击进灯箱 */
+.zoom-img { display:block; padding:0; border:1px solid var(--line); border-radius:8px; background:var(--code-bg); cursor:zoom-in; overflow:hidden; line-height:0; }
+.zoom-img img { display:block; max-width:100%; height:auto; }
+.zoom-img.md-img { margin:.5em 0; max-width:min(100%, 420px); }
+.zoom-img.tc-shot { max-width:min(100%, 320px); }
+.zoom-img:hover { border-color:var(--accent-line); }
+.img-lightbox {
+  position:fixed; inset:0; z-index:120; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px;
+  background:rgb(4 6 10 / 74%); backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px); cursor:zoom-out; padding:24px;
+}
+.img-lightbox-in { max-width:min(96vw, 1200px); max-height:86vh; border:1px solid var(--line); border-radius:10px; overflow:auto; background:var(--panel); }
+.img-lightbox-in img { display:block; max-width:100%; max-height:86vh; height:auto; }
+.img-lightbox-t { color:var(--dim); font-size:0.8571rem; }
+:root[data-theme="light"] .img-lightbox { background:rgb(23 32 56 / 46%); }
+
 /* ---------- LaTeX 公式（KaTeX，见 latex.tsx） ---------- */
 /* 包装层不参与布局：显示公式以块级身份直接落在段落里，行内公式则贴合文字流 */
 .md .math { display:contents; }
@@ -1071,6 +1087,12 @@ html[data-code-wrap="on"] .md pre { white-space:pre-wrap; overflow-x:visible; wo
   display:inline-flex; align-items:center; gap:4px; font-size:0.7857rem; color:var(--faint);
   font-family:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
 }
+/* 定时任务面板（JobsPanel）：新建表单 + cron / 间隔两档计划 */
+.jb-form { display:flex; flex-direction:column; gap:11px; margin-top:4px; }
+.jb-sched { display:flex; gap:16px; }
+.jb-textarea { resize:vertical; min-height:56px; font-family:inherit; line-height:1.5; }
+.jb-form .pv-actions { padding-top:2px; }
+
 /* 故障转移队列（providers.json 顶层 failoverQueue）：顺序即优先级，上移 / 下移 / 移出 + 加入 */
 .foq { display:flex; flex-direction:column; gap:8px; }
 .foq-head { display:flex; flex-direction:column; gap:2px; }

@@ -5,6 +5,7 @@
  *   压缩本身需要一次模型调用，由 loop.mjs 执行；本模块只提供规划与提示词。
  */
 import { estimateTokens } from '../sse.mjs';
+import { toolMessageContent } from './tools.mjs';
 import { skillCatalogBlock } from './skills.mjs';
 
 const DEFAULT_WINDOW = 128000;
@@ -85,7 +86,8 @@ export function assembleMessages({ harness, workspace, records = [], skills = []
         const call = pending.find((p) => p.id === r.id);
         if (!call) break; // 无配对调用（异常数据）时丢弃，保证协议合法
         flushPending();
-        messages.push({ role: 'tool', tool_call_id: r.id, content: String(r.output ?? '') });
+        // 带 extra.image 的工具结果（computer_use 截图）投影成多模态 tool content，模型复盘时看得见画面
+        messages.push({ role: 'tool', tool_call_id: r.id, content: toolMessageContent(r.output, r.extra) });
         break;
       }
       default:

@@ -96,6 +96,17 @@ export type ProviderRow = {
 /** 消息队列项（util/agent/queue.mjs，本地化 #3212 / #3220）：活跃 turn 期间提交、等待泵接力 */
 export type QueueItem = { opId: string; sessionId: string; text: string; state: string; at: number };
 
+/** 定时任务项（util/jobs/store.mjs，本地化 #3149）：到期在目标会话把 prompt 作为用户消息跑一轮 Agent */
+export type JobSchedule =
+  | { kind: 'cron'; expr: string }
+  | { kind: 'interval'; everyMs: number };
+export type JobItem = {
+  id: string; name: string; sessionId: string; prompt: string;
+  schedule: JobSchedule; enabled: boolean;
+  createdAt: number; updatedAt: number;
+  lastRunAt: number | null; lastStatus: string; lastError: string; nextRunAt: number | null;
+};
+
 export type CatalogEndpoint = {
   id: string; baseUrl: string; format: string; label: string; isDefault: boolean; supported: boolean;
 };
@@ -167,7 +178,10 @@ export type TuiSettings = {
 export type TodoItem = { text: string; done: boolean };
 export type DiffLine = { type: 'context' | 'add' | 'del' | 'meta'; lineNo: number; text: string };
 export type SubAgentResult = { task: string; ok: boolean; text: string; sessionId: string; rounds: number; tools: number };
-export type ToolExtra = { diff?: DiffLine[]; todos?: TodoItem[]; path?: string; children?: SubAgentResult[] };
+export type ToolImage = { path: string; mime: string; width: number; height: number; url?: string };
+export type ToolShot = ToolImage & { bytes: number; at: number };
+export type ToolActionReceipt = { action: string; ok: boolean; note: string };
+export type ToolExtra = { diff?: DiffLine[]; todos?: TodoItem[]; path?: string; children?: SubAgentResult[]; image?: ToolImage; shot?: ToolShot; actions?: ToolActionReceipt[] };
 export type ToolView = { id: string; name: string; params: unknown; phase: 'running' | 'ask' | 'rejected' | 'done' | 'failed'; output: string; requestId?: string; extra?: ToolExtra; subAgent?: boolean; subTask?: string };
 /** 时间线片段：文本段与工具卡交错（历史投影与流式 turn 同形态，切齐两端渲染） */
 export type MsgPart = { kind: 'text'; text: string } | ({ kind: 'tool' } & ToolView);

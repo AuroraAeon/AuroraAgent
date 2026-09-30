@@ -2,20 +2,27 @@
 import { useState, type ReactNode } from 'react';
 import {
   Dots, IconCheck, IconClose, IconFile, IconFilePlus, IconFolder, IconGlobe,
-  IconList, IconPencil, IconPerson, IconSearch, IconShield, IconTerminal, IconWrench,
+  IconList, IconPencil, IconPerson, IconScreen, IconSearch, IconShield, IconTerminal, IconWrench,
 } from '../icons';
 import { toolIconKey, toolLabel, toolResourceOf } from '../../../util/agent/transcript.mjs';
 import { TodoList } from './Todo';
+import { ZoomableImage } from '../zoom-image';
 import type { DiffLine, ToolView } from '../types';
 
 // 工具标签与图标键的单一真值源在 util/agent/transcript.mjs（终端同源，含 task / MCP 推导）
 const ICON_BY_KEY: Record<string, typeof IconFile> = {
   file: IconFile, folder: IconFolder, write: IconFilePlus, edit: IconPencil,
   shell: IconTerminal, globe: IconGlobe, search: IconSearch, list: IconList,
-  wrench: IconWrench, task: IconPerson, plug: IconGlobe,
+  wrench: IconWrench, task: IconPerson, plug: IconGlobe, screen: IconScreen,
 };
 
 const OUTPUT_LIMIT = 1200;
+
+/** computer_use 截图：缩略图 + 点击放大（对齐 OpenBitFun #3184 的图片查看，灯箱与 Markdown 图片同源） */
+function ShotView({ shot }: { shot: { url?: string; path: string; width: number; height: number } }) {
+  if (!shot.url) return null;
+  return <ZoomableImage src={shot.url} alt={`屏幕截图 ${shot.width}x${shot.height}`} className="zoom-img tc-shot" />;
+}
 
 function resourceOf(tool: ToolView): string {
   return toolResourceOf(tool.name, tool.params);
@@ -62,6 +69,7 @@ export function ToolCard({ tool, onDecide }: Props) {
   const output = tool.output || '';
   const diff = Array.isArray(tool.extra?.diff) ? tool.extra.diff : null;
   const todos = Array.isArray(tool.extra?.todos) ? tool.extra.todos : null;
+  const shot = tool.extra?.image || null;
   // todo 工具的结构化清单已取代纯文本输出，避免同一信息展示两遍
   const hideOutput = tool.name === 'todo' && todos !== null;
   const shown = hideOutput ? '' : output.length > OUTPUT_LIMIT && !expanded
@@ -101,6 +109,12 @@ export function ToolCard({ tool, onDecide }: Props) {
             </div>
           ) : null}
           {diff && diff.length ? <DiffView diff={diff} /> : null}
+          {shot ? (
+            <div className="tc-sec">
+              <div className="tc-sec-t">截图</div>
+              <ShotView shot={shot} />
+            </div>
+          ) : null}
           {children ? (
             <div className="tc-sec">
               <div className="tc-sec-t">子代理（{children.length}）</div>

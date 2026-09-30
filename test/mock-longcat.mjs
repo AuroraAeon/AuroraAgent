@@ -90,6 +90,10 @@ export function startMock(port = 18901) {
         const isPlanRound = lastText.includes('USE_PLAN') && !lastText.includes('【已批准的计划】');
         const isSwarmRound = lastText.includes('USE_SWARM') && !hasToolResult;
         const isMcpRound = lastText.includes('USE_MCP') && !hasToolResult;
+        // USE_CRON：模型用 cron 工具自建定时任务（add）；带回结果后原文复述
+        const isCronRound = lastText.includes('USE_CRON') && !hasToolResult;
+        // USE_COMPUTER：模型调 computer_use 观察屏幕（只用于断言权限门控，不真截屏）
+        const isComputerRound = lastText.includes('USE_COMPUTER') && !hasToolResult;
         // Goal 触发词（USE_GOAL_BUDGET / USE_GOAL_VERIFY_* / USE_GOAL_IDLE 均含 USE_GOAL 子串，先判细则）：
         // USE_GOAL → create_goal 轮 → update_goal 完成提案轮（宿主结算后收尾）；
         // USE_GOAL_BUDGET → create_goal 带小额预算 → 触顶收尾轮（系统提示带【目标预算收尾】标记）；
@@ -130,10 +134,10 @@ export function startMock(port = 18901) {
           || (body.includes('【目标验证未通过') && lastToolText.includes('已记录'))
           || isGoalTurn2Proposal
         );
-        const isToolRound = (((lastText.includes('USE_TOOL') || isSkillRound || isSkillRefRound || isTodoRound || isEditRound || isSwarmRound || isMcpRound) && !hasToolResult) || isGoalCreateRound || isGoalTurn2Read || isGoalProposalRound);
+        const isToolRound = (((lastText.includes('USE_TOOL') || isSkillRound || isSkillRefRound || isTodoRound || isEditRound || isSwarmRound || isMcpRound || isCronRound || isComputerRound) && !hasToolResult) || isGoalCreateRound || isGoalTurn2Read || isGoalProposalRound);
         // 会话标题生成请求（titleMode=model）：系统提示带【会话标题生成】标记，回一个固定标题供断言
         const isTitleRound = body.includes('【会话标题生成】');
-        const toolName = isGoalCreateRound ? 'create_goal' : isGoalProposalRound ? 'update_goal' : isSkillRound ? 'skill' : isTodoRound ? 'todo' : isEditRound ? 'edit_file' : isSwarmRound ? 'task' : isMcpRound ? 'mcp__mock__echo' : lastText.includes('USE_TOOL_WRITE') ? 'write_file' : 'read_file';
+        const toolName = isGoalCreateRound ? 'create_goal' : isGoalProposalRound ? 'update_goal' : isSkillRound ? 'skill' : isTodoRound ? 'todo' : isEditRound ? 'edit_file' : isSwarmRound ? 'task' : isMcpRound ? 'mcp__mock__echo' : isCronRound ? 'cron' : isComputerRound ? 'computer_use' : lastText.includes('USE_TOOL_WRITE') ? 'write_file' : 'read_file';
         const createObjective = isGoalBudgetRound ? '把测试基线扩展到 300 个并保持全绿'
           : body.includes('USE_GOAL_EDIT') ? 'GOAL_EDIT_OLD 把 README 安装章节改写并通过自检'
           : '把 README 安装章节改写并通过自检';
@@ -145,6 +149,8 @@ export function startMock(port = 18901) {
           : isEditRound ? { path: 'edit_me.txt', old_string: 'old', new_string: 'new' }
           : isSwarmRound ? { tasks: ['子任务甲：统计工作目录文件数', '子任务乙：读取 README 前 20 行'] }
           : isMcpRound ? { text: '来自模型的调用' }
+          : isCronRound ? { action: 'add', name: 'mock 定时任务', prompt: 'MOCK_CRON_PROMPT', schedule: { kind: 'interval', everyMs: 60000 } }
+          : isComputerRound ? { app: 'Safari', actions: [{ type: 'observe' }] }
           : toolName === 'write_file' ? { path: 'written_by_agent.txt', content: 'AGENT_WROTE' } : { path: 'mock.txt' };
         const answer = isToolRound ? '' : isTitleRound ? 'README 安装章节改写' : isGoalWrapUp ? '已完成：建立目标并开始追踪；未完成：目标本身的工作；停止原因：token 预算已耗尽，可经 update_goal 抬高预算后续跑。' : isEvaluatorRound ? (body.includes('VERIFY_RETRY')
             ? ((state.evalRetryCalls = (state.evalRetryCalls || 0) + 1) === 1 ? '我觉得大概完成了' : '{"verdict":"met","evidence":"README 安装章节已按自述改写"}')

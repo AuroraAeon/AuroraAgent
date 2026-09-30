@@ -27,12 +27,15 @@ export const EVENT_TYPES = [
   'goal_usage_updated',
   'goal_wait_changed',
   'goal_cleared',
+  'jobs_changed',
   'turn_completed',
   'turn_cancelled',
   'turn_failed',
 ];
 
 /** 队列回执：活跃 turn 期间的新提交进 FIFO，客户端据此画等待条；position 为 1 based 队序 */
+/** 定时任务变更信号（对齐 OpenBitFun change signal）：cron 工具 / REST 改了 jobs.json 即广播，
+ *  让设置面板与终端「建了任务界面就重读」，不必等下一次切分类才发现列表是旧的 */
 /** 工具事件阶段：权限确认走 tool_event(confirmation_needed)，决策经 POST /api/agent/permission 回传 */
 export const TOOL_EVENT_PHASES = [
   'started',

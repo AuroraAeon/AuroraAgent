@@ -11,8 +11,10 @@ import { parseTableBlock } from './md-table.mjs';
 import type { TableAlign, TableBlock } from './md-table.mjs';
 import { highlightCode, type HlToken } from './highlight';
 import { useAppearance } from './appearance';
+import { ZoomableImage, RawImgTag, isSafeImageSrc } from './zoom-image';
 
-const BOLD_LINK_RE = /\*\*([^*\n]+)\*\*|\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g;
+// 粗体 / 链接 / 图片（![](...) 必须排在 []() 之前，否则 ! 后面的部分会被当成链接吃掉） / 原始 <img> 标签
+const BOLD_LINK_RE = /\*\*([^*\n]+)\*\*|\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)|!\[([^\]\n]*)\]\(([^)\s]+)\)|<img\b([^>]*)>/g;
 
 /** 粗体与链接；代码段与公式已被 splitMathSegments 先行切走 */
 function inlinePlain(text: string, keyPrefix: string): ReactNode[] {
@@ -23,12 +25,18 @@ function inlinePlain(text: string, keyPrefix: string): ReactNode[] {
   for (let m = BOLD_LINK_RE.exec(text); m; m = BOLD_LINK_RE.exec(text)) {
     if (m.index > last) nodes.push(text.slice(last, m.index));
     if (m[1] !== undefined) nodes.push(<strong key={`${keyPrefix}-b${i}`}>{m[1]}</strong>);
-    else {
+    else if (m[3] !== undefined) {
       nodes.push(
         <a key={`${keyPrefix}-a${i}`} href={m[3]} target="_blank" rel="noreferrer noopener">
           {m[2]}
         </a>,
       );
+    } else if (m[5] !== undefined) {
+      // Markdown 图片：src 走白名单（相对路径 / http(s) / data:image），非法 src 原样回落文本
+      if (isSafeImageSrc(m[5])) nodes.push(<ZoomableImage key={`${keyPrefix}-i${i}`} src={m[5]} alt={m[4] || '图片'} className="zoom-img md-img" />);
+      else nodes.push(m[0]);
+    } else if (m[6] !== undefined) {
+      nodes.push(<RawImgTag key={`${keyPrefix}-h${i}`} attrs={m[6]} />);
     }
     last = m.index + m[0].length;
     i++;

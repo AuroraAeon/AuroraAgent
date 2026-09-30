@@ -298,6 +298,36 @@ export function normalizeTuiSaveResult(raw) {
   return { ...o, ok: asBool(o.ok, true), tui: normalizeTuiSettings({ tui: o.tui }).tui };
 }
 
+/** 定时任务行（JobItem）：schedule 形状不对时回落成不合法但安全的空 cron，绝不白屏面板 */
+export function normalizeJobRows(raw) {
+  return rows(raw, (j) => {
+    const sc = asObject(j?.schedule);
+    const schedule = sc.kind === 'interval'
+      ? { kind: 'interval', everyMs: asCount(sc.everyMs) }
+      : { kind: 'cron', expr: asString(sc.expr) };
+    return {
+      id: asString(j?.id),
+      name: asString(j?.name),
+      sessionId: asString(j?.sessionId),
+      prompt: asString(j?.prompt),
+      schedule,
+      enabled: asBool(j?.enabled, true),
+      createdAt: asCount(j?.createdAt),
+      updatedAt: asCount(j?.updatedAt),
+      lastRunAt: asOptionalNumber(j?.lastRunAt) ?? null,
+      lastStatus: asString(j?.lastStatus),
+      lastError: asString(j?.lastError),
+      nextRunAt: asOptionalNumber(j?.nextRunAt) ?? null,
+    };
+  });
+}
+
+/** 任务列表回包：GET /api/jobs */
+export function normalizeJobList(raw) {
+  const o = asObject(raw);
+  return { ...o, jobs: normalizeJobRows(o.jobs) };
+}
+
 /** 文件搜索：GET /api/files/search（files 非数组即 MentionPalette filter 白屏） */
 export function normalizeFileSearch(raw) {
   const o = asObject(raw);

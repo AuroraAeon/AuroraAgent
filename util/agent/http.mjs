@@ -4,6 +4,7 @@
  * 路由语义（平铺、单活跃 turn、SSE 断开即中止）与 /api/chat 完全一致。
  */
 import { join } from 'node:path';
+import { rmSync } from 'node:fs';
 import { SessionStore } from './session.mjs';
 import { runAgentTurn } from './loop.mjs';
 import { getHarness, harnessSummaries } from './harness.mjs';
@@ -15,6 +16,12 @@ import { loadSkills, findSkill, skillInvocationText } from './skills.mjs';
 import { searchWorkspaceFiles } from './files.mjs';
 import { SideSession } from './side-session.mjs';
 import { TurnQueue, newOpId } from './queue.mjs';
+import { JobStore } from '../jobs/store.mjs';
+import { JobScheduler } from '../jobs/schedule.mjs';
+import { createCronRuntime } from './cron-tool.mjs';
+import { createComputerRuntime } from './computer.mjs';
+import { createJobsApi } from '../jobs/http.mjs';
+import { subscribeJobEvents, publishJobEvent } from '../jobs/bus.mjs';
 import { PERMISSION_MODES, TITLE_MODES, experimentalEnabled } from '../config.mjs';
 import { McpRegistry } from '../mcp/registry.mjs';
 import { parseFailoverConfig, effectiveTimeouts } from '../llm/failover.mjs';
@@ -58,6 +65,40 @@ export function createAgentApi(deps) {
   const activeTurns = new Map(); // sessionId -> { controller }
   // 消息队列（#3212 / #3220）：活跃 turn 期间的新提交进 FIFO，前一条结算后由泵接力
   const queue = new TurnQueue(dataDir, { warn: (m, e) => log('warn', m, e) });
+  // 定时任务（#3149）：jobs.json 在本模块单点持有——cron 工具、/api/jobs REST 面、调度器共享同一个
+  // store，否则两处各写一份 jobs.json 会互相覆盖
+  const jobs = new JobStore(dataDir, { warn: (m, e) => log('warn', m, e) });
+  // cron 工具运行时按会话缓存：工具形状稳定才能命中 toolSchemas 的 schema 缓存（请求字节稳定以吃提示缓存）。
+  // sessionId 必须是当次 turn 的会话——模型不显式给 session_id 时任务就落到当前会话
+  const cronRuntimes = new Map();
+  const cronRuntimeFor = (sessionId) => {
+    let rt = cronRuntimes.get(sessionId);
+    if (!rt) {
+      rt = createCronRuntime(jobs, {
+        sessionId,
+        // runJob 延迟绑定到 runJobTurn（后者要复用 startTurn，只能后定义）
+        runJob: (job) => runJobTurn(job),
+        publish: () => publishJobEvent({ jobs: jobs.list() }),
+      });
+      cronRuntimes.set(sessionId, rt);
+    }
+    return rt;
+  };
+  // computer_use 运行时按会话缓存：截图落 <数据目录>/shots/<会话 id>/，删除会话时整目录清掉
+  const computerRuntimes = new Map();
+  const computerRuntimeFor = (sessionId) => {
+    let rt = computerRuntimes.get(sessionId);
+    if (!rt) {
+      rt = createComputerRuntime({
+        shotsDir: join(dataDir, 'shots', sessionId),
+        // 截图对外 URL：Web 工具卡缩略图与点击放大都走它（web.mjs 的白名单路由）
+        urlBase: `/api/shots/${sessionId}`,
+        log: (l, m, e) => log(l, m, e),
+      });
+      computerRuntimes.set(sessionId, rt);
+    }
+    return rt;
+  };
   /** opId -> 该条排队提交的 SSE 响应（轮到它开跑时由泵接管写入） */
   const waitingStreams = new Map();
   // 侧边对话（/btw）：mainSessionId -> SideSession 内存门面（继承主会话 meta 快照 + 自洽历史前缀）。
@@ -105,6 +146,21 @@ export function createAgentApi(deps) {
   };
 
   /**
+   * 本轮请求的额外工具：MCP 工具 + cron 定时任务工具。
+   * 都按 harness.tools 门控（tools.mjs 的 pickTools 只收 names 里的名字），minimal 自然收不进来。
+   */
+  const extraToolsFor = (harness, side, sessionId) => {
+    const extra = mcpTools();
+    // 侧边对话不派发子代理、不接管 goal，同样不给有持久副作用的定时任务工具与屏幕操作
+    if (!side) {
+      extra.push(...cronRuntimeFor(sessionId).tools);
+      // computer_use 经 harness.tools 门控（仅 ultimate）；pickTools 自然把其余模式滤掉
+      extra.push(computerRuntimeFor(sessionId));
+    }
+    return extra;
+  };
+
+  /**
    * 起跑一条 turn（直接提交或队列泵接力共用）。
    * res 为 null 表示无人认领的流（排队期间客户端断开）：照常执行，事件丢弃。
    */
@@ -139,6 +195,8 @@ export function createAgentApi(deps) {
     // 队列接力的流已在入队回执里写过头部，只能写一次（重复 writeHead 会抛 HEADERS_SENT）
     if (res && !res.headersSent) res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' });
     const emit = (type, payload) => { if (res && !res.writableEnded) res.write(sseFrame(type, payload)); };
+    // 定时任务变更信号：本轮经 cron 工具改了任务，客户端即时收到 jobs_changed 重读列表
+    const unsubJobs = subscribeJobEvents((_frame, payload) => emit('jobs_changed', { sessionId: String(payload?.sessionId || '') }));
     // 客户端断开即中止上游与工具执行，不浪费额度（与 /api/chat 一致）
     if (res) res.on('close', () => {
       if (!res.writableEnded) {
@@ -161,7 +219,7 @@ export function createAgentApi(deps) {
         store, usage, session: sessionMeta, input, inputSkill, provider, model, harness,
         builtinPrice, skills,
         gen: { maxTokens: cfg.maxTokens, temperature: cfg.temperature, thinkingOn: body.thinking !== false },
-        emit, controller, permissionMode, planMode, titleMode, extraTools: mcpTools(),
+        emit, controller, permissionMode, planMode, titleMode, extraTools: extraToolsFor(harness, side, sessionId),
         agentProxy: cfg.agentProxy,
         providerFailover: cfg.providerFailover, providerFailoverMaxAttempts: cfg.providerFailoverMaxAttempts,
         failoverCandidates,
@@ -183,6 +241,7 @@ export function createAgentApi(deps) {
       log('error', 'Agent turn 异常', { sessionId, error: String(err) });
       emit('turn_failed', { sessionId, error: String(err) });
     } finally {
+      unsubJobs();
       cleanupPermissions();
       activeTurns.delete(sessionId);
       if (opId && queue.find(sessionId, opId)) queue.finish(sessionId, opId, turnFailed ? 'failed' : 'done');
@@ -192,7 +251,32 @@ export function createAgentApi(deps) {
     }
   };
 
-  return async function handleAgentApi(req, res, url) {
+  /**
+   * 定时任务到期执行器：在目标会话跑一条注入式 turn（prompt 作为用户消息）。
+   * 没有 SSE 认领方（res=null）——任务是用户早先设的，到期时没人在看；事件丢弃，账本照记。
+   */
+  const runJobTurn = async (job) => {
+    const sid = String(job.sessionId || '');
+    const got = sessions.get(sid);
+    if (!got) throw new Error(`目标会话不存在或已删除：${sid}`);
+    // 会话正忙：入队由泵接力。队列本就是为「生成中又来一条」设计的，定时任务与用户消息同权
+    if (activeTurns.has(sid)) {
+      queue.enqueue(sid, { opId: newOpId(), text: job.prompt, body: { input: job.prompt } });
+      log('info', '定时任务到期但会话正忙，已入队等待', { jobId: job.id, sessionId: sid });
+      return;
+    }
+    await startTurn(sid, got, { input: job.prompt }, null, job.prompt);
+  };
+
+  // 调度器：进程内 1s ticker + jobs.lock 单实例 owner 锁（端口交接期两实例短暂共存也不双跑）
+  const scheduler = new JobScheduler(jobs, runJobTurn, { dataDir, log: (l, m, e) => log(l, m, e) });
+  // /api/jobs REST 面与 jobs_changed 长连接（实现拆在 util/jobs/http.mjs）：store 与执行器由本模块注入
+  const jobsApi = createJobsApi({ jobs, log: (l, m, e) => log(l, m, e), runJob: runJobTurn });
+
+  const handle = async function handleAgentApi(req, res, url) {
+    // 定时任务 REST 面与 jobs_changed 长连接（/api/jobs，实现见 util/jobs/http.mjs）
+    if (url.startsWith('/api/jobs') && (await jobsApi(req, res, url))) return;
+
     if (req.method === 'GET' && url === '/api/agent/harnesses') {
       return json(res, 200, { harnesses: harnessSummaries(), default: 'standard' });
     }
@@ -251,6 +335,9 @@ export function createAgentApi(deps) {
     if (sessionMatch && req.method === 'DELETE') {
       const deleted = sessions.remove(sessionMatch[1]);
       sides.delete(sessionMatch[1]); // 会话没了，侧边对话随之作废（防进程内驻留增长）
+      // computer_use 截图随会话一起清（shots/<会话 id>/），别让数据目录无限涨
+      computerRuntimes.delete(sessionMatch[1]);
+      rmSync(join(dataDir, 'shots', sessionMatch[1]), { recursive: true, force: true });
       return json(res, 200, { deleted });
     }
     // 切换模式 / 改名 / 换模型：下一轮 turn 生效（进行中的 turn 不受影响）
@@ -547,4 +634,9 @@ export function createAgentApi(deps) {
 
     json(res, 404, { error: { message: 'not found' } });
   };
+  // 调度器与 store 挂在外壳上给 web.mjs：启停时点是服务生命周期的事，不该由某次请求顺带触发
+  handle.jobs = jobs;
+  handle.runJob = runJobTurn;
+  handle.scheduler = scheduler;
+  return handle;
 }

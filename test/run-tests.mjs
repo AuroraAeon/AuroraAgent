@@ -46,7 +46,13 @@ import { runTitleTests } from './title.mjs';
 import { runGoalTests } from './goal.mjs';
 import { completePrefix, SideSession } from '../util/agent/side-session.mjs';
 import { TurnQueue, newOpId } from '../util/agent/queue.mjs';
+import { JobStore, JobValidationError, computeNextRunAt } from '../util/jobs/store.mjs';
+import { JobScheduler, MISSED_GRACE_MS, acquireOwnerLock } from '../util/jobs/schedule.mjs';
+import { parseCron, nextCronRun, isValidCron } from '../util/jobs/cron-expr.mjs';
+import { createCronRuntime } from '../util/agent/cron-tool.mjs';
+import { formatJobLines, parseCronArg, parseScheduleText, pickJob } from '../util/agent/cron-cmd.mjs';
 import { parseQueueArg, formatQueueLines, pickQueueItem } from '../util/agent/queue-cmd.mjs';
+import { runComputer, createComputerRuntime } from '../util/agent/computer.mjs';
 import { searchWorkspaceFiles } from '../util/agent/files.mjs';
 import { readWorkspaceInfo, readGitBranch } from '../util/workspace.mjs';
 import { TITLE_MAX_TOKENS } from '../util/agent/title-model.mjs';
@@ -1885,6 +1891,276 @@ await test('queue: promote / remove / setState 语义', () => {
     eq(q.setState('s1', 'nope', 'held'), null, '未知 opId 返回 null');
     eq(q.promote('s1', 'nope'), null, '未知 opId promote 返回 null');
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ---------- 单元测试: 定时任务（本地化 #3149） ----------
+console.log('\n定时任务单元测试');
+
+await test('cron-expr: 五段解析矩阵与下次运行时刻', () => {
+  eq(isValidCron('0 9 * * *'), true, '每天 9 点合法');
+  eq(isValidCron('*/5 * * * *'), true, '每 5 分钟合法');
+  eq(isValidCron('0,30 9-17 * * 1-5'), true, '逗号列表与区间合法');
+  eq(isValidCron('0 9 * * 7'), true, '周日可写 7');
+  eq(isValidCron('0 0 30 2 *'), true, '2 月 30 日语法合法（无解由 computeNextRunAt 判）');
+  eq(isValidCron('0 9 * *'), false, '段数不足');
+  eq(isValidCron('61 9 * * *'), false, '分钟越界');
+  eq(isValidCron('a 9 * * *'), false, '非数字段');
+  eq(isValidCron('0 9 * * 8'), false, '周日越界（只到 7）');
+  eq(isValidCron('5-2 9 * * *'), false, '区间反了');
+  const next = nextCronRun('0 9 * * *', new Date(2026, 0, 15, 10, 0, 0).getTime());
+  eq(new Date(next).getHours(), 9, '下一次应落在 9 点');
+  eq(new Date(next).getDate(), 16, '10 点之后应落到次日');
+  eq(nextCronRun('0 0 30 2 *'), null, '无解返回 null');
+  // 日与周都是具体值时按 OR 语义（Vixie cron 约定）：1 月 5 日是周一，下一次就是 1 月 12 日周一
+  const orNext = nextCronRun('0 0 1 * 1', new Date(2026, 0, 5, 12, 0, 0).getTime());
+  eq(new Date(orNext).getDate(), 12, '日与周按 OR 语义：下一个周一即可，不必等 1 号');
+  eq(nextCronRun('*/15 * * * *', new Date(2026, 0, 15, 10, 7, 0).getTime()) > new Date(2026, 0, 15, 10, 7, 0).getTime(), true, '下一次必须严格晚于基准');
+  eq(parseCron('0 9 * * *').weekdays.length, 7, '周段星号展开为全 7 天');
+});
+
+await test('jobs store: 校验、纪元严格推进、到期挑选与落盘恢复', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-jobs-'));
+  try {
+    const store = new JobStore(dir);
+    let err = null;
+    try { store.create({ name: '', sessionId: 's', prompt: 'p', schedule: { kind: 'cron', expr: 'bad' } }); } catch (e) { err = e; }
+    assert(err instanceof JobValidationError, '非法草稿应抛 JobValidationError');
+    let err2 = null;
+    try { store.create({ name: 'x', sessionId: 's', prompt: 'p', schedule: { kind: 'interval', everyMs: 1000 } }); } catch (e) { err2 = e; }
+    assert(err2 && err2.message.includes('60 秒'), '间隔下限应有中文说明');
+    let err3 = null;
+    try { store.create({ name: 'x', sessionId: 's', prompt: 'p' }); } catch (e) { err3 = e; }
+    assert(err3 && err3.message.includes('执行计划'), '缺执行计划应说明');
+    let err4 = null;
+    try { store.create({ name: 'x', sessionId: 's', prompt: 'p', schedule: { kind: 'cron', expr: '0 0 30 2 *' } }); } catch (e) { err4 = e; }
+    assert(err4 && err4.message.includes('永远不触发'), '语法合法但无解的表达式应被拒');
+    const job = store.create({ name: '早报', sessionId: 's1', prompt: '汇总', schedule: { kind: 'cron', expr: '0 9 * * *' } });
+    eq(job.enabled, true, '默认启用');
+    assert(job.nextRunAt > Date.now(), 'nextRunAt 应在未来');
+    // 纪元严格推进：同毫秒也算 +1，陈旧快照必然失配
+    const a = store.update(job.id, () => ({ name: '早报甲' }));
+    const b = store.update(job.id, () => ({ name: '早报乙' }));
+    eq(b.updatedAt > a.updatedAt, true, 'updatedAt 必须严格递增');
+    let stale = null;
+    try { store.update(job.id, () => ({ name: '迟到的' }), { expectedUpdatedAt: a.updatedAt }); } catch (e) { stale = e; }
+    assert(stale instanceof JobValidationError && stale.message.includes('已被其他操作修改'), '纪元不符应拒绝');
+    eq(store.get(job.id).name, '早报乙', '被拒绝的变更不得生效');
+    // 停用清空 nextRunAt，到期挑选只认启用的
+    store.update(job.id, () => ({ enabled: false }));
+    eq(store.get(job.id).nextRunAt, null, '停用后不再排下次');
+    eq(store.due(Date.now() + 86400000).length, 0, '停用的任务不到期');
+    const live = store.create({ name: '即时', sessionId: 's2', prompt: '跑', schedule: { kind: 'interval', everyMs: 60000 } });
+    store.update(live.id, () => ({ nextRunAt: Date.now() - 1 }));
+    eq(store.due().map((j) => j.id).join(','), live.id, '到期的应被挑出');
+    store.recordRun(live.id, { status: 'ok' });
+    eq(store.get(live.id).lastStatus, 'ok', '运行结果应记录');
+    assert(store.get(live.id).nextRunAt > Date.now(), '记账后 nextRunAt 推进到未来');
+    eq(store.due().length, 0, '记账后不再重复到期（重复执行是真金白银的 token）');
+    // 落盘恢复：重启后任务还在，损坏文件按空表处理
+    eq(new JobStore(dir).list().length, 2, '重启后任务应恢复');
+    writeFileSync(join(dir, 'jobs.json'), '{ 坏 JSON');
+    eq(new JobStore(dir).list().length, 0, '损坏文件按空任务表处理');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+await test('computeNextRunAt / parseScheduleText / acquireOwnerLock 原语', async () => {
+  // 间隔：基准 + everyMs，非法间隔（低于 60 秒）返回 null
+  eq(computeNextRunAt({ kind: 'interval', everyMs: 60000 }, 1000), 61000, '间隔应加在基准上');
+  eq(computeNextRunAt({ kind: 'interval', everyMs: 1000 }), null, '低于 60 秒的间隔不排');
+  eq(computeNextRunAt({ kind: 'cron', expr: '0 0 30 2 *' }), null, '永不触发的 cron 不排');
+  eq(computeNextRunAt({ kind: 'bogus' }), null, '未知类型不排');
+  eq(parseScheduleText('every 30').everyMs, 1800000, 'every N 分钟转毫秒');
+  eq(parseScheduleText('0 9 * * *').kind, 'cron', '五段视作 cron');
+  eq(parseScheduleText('坏'), null, '无法解析返回 null');
+  eq(parseScheduleText('every 0'), null, 'every 0 不合法');
+  // owner 锁：O_EXCL 抢占、同进程防重入、跨进程 PID 探活、释放后可再抢
+  const dir = mkdtempSync(join(tmpdir(), 'lc-jobs-'));
+  try {
+    const one = acquireOwnerLock(dir);
+    eq(one.acquired, true, '首次应抢到');
+    const again = acquireOwnerLock(dir);
+    eq(again.acquired, false, '本进程已持锁，第二次抢不到（否则两个调度器都跑）');
+    one.release();
+    const afterRelease = acquireOwnerLock(dir);
+    eq(afterRelease.acquired, true, '释放后可以再抢');
+    afterRelease.release();
+    // 跨进程：锁里写一个活着的别的进程的 PID（真实子进程，不用假数字）
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
+    writeFileSync(join(dir, 'jobs.lock'), String(child.pid));
+    const blocked = acquireOwnerLock(dir);
+    eq(blocked.acquired, false, '持锁方是活着的别的进程，抢不到');
+    child.kill();
+    await new Promise((r) => setTimeout(r, 150));
+    const takeover = acquireOwnerLock(dir);
+    eq(takeover.acquired, true, '持锁方已死，接管');
+    takeover.release();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+  eq(MISSED_GRACE_MS, 6 * 3600 * 1000, '停机宽限期为 6 小时');
+});
+
+await test('jobs scheduler: owner 锁单实例——两个调度器只有一个真跑', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-jobs-'));
+  try {
+    const jobs = new JobStore(dir);
+    const job = jobs.create({ name: '双跑防护', sessionId: 's', prompt: 'x', schedule: { kind: 'interval', everyMs: 60000 } });
+    jobs.update(job.id, () => ({ nextRunAt: Date.now() - 1000 }));
+    const ran = [];
+    const mk = () => new JobScheduler(jobs, async (j) => { ran.push(j.id); }, { dataDir: dir, intervalMs: 20, log: () => {} });
+    const first = mk();
+    const second = mk();
+    first.start();
+    second.start();
+    eq(first.isOwner, true, '先启动的应拿到 owner 锁');
+    eq(second.isOwner, false, '后启动的不参与调度（端口交接期两实例共存）');
+    await new Promise((r) => setTimeout(r, 250));
+    eq(ran.length, 1, '同一任务只应被执行一次');
+    first.stop();
+    eq(second.isOwner, false, '旁观者按退避间隔才重试，不会立刻抢');
+    second.stop();
+    const third = mk();
+    third.start();
+    eq(third.isOwner, true, '锁释放后新的调度器可以接管');
+    third.stop();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+await test('jobs scheduler: 停机期间到期的任务先记 missed 再补跑', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-jobs-'));
+  try {
+    const jobs = new JobStore(dir);
+    const job = jobs.create({ name: '停机', sessionId: 's', prompt: 'x', schedule: { kind: 'interval', everyMs: 60000 } });
+    jobs.update(job.id, () => ({ nextRunAt: Date.now() - 7 * 3600 * 1000 }));
+    const ran = [];
+    const s = new JobScheduler(jobs, async () => { ran.push(1); }, { dataDir: dir, intervalMs: 20, log: () => {} });
+    s.start();
+    await new Promise((r) => setTimeout(r, 250));
+    s.stop();
+    eq(ran.length, 1, '仍应补跑一次');
+    eq(jobs.get(job.id).lastStatus, 'missed', '应标记为停机错过而非按时成功');
+    assert(jobs.get(job.id).lastError.includes('停机'), '应说明本次是补跑');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+await test('定时任务到期跑通一条 mock turn（调度器驱动 runAgentTurn）', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-jobs-'));
+  try {
+    const ws = join(dir, 'workspace');
+    mkdirSync(ws, { recursive: true });
+    const store = new SessionStore(dir);
+    const usage = new UsageLedger(dir);
+    const session = store.create({ name: '任务会话', model: 'm1', harness: 'standard', workspace: ws });
+    const jobs = new JobStore(dir);
+    const job = jobs.create({ name: '早报', sessionId: session.id, prompt: 'CRON_DUE_PROMPT', schedule: { kind: 'interval', everyMs: 60000 } });
+    jobs.update(job.id, () => ({ nextRunAt: Date.now() - 1000 }));
+    const seen = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts = {}) => {
+      seen.push(JSON.parse(opts.body || '{}'));
+      return sseResp(textFrames('早报已生成'));
+    };
+    const scheduler = new JobScheduler(jobs, async (j) => {
+      await runAgentTurn({
+        store, usage, session, input: j.prompt,
+        provider: { id: 'p1', name: '测试', protocol: 'openai', baseUrl: 'https://up.test', apiKey: 'k' },
+        model: 'm1', harness: getHarness('standard'), builtinPrice: { input: 2, output: 8 },
+        emit: () => {}, controller: new AbortController(), log: () => {},
+      });
+    }, { dataDir: dir, intervalMs: 20, log: () => {} });
+    try {
+      scheduler.start();
+      await new Promise((r) => setTimeout(r, 250));
+    } finally { scheduler.stop(); globalThis.fetch = realFetch; }
+    eq(jobs.get(job.id).lastStatus, 'ok', '到期后应记一次成功');
+    assert(seen.some((b) => JSON.stringify(b.messages).includes('CRON_DUE_PROMPT')), 'prompt 应作为用户消息发给模型');
+    assert(store.records(session.id).some((r) => r.t === 'user' && r.text === 'CRON_DUE_PROMPT'), '注入式 turn 应落进会话转录');
+    assert(jobs.get(job.id).nextRunAt > Date.now(), 'nextRunAt 应被推进到未来');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+await test('cron 工具: add/list/update/remove/run/get_time（假执行器）', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-jobs-'));
+  try {
+    const jobs = new JobStore(dir);
+    const ran = [];
+    const tool = createCronRuntime(jobs, {
+      sessionId: 'sess-1', runJob: async (j) => { ran.push(j.id); }, publish: () => {},
+    }).tools[0];
+    eq(tool.name, 'cron', '工具名应为 cron');
+    eq(tool.action, 'cron', '权限 action 应为 cron');
+    const created = await tool.run({ action: 'add', name: '巡检', prompt: '看看服务还在吗', schedule: { kind: 'interval', everyMs: 60000 } });
+    assert(created.includes('已创建'), `add 回执应说明创建成功，实际：${created}`);
+    const job = jobs.list()[0];
+    eq(job.sessionId, 'sess-1', '未显式给 session_id 时落到当前会话');
+    const list = await tool.run({ action: 'list' });
+    assert(list.includes('巡检') && list.includes('每 60 秒'), 'list 应列出任务与计划');
+    assert((await tool.run({ action: 'list', session_id: '别的会话' })).includes('没有定时任务'), 'list 按会话过滤');
+    assert((await tool.run({ action: 'get_time' })).includes('当前时间'), 'get_time 应回当前时间');
+    const upd = await tool.run({ action: 'update', job_id: job.id, enabled: false });
+    assert(upd.includes('已更新'), `update 应生效，实际：${upd}`);
+    eq(jobs.get(job.id).enabled, false, 'update 应真的停用');
+    const runOut = await tool.run({ action: 'run', job_id: job.id });
+    assert(runOut.includes('已立即执行'), `run 应经注入的执行器跑一次，实际：${runOut}`);
+    eq(ran.length, 1, '执行器应被调用一次');
+    eq(jobs.get(job.id).lastStatus, 'ok', 'run 后应记一次成功');
+    assert((await tool.run({ action: 'remove', job_id: job.id })).includes('已删除'), 'remove 应删除');
+    eq(jobs.list().length, 0, '删除后无任务');
+    // 非法输入回中文原因而非抛异常：模型看得懂就能自己改对重试
+    const badCron = await tool.run({ action: 'add', name: '坏', prompt: 'x', schedule: { kind: 'cron', expr: 'nope' } });
+    assert(badCron.includes('创建失败') && badCron.includes('cron'), `非法 cron 应回中文原因，实际：${badCron}`);
+    const badEvery = await tool.run({ action: 'add', name: '坏', prompt: 'x', schedule: { kind: 'interval', everyMs: 500 } });
+    assert(badEvery.includes('60 秒'), '间隔下限应说清');
+    eq(jobs.list().length, 0, '失败的创建不应落库');
+    assert((await tool.run({ action: 'bogus' })).includes('未知操作'), '未知动作应提示可用集合');
+    assert((await tool.run({ action: 'run', job_id: '不存在' })).includes('没有 id'), '未知任务 id 应说明');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+await test('cron-cmd: /cron 参数解析、展示行与前缀取任务', () => {
+  eq(parseCronArg('').action, 'list', '无参列出');
+  eq(parseCronArg('  ').action, 'list', '空白按无参处理');
+  eq(parseCronArg('help').action, 'help', 'help 子命令');
+  const add = parseCronArg('add 早报 | 0 9 * * * | 汇总今天的待办');
+  eq(add.action, 'add', 'add 子命令');
+  eq(add.name, '早报', '名称取第一段');
+  eq(add.schedule.kind, 'cron', 'cron 表达式');
+  eq(add.schedule.expr, '0 9 * * *', '表达式原样保留');
+  eq(add.prompt, '汇总今天的待办', '到期内容取第三段');
+  const every = parseCronArg('add 巡检 | every 30 | 看看服务');
+  eq(every.schedule.kind, 'interval', 'every N 解析为间隔');
+  eq(every.schedule.everyMs, 1800000, '分钟转毫秒');
+  eq(parseCronArg('add 早报 | 0 9 * * *').action, 'error', '缺段报错');
+  assert(parseCronArg('add 早报 | 0 9 * * *').message.includes('用法'), '报错应带用法');
+  assert(parseCronArg('add 早报 | 坏表达式 | 内容').message.includes('无法解析'), '表达式无法解析应说明');
+  assert(parseCronArg('add 早报 | every 0 | 内容').message.includes('无法解析'), '间隔为 0 应拒绝');
+  eq(parseCronArg('run').action, 'error', 'run 缺 id 报错');
+  eq(parseCronArg('rm abc').action, 'remove', 'rm 是 remove 同义');
+  eq(parseCronArg('off abc').action, 'off', 'off 停用');
+  eq(parseCronArg('bogus').action, 'error', '未知子命令报错');
+  eq(formatJobLines([])[0].includes('没有定时任务'), true, '空列表给可操作提示');
+  const lines = formatJobLines([{ id: 'abcdef12-1111-2222', name: '早报', schedule: { kind: 'cron', expr: '0 9 * * *' }, enabled: true, nextRunAt: Date.now() + 3600000, lastStatus: 'ok' }]);
+  assert(lines[0].includes('早报') && lines[0].includes('cron 0 9 * * *') && lines[0].includes('abcdef12'), '展示行应含名称、计划与 id 前缀');
+  const picked = pickJob([{ id: 'abcdef12-1111' }, { id: 'zzzz9999-1111' }], 'ABCD');
+  eq(picked.job.id, 'abcdef12-1111', '前缀匹配大小写不敏感');
+  assert(pickJob([{ id: 'abc' }], 'zz').error.includes('没有 id'), '无命中给中文原因');
+  assert(pickJob([{ id: 'abc' }, { id: 'abd' }], 'ab').error.includes('多写几位'), '多命中要求写更长前缀');
+  assert(pickJob([], 'a').error.includes('id'), '空列表也要说清要 id');
+});
+
+await test('harness / policy / transcript: cron 门控与默认姿态', () => {
+  eq(getHarness('minimal').tools.includes('cron'), false, 'minimal 不收 cron');
+  eq(getHarness('standard').tools.includes('cron'), true, 'standard 收录 cron');
+  eq(getHarness('ultimate').tools.includes('cron'), true, 'ultimate 收录 cron');
+  eq(defaultRules().find((r) => r.action === 'cron').effect, 'ask', 'cron 默认询问（到期要花 token）');
+  eq(new PermissionPolicy(defaultRules(), { permissionMode: 'never_ask' }).effective('cron', '*'), 'allow', 'never_ask 下放行');
+  eq(new PermissionPolicy(defaultRules()).effective('cron', '*'), 'ask', '缺省档仍是询问');
+  eq(toolLabel('cron'), '定时任务', 'cron 应有可读标签');
+  eq(toolIconKey('cron'), 'clock', 'cron 应有图标键');
+  assert(toolResourceOf('cron', { schedule: { kind: 'cron', expr: '0 9 * * *' } }).includes('0 9 * * *'), '资源摘要取表达式');
+  const fake = [{ name: 'cron', description: 'x', parameters: { type: 'object' } }];
+  eq(toolSchemas(getHarness('minimal').tools, fake).length, 0, 'minimal 不应把 cron 发上游');
+  const withCron = toolSchemas(getHarness('standard').tools, fake);
+  eq(withCron.length, toolSchemas(getHarness('standard').tools, []).length + 1, 'standard 应把 cron 发上游');
+  assert(withCron.some((t) => t.function?.name === 'cron'), 'cron 的 OpenAI schema 应在请求里');
 });
 
 // ---------- e2e ----------
@@ -5260,6 +5536,303 @@ await test('消息队列：侧边对话不入队也不接力', async () => {
     body: JSON.stringify({ requestId: head.find((e) => e.phase === 'confirmation_needed').requestId, decision: 'deny' }),
   });
   await drainAgentStream(side);
+});
+
+// ---------- 定时任务（本地化 #3149）：REST 面 / 变更信号 / cron 工具经 turn 落地 ----------
+/** 清空数据目录里的定时任务：各用例自建自删，避免互相干扰（也避免遗留任务被调度器在后续测试里触发） */
+async function clearJobs() {
+  const rows = (await (await fetch(`${BASE}/api/jobs`)).json()).jobs || [];
+  for (const j of rows) await fetch(`${BASE}/api/jobs/${j.id}`, { method: 'DELETE' });
+}
+
+await test('/api/jobs：REST 增删改查与坏值 400', async () => {
+  await clearJobs();
+  const s = await createAgentSession();
+  const created = await (await fetch(`${BASE}/api/jobs`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: '早报', sessionId: s.id, prompt: '汇总今天', schedule: { kind: 'cron', expr: '0 9 * * *' } }),
+  })).json();
+  assert(created.job && created.job.id, '创建应回任务');
+  assert(created.job.nextRunAt > Date.now(), 'nextRunAt 应在未来');
+  const bad = await fetch(`${BASE}/api/jobs`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: '', sessionId: s.id, prompt: 'x', schedule: { kind: 'cron', expr: 'nope' } }),
+  });
+  eq(bad.status, 400, '非法草稿 400');
+  assert((await bad.json()).error.message.includes('任务名称'), '400 应带中文字段原因');
+  const badEvery = await fetch(`${BASE}/api/jobs`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'x', sessionId: s.id, prompt: 'x', schedule: { kind: 'interval', everyMs: 500 } }),
+  });
+  eq(badEvery.status, 400, '间隔低于下限 400');
+  const list = await (await fetch(`${BASE}/api/jobs?sessionId=${s.id}`)).json();
+  eq(list.jobs.length, 1, '按会话过滤后应只有一条');
+  const off = await (await fetch(`${BASE}/api/jobs/${created.job.id}/toggle`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: false }),
+  })).json();
+  eq(off.job.enabled, false, '停用生效');
+  eq(off.job.nextRunAt, null, '停用后清空下次运行');
+  const badToggle = await fetch(`${BASE}/api/jobs/${created.job.id}/toggle`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: 'nope' }),
+  });
+  eq(badToggle.status, 400, 'enabled 非布尔 400');
+  const runMissing = await fetch(`${BASE}/api/jobs/${created.job.id}/run`, { method: 'POST' });
+  eq(runMissing.status, 200, '立即运行应放行（由 HTTP 面注入的执行器跑）');
+  const del = await (await fetch(`${BASE}/api/jobs/${created.job.id}`, { method: 'DELETE' })).json();
+  eq(del.removed, true, '删除成功');
+  eq((await (await fetch(`${BASE}/api/jobs`)).json()).jobs.length, 0, '删后列表为空');
+  eq((await fetch(`${BASE}/api/jobs/不存在`, { method: 'DELETE' })).status, 404, '未知 id 走 404');
+});
+
+await test('jobs_changed 变更信号到达 SSE 订阅方', async () => {
+  await clearJobs();
+  const s = await createAgentSession();
+  const es = await fetch(`${BASE}/api/jobs/events`);
+  eq(es.status, 200, '事件流应可订阅');
+  eq(es.headers.get('content-type'), 'text/event-stream', '应为 SSE');
+  const stream = openAgentStream(es);
+  const created = await (await fetch(`${BASE}/api/jobs`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: '信号', sessionId: s.id, prompt: 'x', schedule: { kind: 'interval', everyMs: 60000 } }),
+  })).json();
+  const ev = await stream.next();
+  eq(ev.type, 'jobs_changed', 'REST 创建后订阅方应收到 jobs_changed');
+  assert(Array.isArray(ev.jobs) && ev.jobs.some((j) => j.id === created.job.id), '负载应带最新任务列表');
+  // 删除同样要推一帧：设置面板靠这个信号重读，不靠轮询
+  await fetch(`${BASE}/api/jobs/${created.job.id}`, { method: 'DELETE' });
+  const ev2 = await stream.next();
+  eq(ev2.type, 'jobs_changed', '删除也应推一帧');
+  assert(!ev2.jobs.some((j) => j.id === created.job.id), '删除后的列表不应再含该任务');
+  stream.cancel();
+  eq((await (await fetch(`${BASE}/api/jobs`)).json()).jobs.length, 0, '收尾清理后列表为空');
+});
+
+await test('Agent turn：模型经 cron 工具自建定时任务（权限询问 → 落库 → jobs_changed）', async () => {
+  await clearJobs();
+  const s = await createAgentSession({ permissionMode: 'never_ask' });
+  const stream = openAgentStream(await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_CRON 建一个定时任务' }),
+  }));
+  const events = await drainAgentStream(stream);
+  const toolDone = events.find((e) => e.type === 'tool_event' && e.phase === 'completed');
+  assert(toolDone && toolDone.output.includes('已创建'), `cron 工具应创建成功，实际：${toolDone && toolDone.output}`);
+  const jobs = await (await fetch(`${BASE}/api/jobs?sessionId=${s.id}`)).json();
+  eq(jobs.jobs.length, 1, '任务应落库');
+  eq(jobs.jobs[0].name, 'mock 定时任务', '名称应来自模型参数');
+  assert(events.some((e) => e.type === 'jobs_changed'), 'turn 内改了任务应推 jobs_changed');
+  const detail = await (await fetch(`${AGENT}/sessions/${s.id}`)).json();
+  assert(detail.records.some((r) => r.name === 'cron'), '转录应记下 cron 工具调用');
+  // 收尾：删掉这条，别让后续测试被它干扰
+  await fetch(`${BASE}/api/jobs/${jobs.jobs[0].id}`, { method: 'DELETE' });
+});
+
+await test('Agent turn：cron 默认要权限（ask_when_needed 下弹权限卡）', async () => {
+  await clearJobs();
+  const s = await createAgentSession();
+  const stream = openAgentStream(await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_CRON 建一个定时任务' }),
+  }));
+  const head = await drainAgentStream(stream, { until: (ev) => ev.type === 'tool_event' && ev.phase === 'confirmation_needed' });
+  const ask = head.find((e) => e.phase === 'confirmation_needed');
+  assert(ask, 'cron 应触发权限询问');
+  eq(ask.toolName, 'cron', '被询问的工具应是 cron');
+  await fetch(`${AGENT}/permission`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId: ask.requestId, decision: 'deny' }),
+  });
+  await drainAgentStream(stream);
+  eq((await (await fetch(`${BASE}/api/jobs?sessionId=${s.id}`)).json()).jobs.length, 0, '拒绝后不应落库');
+});
+
+// ---------- computer_use（#3191 macOS 零依赖子集） ----------
+const fakePng = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+/** 假执行器：按命令名回固定结果，screencapture 落一张假 PNG（不打真屏幕） */
+function fakeExec(overrides = {}) {
+  const calls = [];
+  const run = async (cmd, args = []) => {
+    calls.push([cmd, ...args].join(' '));
+    if (overrides[cmd]) return overrides[cmd](args);
+    if (cmd === 'osascript') return { code: 0, stdout: '321', stderr: '' };
+    if (cmd === 'screencapture') {
+      const path = args[args.length - 1];
+      writeFileSync(path, fakePng);
+      return { code: 0, stdout: '', stderr: '' };
+    }
+    if (cmd === 'sips') return { code: 0, stdout: 'pixelWidth: 1440\npixelHeight: 900\n', stderr: '' };
+    return { code: 0, stdout: '', stderr: '' };
+  };
+  run.calls = calls;
+  return run;
+}
+
+await test('多模态 tool result：assembleMessages 把截图投影成 OpenAI image_url 片段', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-shot-'));
+  const file = join(dir, 'shot.png');
+  writeFileSync(file, fakePng);
+  const harness = getHarness('standard');
+  const msgs = assembleMessages({
+    harness, workspace: dir,
+    records: [
+      { t: 'user', text: '看屏幕' },
+      { t: 'tool_call', id: 'c1', name: 'computer_use', args: { actions: [{ type: 'observe' }] } },
+      { t: 'tool_result', id: 'c1', name: 'computer_use', ok: true, output: '截图 1440x900', extra: { image: { path: file, mime: 'image/png', width: 1440, height: 900 } } },
+      { t: 'assistant', text: '看到了' },
+    ],
+  });
+  const tool = msgs.find((m) => m.role === 'tool');
+  assert(Array.isArray(tool.content), '带截图的 tool 消息应是 content 数组');
+  eq(tool.content[0].type, 'text', '文本片段在前');
+  const img = tool.content.find((p) => p.type === 'image_url');
+  assert(img && img.image_url.url.startsWith('data:image/png;base64,'), '截图应转成 data URL');
+  // 无 extra.image 的历史形态不变：仍是纯字符串，别为所有工具改变协议形状
+  const plain = assembleMessages({ harness, workspace: dir, records: [
+    { t: 'user', text: '读文件' },
+    { t: 'tool_call', id: 'c2', name: 'read_file', args: { path: 'a.txt' } },
+    { t: 'tool_result', id: 'c2', name: 'read_file', ok: true, output: '内容' },
+  ] });
+  eq(typeof plain.find((m) => m.role === 'tool').content, 'string', '无截图时保持纯字符串');
+  // 截图文件已不在时只回文本，不炸消息序列
+  rmSync(file);
+  const gone = assembleMessages({ harness, workspace: dir, records: [
+    { t: 'user', text: '看屏幕' },
+    { t: 'tool_call', id: 'c3', name: 'computer_use', args: {} },
+    { t: 'tool_result', id: 'c3', name: 'computer_use', ok: true, output: '截图', extra: { image: { path: file, mime: 'image/png' } } },
+  ] });
+  eq(typeof gone.find((m) => m.role === 'tool').content, 'string', '截图丢失时回落纯文本');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+await test('多模态 tool result：Anthropic 协议的 tool_result 带 image block', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-shot-'));
+  const file = join(dir, 'shot.png');
+  writeFileSync(file, fakePng);
+  const messages = [
+    { role: 'system', content: 'sys' },
+    { role: 'user', content: '看屏幕' },
+    { role: 'assistant', content: '', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'computer_use', arguments: '{}' } }] },
+    { role: 'tool', tool_call_id: 'c1', content: [{ type: 'text', text: '截图 1440x900' }, { type: 'image_url', image_url: { url: `data:image/png;base64,${fakePng.toString('base64')}` } }] },
+  ];
+  const built = buildChatRequest({ protocol: 'anthropic', baseUrl: 'http://127.0.0.1:1', apiKey: 'k' }, { model: 'm', messages });
+  const turn = built.body.messages.find((m) => Array.isArray(m.content) && m.content.some((b) => b.type === 'tool_result'));
+  const block = turn.content.find((b) => b.type === 'tool_result');
+  eq(block.tool_use_id, 'c1', 'tool_use_id 对齐');
+  const kinds = block.content.map((b) => b.type);
+  assert(kinds.includes('image'), `tool_result 应带 image block，实际 ${JSON.stringify(kinds)}`);
+  eq(block.content.find((b) => b.type === 'image').source.media_type, 'image/png', 'media_type 从 data URL 拆出');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+await test('computer_use：批量动作逐条回执，observe 产出截图与 extra.image', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-shot-'));
+  const exec = fakeExec();
+  const res = await runComputer({ exec, shotsDir: dir, urlBase: '/api/shots/sess' }, {
+    app: 'Safari',
+    actions: [{ type: 'observe' }, { type: 'click', x: 10, y: 20 }, { type: 'type', text: 'hi' }, { type: 'key', key: 'cmd+c' }, { type: 'nope' }],
+  });
+  assert(typeof res === 'object' && res.output, '成功截图应回 { output, extra }');
+  eq(res.extra.image.url, `/api/shots/sess/${res.extra.image.path.split('/').pop()}`, '截图 URL 由 urlBase 派生');
+  eq(res.extra.image.width, 1440, '像素宽度来自 sips');
+  const receipts = res.extra.actions;
+  eq(receipts.length, 5, '每个动作一条回执');
+  eq(receipts[0].ok, true, 'observe 成功');
+  eq(receipts[4].ok, false, '未知动作类型记失败');
+  assert(res.output.includes('动作回执 4/5 成功'), `回执汇总应可读：${res.output.slice(0, 80)}`);
+  assert(exec.calls.some((c) => c.includes('click at {10, 20}')), '点击应经 System Events 派发');
+  assert(exec.calls.some((c) => c.includes('keystroke "hi"')), '输入应经 keystroke 派发');
+  assert(exec.calls.some((c) => c.includes('keystroke "c" using {command down}')), '组合键应拆成 keystroke + 修饰键');
+  assert(exec.calls.some((c) => c.includes('screencapture')), '应真的调 screencapture');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+await test('computer_use：用户中止后不再派发后续动作', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-shot-'));
+  const controller = new AbortController();
+  let release = null;
+  const gate = new Promise((r) => { release = r; });
+  // 只把「点击」这一步卡住：授权探测要先跑完，否则中止发生在探测期就验不到动作派发
+  const exec = fakeExec({ osascript: async (args) => (String(args[1]).includes('click at') ? (await gate, { code: 0, stdout: '', stderr: '' }) : { code: 0, stdout: '321', stderr: '' }) });
+  const running = runComputer({ exec, shotsDir: dir }, { actions: [{ type: 'wait', ms: 1 }, { type: 'click', x: 1, y: 2 }, { type: 'click', x: 3, y: 4 }] }, controller.signal);
+  await new Promise((r) => setTimeout(r, 20));
+  controller.abort();
+  release();
+  const res = await running;
+  assert(String(res).includes('用户中止了本次操作'), `中止应给出中文原因：${res}`);
+  assert(!exec.calls.some((c) => c.includes('click at {3, 4}')), '中止后不得再派发动作');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+await test('computer_use：未授权时返回中文系统设置指引而非静默失败', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-shot-'));
+  const noA11y = await runComputer({ exec: fakeExec({ osascript: async () => ({ code: 1, stdout: '', stderr: 'not allowed assistive access' }) }), shotsDir: dir }, { actions: [{ type: 'observe' }] });
+  assert(String(noA11y).includes('辅助功能') && String(noA11y).includes('系统设置'), `应给辅助功能指引：${noA11y}`);
+  const noScreen = await runComputer({ exec: fakeExec({ screencapture: async () => ({ code: 1, stdout: '', stderr: 'denied' }) }), shotsDir: dir }, { actions: [{ type: 'observe' }] });
+  assert(String(noScreen).includes('屏幕录制'), `应给屏幕录制指引：${noScreen}`);
+  const empty = await runComputer({ exec: fakeExec(), shotsDir: dir }, { actions: [] });
+  assert(String(empty).includes('actions 不能为空'), '空动作应说清原因');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+await test('Agent turn：computer_use 默认要权限（ask_when_needed 下弹权限卡）', async () => {
+  const s = await createAgentSession({ harness: 'ultimate' });
+  const stream = openAgentStream(await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_COMPUTER 看一眼屏幕' }),
+  }));
+  const head = await drainAgentStream(stream, { until: (ev) => ev.type === 'tool_event' && ev.phase === 'confirmation_needed' });
+  const ask = head.find((e) => e.phase === 'confirmation_needed');
+  assert(ask, 'computer_use 应触发权限询问');
+  eq(ask.toolName, 'computer_use', '被询问的工具应是 computer_use');
+  await fetch(`${AGENT}/permission`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId: ask.requestId, decision: 'deny' }),
+  });
+  const events = await drainAgentStream(stream);
+  const done = events.find((e) => e.type === 'tool_event' && e.phase === 'failed');
+  assert(done && done.output.includes('用户拒绝'), `拒绝后应回绝因：${done && done.output}`);
+  assert(!existsSync(join(tmpDataDir, 'shots', s.id)), '拒绝后不应产生截图目录');
+});
+
+await test('/api/shots 路由服务会话截图并挡住目录穿越', async () => {
+  const s = await createAgentSession({ harness: 'ultimate' });
+  const dir = join(tmpDataDir, 'shots', s.id);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, '1696000000000.png'), fakePng);
+  const ok = await fetch(`${BASE}/api/shots/${s.id}/1696000000000.png`);
+  eq(ok.status, 200, '白名单内的截图应可访问');
+  eq(ok.headers.get('content-type'), 'image/png', 'Content-Type 按扩展名');
+  const miss = await fetch(`${BASE}/api/shots/${s.id}/nope.png`);
+  eq(miss.status, 404, '不存在的文件 404');
+  const net = await import('node:net');
+  const raw = await new Promise((done) => {
+    const sock = net.connect(WEB_PORT, '127.0.0.1', () => {
+      sock.write(`GET /api/shots/${s.id}/../auroraagent.config.json HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
+    });
+    let buf = '';
+    sock.on('data', (d) => { buf += d; });
+    sock.on('end', () => done(buf));
+    sock.on('error', () => done(''));
+  });
+  assert(raw.startsWith('HTTP/1.1 403') || raw.startsWith('HTTP/1.1 404'), `原始 socket 目录穿越必须挡住，实际: ${raw.slice(0, 40)}`);
+  const encoded = await fetch(`${BASE}/api/shots/${s.id}/..%2fauroraagent.config.json`);
+  assert(encoded.status === 403 || encoded.status === 404, `编码斜杠穿越必须挡住，实际 ${encoded.status}`);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+await test('harness / policy / transcript：computer_use 仅进 Ultimate 且默认要权限', async () => {
+  eq(getHarness('ultimate').tools.includes('computer_use'), true, 'Ultimate 应收录 computer_use');
+  eq(getHarness('standard').tools.includes('computer_use'), false, 'Standard 不收录');
+  eq(getHarness('minimal').tools.includes('computer_use'), false, 'Minimal 不收录');
+  eq(defaultRules().find((r) => r.action === 'computer_use').effect, 'ask', '默认要权限');
+  const p = new PermissionPolicy(defaultRules(), []);
+  eq(p.effective('computer_use', 'screen:Safari'), 'ask', '未授权规则前应询问');
+  eq(toolLabel('computer_use'), '屏幕操作', '中文标签');
+  eq(toolIconKey('computer_use'), 'screen', '图标键');
+  eq(toolResourceOf('computer_use', { app: 'Safari' }), 'Safari', '资源摘要取目标应用');
+  eq(toolResource('computer_use', { app: 'Safari' }), 'screen:Safari', '权限资源按应用区分');
+  eq(toolSchemas(['computer_use']).length, 0, '内置工具集里没有它');
+  eq(toolSchemas(['computer_use'], [createComputerRuntime({ exec: fakeExec(), shotsDir: join(tmpdir(), 'lc-shot-x') })]).length, 1, '经 extraTools 入列');
 });
 
 await test('Agent 权限：未知 requestId 返回 ok:false', async () => {

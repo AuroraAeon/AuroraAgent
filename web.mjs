@@ -248,6 +248,15 @@ const server = createServer(async (req, res) => {
   if (req.method === 'GET' && /^\/vendor\/[a-z0-9-]+\.svg$/.test(url)) {
     return serveStatic(res, join(__dirname, 'public', 'vendors', url.slice('/vendor/'.length)), { req });
   }
+  // computer_use 截图：/api/shots/<会话 id>/<文件>.png|.jpg——正则白名单 + 目录禁锢双重防穿越，
+  // 只 serve <数据目录>/shots/ 之内的文件（工具卡缩略图与点击放大用）
+  const shotMatch = /^\/api\/shots\/([0-9a-f-]{36})\/([0-9a-zA-Z._-]+\.(?:png|jpg|jpeg))$/.exec(url);
+  if (req.method === 'GET' && shotMatch) {
+    const base = join(DATA_DIR, 'shots');
+    const target = join(base, shotMatch[1], shotMatch[2]);
+    if (target !== base && !target.startsWith(base + sep)) { res.writeHead(403); res.end('forbidden'); return; }
+    return serveStatic(res, target, { req, cache: 'private, max-age=300' });
+  }
   if (req.method === 'GET' && url === '/api/status') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ hasKey: Boolean(cfg.apiKey), model: cfg.model }));
@@ -561,7 +570,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (url.startsWith('/api/agent') || url.startsWith('/api/mcp') || url.startsWith('/api/files')) { await agentApi(req, res, url); return; }
+  if (url.startsWith('/api/agent') || url.startsWith('/api/mcp') || url.startsWith('/api/files') || url.startsWith('/api/jobs')) { await agentApi(req, res, url); return; }
 
   // 工作区上下文（GET /api/workspace，实现见 util/workspace.mjs）：Header 工作区卡片数据源
   if (await handleWorkspaceApi(req, res, url)) return;
@@ -584,7 +593,11 @@ function startServer(attempt = 0) {
   server.listen(PORT, () => {
     const cfg = loadConfig();
     log('info', `AuroraAgent 已启动: http://localhost:${PORT}`, { model: cfg.model, hasKey: Boolean(cfg.apiKey), managed: isManaged() });
+    // 定时任务调度器只在真正持有端口后启动：抢不到 jobs.lock 的实例（交接期旧实例）不参与调度
+    agentApi.scheduler.start();
     if (process.env.NO_OPEN !== '1') exec(`open http://localhost:${PORT}`);
   });
 }
+// 退出必须释放 jobs.lock：否则要等下一次 PID 探活失败才有人接手调度
+process.on('exit', () => { try { agentApi.scheduler.stop(); } catch {} });
 startServer();

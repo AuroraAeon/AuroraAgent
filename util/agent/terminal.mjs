@@ -31,6 +31,8 @@ import { SideSession } from './side-session.mjs';
 import { join } from 'node:path';
 import { truncate, toolLabel } from './terminal-format.mjs';
 import { formatQueueLines, parseQueueArg, pickQueueItem } from './queue-cmd.mjs';
+import { JobStore } from '../jobs/store.mjs';
+import { formatJobLines, parseCronArg, pickJob } from './cron-cmd.mjs';
 
 const BASE = process.env.AURORAAGENT_BASE_URL || 'https://api.longcat.chat';
 const KEY_PAGE = 'https://longcat.chat/platform/api_keys';
@@ -68,6 +70,8 @@ export async function runTerminal({ argv = [] } = {}) {
   const skills = loadSkills({ userDir: join(dataDir, 'skills') });
   const store = new SessionStore(dataDir);
   const goals = new GoalStore(dataDir);
+  // 定时任务（#3149）：与网页共用同一份 <数据目录>/jobs.json（各自进程内一份 store，落盘原子写不打架）
+  const jobs = new JobStore(dataDir);
   const usage = new UsageLedger(dataDir);
   // 故障转移运行时状态（熔断快照 + 热切换偏好）：与网页共用同一份 <数据目录>/failover-state.json，
   // 两个客户端因此共享「哪家不健康」的跨请求记忆
@@ -352,6 +356,51 @@ export async function runTerminal({ argv = [] } = {}) {
     console.log(p.dim(`✓ 已移除「${truncate(picked.item, 40)}」`));
   };
 
+  /**
+   * /cron 家族：查看 / 新建 / 删除 / 立即跑 / 启停当前会话的定时任务。
+   * 到期执行由网页服务的调度器负责（util/jobs/schedule.mjs），终端只做增删改查与手动触发——
+   * 手动触发就是把到期内容作为一条普通用户消息发出去，走的是同一条 runTurn。
+   */
+  const cmdCron = (arg) => {
+    const p = painter();
+    const parsed = parseCronArg(arg);
+    if (parsed.action === 'list') {
+      for (const line of formatJobLines(jobs.forSession(meta.id))) console.log('  ' + p.dim(line));
+      console.log(p.dim('  /cron add <名称> | <表达式> | <到期内容> · /cron run <id> 立即跑 · /cron on|off <id> 启停'));
+      return;
+    }
+    if (parsed.action === 'help') {
+      console.log(p.dim('  用法: /cron [add <名称> | <表达式> | <到期内容>|remove <id>|run <id>|on|off <id>]'));
+      return;
+    }
+    if (parsed.action === 'error') { console.log(p.warning(parsed.message)); return; }
+    const mine = jobs.forSession(meta.id);
+    if (parsed.action === 'add') {
+      try {
+        const job = jobs.create({ name: parsed.name, sessionId: meta.id, prompt: parsed.prompt, schedule: parsed.schedule, enabled: true });
+        const when = job.schedule.kind === 'cron' ? job.schedule.expr : `每 ${Math.round(job.schedule.everyMs / 60000)} 分钟`;
+        console.log(p.dim(`✓ 已创建「${job.name}」：${when}，下次 ${new Date(job.nextRunAt).toLocaleString('zh-CN', { hour12: false })}（id=${job.id.slice(0, 8)}）`));
+      } catch (e) { console.log(p.warning(e.message)); }
+      return;
+    }
+    const picked = pickJob(mine, parsed.id);
+    if (picked.error) { console.log(p.warning(picked.error)); return; }
+    const job = picked.job;
+    if (parsed.action === 'remove') {
+      jobs.remove(job.id);
+      console.log(p.dim(`✓ 已删除「${job.name}」`));
+      return;
+    }
+    if (parsed.action === 'on' || parsed.action === 'off') {
+      const updated = jobs.update(job.id, () => ({ enabled: parsed.action === 'on' }));
+      console.log(p.dim(`✓ 「${updated.name}」已${updated.enabled ? '启用' : '停用'}`));
+      return;
+    }
+    // run：到期内容作为一条普通用户消息发出去（由 REPL 主循环接着跑）
+    console.log(p.dim(`✓ 立即执行「${job.name}」：${truncate(job.prompt, 60)}`));
+    lineQueue.push(job.prompt);
+  };
+
   /** 声明式斜杠命令表：/help 与分发同源；技能派生命令追加进同一张表（/<技能名> 直接调用） */
   const baseCommands = [
     { name: 'help', summary: '显示全部命令', run: printHelp },
@@ -396,6 +445,7 @@ export async function runTerminal({ argv = [] } = {}) {
     } },
     { name: 'goal', argHint: '<目标内容>|[pause|resume|stop|budget <n>|clear|edit|help]', summary: '会话目标（无参查看；/<目标内容> 设立或改写；edit 回填续编）', run: cmdGoal },
     { name: 'queue', argHint: '[send|drop <序号>|clear]', summary: '消息队列：生成中提交的消息在此排队（无参列出，send 立即发送，drop 移除）', run: cmdQueue },
+    { name: 'cron', argHint: '[add <名称> | <表达式> | <内容>|remove|run|on|off <id>]', summary: '定时任务：到期自动在当前会话跑一轮 Agent（无参列出）', run: cmdCron },
     { name: 'btw', argHint: '<问题>', summary: '侧边对话：继承当前会话历史开聊，不落盘不进会话列表；Ctrl+/ 切换、Ctrl+C 丢弃', run: async (arg) => {
       const q = String(arg || '').trim();
       if (!q) { console.log(painter().warning('用法: /btw <问题>（侧边对话，继承当前会话历史，不落盘）')); return; }

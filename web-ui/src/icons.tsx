@@ -105,6 +105,13 @@ export const IconWrench = (p: IconProps) => (
     <path d="M14.5 6.5a4 4 0 0 0-5.6 4.9L4 16.3V20h3.7l4.9-4.9a4 4 0 0 0 4.9-5.6l-2.7 2.7-2.4-.6-.6-2.4z" />
   </Svg>
 );
+export const IconScreen = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="2.5" y="4" width="19" height="13" rx="2.2" />
+    <path d="M8 20.5h8" />
+    <path d="M9.5 11.5l4 2-4 2z" fill="currentColor" stroke="none" />
+  </Svg>
+);
 export const IconShield = (p: IconProps) => (
   <Svg {...p}>
     <path d="M12 3.5l7 2.6v5.2c0 4.4-2.9 7.6-7 9.2-4.1-1.6-7-4.8-7-9.2V6.1z" />

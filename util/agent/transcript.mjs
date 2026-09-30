@@ -11,7 +11,7 @@ export const TOOL_LABELS = {
   read_file: '读取文件', list_dir: '浏览目录', write_file: '写入文件',
   edit_file: '编辑文件', shell: '执行命令', web_fetch: '抓取网页',
   grep: '搜索内容', glob: '查找文件', todo: '待办清单', skill: '加载技能',
-  task: '派发子代理',
+  task: '派发子代理', cron: '定时任务', computer_use: '屏幕操作',
 };
 
 /** MCP 工具名 → 可读标签：mcp__<服务器>__<工具> → 「<服务器>.<工具>（MCP）」 */
@@ -30,7 +30,7 @@ export function toolIconKey(name) {
   const keys = {
     read_file: 'file', list_dir: 'folder', write_file: 'write', edit_file: 'edit',
     shell: 'shell', web_fetch: 'globe', grep: 'search', glob: 'search',
-    todo: 'list', skill: 'wrench', task: 'task',
+    todo: 'list', skill: 'wrench', task: 'task', cron: 'clock', computer_use: 'screen',
   };
   return keys[n] || 'wrench';
 }
@@ -43,6 +43,11 @@ export function toolResourceOf(name, args) {
   if (n === 'grep') return String(a.pattern || '');
   if (n === 'web_fetch') return String(a.url || '');
   if (n === 'task') return String(a.tasks?.length ? `${a.tasks.length} 个子任务` : '');
+  if (n === 'computer_use') return String(a.app || '前台界面');
+  if (n === 'cron') {
+    const when = a.schedule?.kind === 'cron' ? `cron ${a.schedule?.expr || ''}` : a.schedule?.kind === 'interval' ? `每 ${Math.round(Number(a.schedule?.everyMs || 0) / 1000)} 秒` : '';
+    return String(a.job_id || a.name || when || '');
+  }
   return String(a.path || a.dir || '');
 }
 

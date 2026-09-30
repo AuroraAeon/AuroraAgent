@@ -10,7 +10,7 @@
 import { randomUUID } from 'node:crypto';
 import { openChatStream } from '../llm/provider.mjs';
 import { consumeAgentStream, primeUpstreamStream } from '../stream.mjs';
-import { resolveTool, toolResource } from './tools.mjs';
+import { resolveTool, toolResource, toolMessageContent } from './tools.mjs';
 import { findSkill } from './skills.mjs';
 import { PermissionPolicy, defaultRules } from './policy.mjs';
 import { createSpawner } from './swarm.mjs';
@@ -342,7 +342,8 @@ export async function runAgentTurn(ctx) {
         }
         if (ok) {
           try {
-            const res = await tool.run(safeArgs(call.arguments), { workspace: session.workspace, skills, todoStore, spawn, proxy: agentProxy, skillsLoaded });
+            // signal 进 ctx：长动作（computer_use 批量操作）可在用户中止时立刻停手，不留野进程
+            const res = await tool.run(safeArgs(call.arguments), { workspace: session.workspace, skills, todoStore, spawn, proxy: agentProxy, skillsLoaded, signal: controller?.signal });
             // 工具可返回字符串或 { output, extra }：extra 是结构化负载（diff / todos），
             // 进转录与 tool_event 供两端渲染，但不进模型消息（模型只看 output 文本）
             if (res && typeof res === 'object') { output = String(res.output ?? ''); extra = res.extra; }
@@ -356,7 +357,7 @@ export async function runAgentTurn(ctx) {
       store.append(sessionId, resultRec);
       records.push({ t: 'tool_call', id: toolId, name: call.name, args: safeArgs(call.arguments) });
       records.push(resultRec);
-      messages.push({ role: 'tool', tool_call_id: toolId, content: String(output) });
+      messages.push({ role: 'tool', tool_call_id: toolId, content: toolMessageContent(output, extra) });
       emit('tool_event', { sessionId, turnId, phase: ok ? 'completed' : 'failed', toolId, toolName: call.name, output: String(output).slice(0, 2000), durationMs, ...(extra ? { extra } : {}) });
     }
   };

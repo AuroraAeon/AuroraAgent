@@ -1,13 +1,13 @@
 /** API 客户端：全部走 web.mjs 的同源 /api/*；turn 用 fetch 读 SSE（EventSource 不支持 POST） */
 import {
   normalizeCatalogProviders, normalizeDiscoveredModels, normalizeErrorLogPage, normalizeFailoverQueue, normalizeFailoverSettings,
-  normalizeFileSearch, normalizeHarnesses, normalizeHealthRows, normalizeModels, normalizeMcpServers, normalizeProviderList,
+  normalizeFileSearch, normalizeHarnesses, normalizeHealthRows, normalizeJobList, normalizeJobRows, normalizeModels, normalizeMcpServers, normalizeProviderList,
   normalizeProviderRows, normalizeQueueItems, normalizeSessionDetail, normalizeSessionMetaResult, normalizeSessionResult,
   normalizeSessions, normalizeSettingsInfo, normalizeSideSession, normalizeTuiSaveResult, normalizeTuiSettings,
   normalizeUsageSummary,
 } from './api-shapes.mjs';
 import { normalizeSkillRows } from './skill-rows.mjs';
-import type { AgentEvent, CatalogProvider, ErrorLogEntry, FailoverQueue, FailoverSettings, GoalState, UpdateInfo, Harness, McpServerRow, ModelInfo, ProviderRow, QueueItem, SessionMeta, SessionRecord, SettingsInfo, SkillRow, TuiSettings, UsageSummary, WorkspaceInfo } from './types';
+import type { AgentEvent, CatalogProvider, ErrorLogEntry, FailoverQueue, FailoverSettings, GoalState, UpdateInfo, Harness, JobItem, McpServerRow, ModelInfo, ProviderRow, QueueItem, SessionMeta, SessionRecord, SettingsInfo, SkillRow, TuiSettings, UsageSummary, WorkspaceInfo } from './types';
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(path, {
@@ -127,6 +127,15 @@ export const goalAction = (sessionId: string, action: 'pause' | 'resume' | 'stop
   tokenBudget?: number | null; expectedGoalId?: string; expectedUpdatedAt?: number; objective?: string;
 } = {}) =>
   api<{ goal: GoalState }>(`/api/agent/goal/${action}`, { method: 'POST', body: JSON.stringify({ sessionId, ...extra }) });
+
+/** 定时任务（util/jobs/*，本地化 #3149）：列表 / 新建 / 删除 / 立即跑 / 启停开关 */
+export const listJobs = () => api<{ jobs: JobItem[] }>('/api/jobs').then((r) => normalizeJobList(r).jobs);
+export const createJob = (body: { name: string; sessionId: string; prompt: string; schedule: JobItem['schedule']; enabled?: boolean }) =>
+  api<{ job: JobItem }>('/api/jobs', { method: 'POST', body: JSON.stringify(body) }).then((r) => normalizeJobRows([r.job])[0]);
+export const deleteJob = (id: string) => api<{ removed: boolean }>(`/api/jobs/${id}`, { method: 'DELETE' });
+export const runJobNow = (id: string) => api<{ ok: boolean }>(`/api/jobs/${id}/run`, { method: 'POST' });
+export const toggleJob = (id: string, enabled: boolean) =>
+  api<{ job: JobItem }>(`/api/jobs/${id}/toggle`, { method: 'POST', body: JSON.stringify({ enabled }) }).then((r) => normalizeJobRows([r.job])[0]);
 
 export const getAgentQueue = (sessionId: string) =>
   api<{ sessionId: string; items: QueueItem[] }>(`/api/agent/queue/${sessionId}`).then((r) => ({ sessionId: String(r.sessionId || ''), items: normalizeQueueItems(r.items) }));

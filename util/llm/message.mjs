@@ -43,7 +43,9 @@ export function toAnthropicTurns(messages) {
     if (m.role === 'system') continue;
     if (m.role === 'tool') {
       // 连续的 tool 结果合并进同一条 user 消息（Anthropic 要求并行 tool_use 的 result 同消息）
-      toolBatch.push({ type: 'tool_result', tool_use_id: m.tool_call_id, content: textOf(m.content) });
+      // content 可能是多模态片段（文本 + image_url data URL）：走 toAnthropicContent 翻成
+      // tool_result 的 content 块数组，截图才能进 Anthropic 协议的上下文（textOf 会丢图片）
+      toolBatch.push({ type: 'tool_result', tool_use_id: m.tool_call_id, content: toAnthropicContent(m.content) });
       continue;
     }
     flushTools();
