@@ -42,11 +42,11 @@ export async function runApiShapesTests(test, assert, eq) {
     deepEq(normalizeHarnesses({ harnesses: [{ id: 'standard', label: '日常', summary: 's', tools: ['read_file'], maxRounds: 24 }], default: 'standard' }),
       { harnesses: [{ id: 'standard', label: '日常', summary: 's', tools: ['read_file'], maxRounds: 24 }], default: 'standard' }, '模式列表恒等');
     const usage = {
-      totals: { requests: 3, inputTokens: 100, outputTokens: 200, cost: 0.5 },
-      recent: [{ ts: '2026-09-29T00:00:00.000Z', kind: 'agent', model: 'm', provider: 'p', sessionId: 's', inputTokens: 1, outputTokens: 2, cost: 0.1 }],
+      totals: { requests: 3, inputTokens: 100, outputTokens: 200, cost: 0.5, cachedTokens: 40, cacheWriteTokens: 10 },
+      recent: [{ ts: '2026-09-29T00:00:00.000Z', kind: 'agent', model: 'm', provider: 'p', sessionId: 's', inputTokens: 1, outputTokens: 2, cost: 0.1, cachedTokens: 5, cacheWriteTokens: 0 }],
       stats: {
-        days: 30, byDay: [{ day: '2026-09-29', requests: 1, inputTokens: 1, outputTokens: 2, cost: 0.1 }],
-        byModel: [{ key: 'm', requests: 1, inputTokens: 1, outputTokens: 2, cost: 0.1 }],
+        days: 30, byDay: [{ day: '2026-09-29', requests: 1, inputTokens: 1, outputTokens: 2, cost: 0.1, cachedTokens: 5, cacheWriteTokens: 1 }],
+        byModel: [{ key: 'm', requests: 1, inputTokens: 1, outputTokens: 2, cost: 0.1, cachedTokens: 5, cacheWriteTokens: 1 }],
         byProvider: [], byPurpose: [], bySession: [],
       },
     };
@@ -230,6 +230,10 @@ export async function runApiShapesTests(test, assert, eq) {
     const badPrev = normalizeCheckpointPreview({ files: 'x', turnIndex: null });
     eq(badPrev.files.length, 0, 'files 非数组回退空列表');
     eq(badPrev.turnIndex, 0, 'turnIndex 非数字回退 0');
+    const usageCache = normalizeUsageSummary({ totals: { requests: 1, inputTokens: 10, cachedTokens: 'x' }, recent: [{ ts: 't', cacheWriteTokens: null }] });
+    eq(usageCache.totals.cachedTokens, 0, 'totals.cachedTokens 非数字回退 0');
+    eq(usageCache.totals.cacheWriteTokens, 0, 'totals.cacheWriteTokens 缺失回退 0');
+    eq(usageCache.recent[0].cachedTokens, 0, 'recent 缓存字段同样规整（面板列不再读到 undefined）');
     eq(normalizeCheckpointRestore({}).ok, false, '回滚结果缺失 ok 落回 false');
     eq(normalizeCheckpointRestore({ worktree: 7 }).worktree, null, 'worktree 非字符串落回 null');
   });

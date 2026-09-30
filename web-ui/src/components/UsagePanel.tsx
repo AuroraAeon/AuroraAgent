@@ -8,6 +8,13 @@ import type { UsageBucket, UsageDay, UsageSummary } from '../types';
 
 const fmtTok = (n: number): string => (n >= 10000 ? `${(n / 10000).toFixed(n >= 100000 ? 0 : 1)} 万` : String(n));
 
+/** 缓存命中率：命中 /（命中 + 写入）。两者都为 0 时给「—」（分母为 0 的百分比是噪声） */
+function cacheHitRate(t: { cachedTokens: number; cacheWriteTokens: number }): string {
+  const denom = t.cachedTokens + t.cacheWriteTokens;
+  if (denom <= 0) return '—';
+  return `${((t.cachedTokens / denom) * 100).toFixed(1)}%`;
+}
+
 /** 逐日堆叠柱：输入 / 输出两段，柱子有最小可见高度（空天不断档也不消失） */
 function DayBars({ days }: { days: UsageDay[] }) {
   const max = Math.max(1, ...days.map((d) => d.inputTokens + d.outputTokens));
@@ -90,6 +97,15 @@ export function UsagePanel() {
         <div><dt>输出</dt><dd>{fmtTok(t.outputTokens)}</dd></div>
         <div><dt>累计费用</dt><dd>{fmtCostYen(t.cost)}</dd></div>
       </dl>
+      {/* 提示缓存：命中 = 省下的输入，写入 = 为下次命中预付的输入。两者都不并进上面的
+          「输入」列（那会让用量看起来比实际新增消耗更大）；提供方不支持时恒为 0，整块不显示 */}
+      {t.cachedTokens > 0 || t.cacheWriteTokens > 0 ? (
+        <dl className="kv usage-kv usage-kv-cache">
+          <div><dt>缓存命中</dt><dd>{fmtTok(t.cachedTokens)}</dd></div>
+          <div><dt>缓存写入</dt><dd>{fmtTok(t.cacheWriteTokens)}</dd></div>
+          <div><dt>命中率</dt><dd>{cacheHitRate(t)}</dd></div>
+        </dl>
+      ) : null}
       {st ? (
         <>
           <div className="usage-legend" aria-hidden="true">
@@ -106,13 +122,14 @@ export function UsagePanel() {
           <h4 className="usage-break-t">最近请求</h4>
           <div className="usage-recent">
             <table>
-              <thead><tr><th>时间</th><th>模型</th><th>输入 / 输出</th><th>费用</th></tr></thead>
+              <thead><tr><th>时间</th><th>模型</th><th>输入 / 输出</th><th>缓存</th><th>费用</th></tr></thead>
               <tbody>
                 {data.recent.slice(0, 8).map((r, i) => (
                   <tr key={`${r.ts}-${i}`}>
                     <td>{new Date(r.ts).toLocaleString('zh-CN', { hour12: false })}</td>
                     <td><code>{r.model || '-'}</code></td>
                     <td>{fmtTok(r.inputTokens)} / {fmtTok(r.outputTokens)}</td>
+                    <td>{r.cachedTokens || r.cacheWriteTokens ? `命中 ${fmtTok(r.cachedTokens)}${r.cacheWriteTokens ? ` · 写 ${fmtTok(r.cacheWriteTokens)}` : ''}` : '-'}</td>
                     <td>{fmtCostYen(r.cost)}</td>
                   </tr>
                 ))}

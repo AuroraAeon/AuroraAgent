@@ -219,6 +219,9 @@ const usageBucket = (r) => ({
   day: typeof r?.day === 'string' ? r.day : undefined,
   requests: asCount(r?.requests), inputTokens: asCount(r?.inputTokens),
   outputTokens: asCount(r?.outputTokens), cost: asNumber(r?.cost),
+  // 提示缓存（util/llm 的 cache_control / prompt_cache_key 断点）：命中量是「省下的输入」，
+  // 写入量是「为下次命中预付的输入」，两者都不是新增消耗，故面板单独列、不并进输入列
+  cachedTokens: asCount(r?.cachedTokens), cacheWriteTokens: asCount(r?.cacheWriteTokens),
 });
 
 /** 用量汇总：GET /api/usage（totals 缺对象 / stats 缺数组 / recent 非数组都会白屏） */
@@ -228,11 +231,12 @@ export function normalizeUsageSummary(raw) {
   const st = o.stats && typeof o.stats === 'object' ? o.stats : null;
   return {
     ...o,
-    totals: { requests: asCount(t.requests), inputTokens: asCount(t.inputTokens), outputTokens: asCount(t.outputTokens), cost: asNumber(t.cost) },
+    totals: { requests: asCount(t.requests), inputTokens: asCount(t.inputTokens), outputTokens: asCount(t.outputTokens), cost: asNumber(t.cost), cachedTokens: asCount(t.cachedTokens), cacheWriteTokens: asCount(t.cacheWriteTokens) },
     recent: rows(o.recent, (r) => ({
       ts: asString(r?.ts), kind: asString(r?.kind), model: asString(r?.model),
       provider: asString(r?.provider), sessionId: asString(r?.sessionId),
       inputTokens: asCount(r?.inputTokens), outputTokens: asCount(r?.outputTokens), cost: asNumber(r?.cost),
+      cachedTokens: asCount(r?.cachedTokens), cacheWriteTokens: asCount(r?.cacheWriteTokens),
     })),
     stats: st ? {
       ...st,

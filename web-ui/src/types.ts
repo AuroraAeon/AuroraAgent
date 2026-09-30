@@ -233,12 +233,12 @@ export type LiveTurn = {
 };
 
 /** 用量账本统计（GET /api/usage；stats 段由 util/usage.mjs 聚合） */
-export interface UsageBucket { key: string; requests: number; inputTokens: number; outputTokens: number; cost: number }
-export interface UsageDay { day: string; requests: number; inputTokens: number; outputTokens: number; cost: number }
+export interface UsageBucket { key: string; requests: number; inputTokens: number; outputTokens: number; cost: number; cachedTokens: number; cacheWriteTokens: number }
+export interface UsageDay { day: string; requests: number; inputTokens: number; outputTokens: number; cost: number; cachedTokens: number; cacheWriteTokens: number }
 export interface UsageStats { days: number; byDay: UsageDay[]; byModel: UsageBucket[]; byProvider: UsageBucket[]; byPurpose: UsageBucket[]; bySession: UsageBucket[] }
 export interface UsageSummary {
-  totals: { requests: number; inputTokens: number; outputTokens: number; cost: number };
-  recent: { ts: string; kind: string; model?: string; provider?: string; sessionId?: string; inputTokens: number; outputTokens: number; cost: number; purpose?: string }[];
+  totals: { requests: number; inputTokens: number; outputTokens: number; cost: number; cachedTokens: number; cacheWriteTokens: number };
+  recent: { ts: string; kind: string; model?: string; provider?: string; sessionId?: string; inputTokens: number; outputTokens: number; cost: number; cachedTokens: number; cacheWriteTokens: number; purpose?: string }[];
   stats?: UsageStats;
 }
 
