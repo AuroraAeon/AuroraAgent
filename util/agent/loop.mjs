@@ -18,6 +18,7 @@ import { PermissionPolicy, defaultRules } from './policy.mjs';
 import { createSpawner } from './swarm.mjs';
 import { IgnoreController } from '../ignore.mjs';
 import { discoverRules, collectCandidatePaths } from './rules.mjs';
+import { discoverAgentConfigs, subagentTools } from './subagents.mjs';
 import { deriveTitle } from './title.mjs';
 import { generateTitleText } from './title-model.mjs';
 import { DEFAULT_SESSION_NAME } from './session.mjs';
@@ -95,6 +96,10 @@ export async function runAgentTurn(ctx) {
     gen = {}, skills = [], extraTools = [], inputSkill = '', emit, controller, requestPermission, requestPlanDecision,
     permissionMode = 'ask_when_needed', planMode = false, titleMode = DEFAULT_TITLE_MODE, depth = 0,
     agentProxy = '', goalStore = null, goalCfg = null, log = () => {},
+    // 声明式子代理派发时的覆盖（swarm.mjs 注入）：专人专用的系统提示 / 工具集收窄 / 代理名
+    extraSystem: turnExtraSystem = '', toolNames: narrowedTools = null, agentName = '',
+    // 声明式子代理目录（util/agent/subagents.mjs）：注册成 task__<名称> 工具与内置 task 并存
+    agents = [], resolveAgentProvider = null,
     // 忽略文件闸门开关与 shell 子进程环境净化（配置段见 util/config.mjs）：缺省开
     ignoreEnabled = true, sanitizeChildEnv = true,
     // 用户中途发言（steering）状态：HTTP 面持有同一对象，活跃 turn 收到新提交时 request()
@@ -219,9 +224,14 @@ export async function runAgentTurn(ctx) {
   };
   const policy = new PermissionPolicy([...defaultRules(), ...sessionRules], { permissionMode });
   // 子代理派发器：task 工具经 ctx.spawn 派生子 turn；深度随嵌套递增（swarm.mjs 封顶）
+  // 声明式子代理目录：每个配置注册成一个 task__<名称> 工具（与内置 task 并存，模型按需选）
+  const { agents: agentConfigs } = discoverAgentConfigs(store.dir ? dirname(store.dir) : '');
+  const subTools = subagentTools(agentConfigs);
   const spawn = createSpawner({
     runTurn: runAgentTurn, store, usage, provider, model, harness, skills, builtinPrice,
-    emit, controller, requestPermission, permissionMode, titleMode, rules: sessionRules, gen, extraTools,
+    emit, controller, requestPermission, permissionMode, titleMode, rules: sessionRules, gen,
+    extraTools: [...extraTools, ...subTools],
+    agents: agentConfigs, resolveAgentProvider, ruleToggles: ctx.ruleToggles || {},
     workspace: session.workspace, depth, log,
     // 子代理继承同一套故障转移配置与候选源：父层换过的路，子代理也能自己换
     providerFailover, providerFailoverMaxAttempts, failoverCandidates,
@@ -236,7 +246,7 @@ export async function runAgentTurn(ctx) {
       onExtraUsage: (u, ms, purpose) => recordExtraUsage(u, ms, purpose),
     })
     : null;
-  const allTools = goalRt ? [...extraTools, ...goalRt.tools] : extraTools;
+  const allTools = goalRt ? [...extraTools, ...subTools, ...goalRt.tools] : [...extraTools, ...subTools];
   if (goalRt) goalRt.bindSpawn(spawn); // 验证档 subagent 派发只读验证子代理
 
   /** 超长时把早期记录折叠成一条 summary（压缩本身花一轮模型调用，失败不阻塞主流程）。
@@ -345,7 +355,17 @@ export async function runAgentTurn(ctx) {
 
   /** 跑一个模型轮：请求上游 → 流式读取 → 落转录 → 记账。
    *  返回 { toolCalls, roundText } / { failed } / { steered: true }（用户中途发言，本轮不结算） */
+  /** 工具集收窄（声明式子代理专用）：只在当前 turn 内生效，父会话工具箱不受影响。
+   *  专人也不能越过 harness 的权限边界——配置里写了当前模式不含的工具直接裁掉。 */
+  const narrow = (names) => {
+    if (!Array.isArray(narrowedTools) || !narrowedTools.length) return names;
+    const keep = new Set(narrowedTools);
+    return names.filter((n) => keep.has(n));
+  };
+
   const runRound = async ({ toolNames, extraSystem = '' }) => {
+    // 专人专用的系统提示（声明式子代理）叠加在本轮指令之前：它定义角色，harness 提示定义边界
+    const sysExtra = [turnExtraSystem, extraSystem].filter(Boolean).join('\n\n');
     await maybeCompact();
     // 工具执行期间到达的中途发言：此刻没有模型流可断，先并入上下文再开流
     const pendingSteer = steer.take();
@@ -354,7 +374,7 @@ export async function runAgentTurn(ctx) {
       records.push({ t: 'user', text: pendingSteer });
       emit('message_steered', { sessionId, turnId, text: pendingSteer });
     }
-    messages = assembleMessages({ harness, workspace: session.workspace, records, skills, extraSystem, ...ruleOpts() });
+    messages = assembleMessages({ harness, workspace: session.workspace, records, skills, extraSystem: sysExtra, ...ruleOpts() });
     emit('model_round_started', { sessionId, turnId, round });
     // 本轮模型流的专用中断器：用户中途发言只断它；turn 级中止经转发同样断流，两条路径在此汇合
     const roundAbort = new AbortController();
@@ -554,7 +574,7 @@ export async function runAgentTurn(ctx) {
       const planNames = planToolNames(harness.tools, skills);
       let planDone = false;
       for (round = 1; round <= Math.min(harness.maxRounds, PLAN_MAX_ROUNDS); round++) {
-        const r = await runRound({ toolNames: planNames, extraSystem: PLAN_MODE_PROMPT });
+        const r = await runRound({ toolNames: narrow(planNames), extraSystem: PLAN_MODE_PROMPT });
         if (r.failed) return { turnId, text: finalText, rounds: round, tools: totalTools, failed: true };
         // 用户中途发言：本轮不结算（不提案、不判空闲），直接进下一轮
         if (r.steered) continue;
@@ -586,7 +606,7 @@ export async function runAgentTurn(ctx) {
     }
 
     // —— 执行阶段：完整工具集（计划批准后计划文本作为既定契约已在上下文中）——
-    const execToolNames = [...new Set([...harness.tools, ...(skills.length ? ['skill'] : []), ...allTools.map((t) => t.name)])];
+    const execToolNames = narrow([...new Set([...harness.tools, ...(skills.length ? ['skill'] : []), ...allTools.map((t) => t.name)])]);
     let goalNote = goalStartNote || ''; // goal 轮首重述 / 续跑 / 验证反馈提醒：只带一轮（runRound 消费后即清）
     for (round = round + 1; round <= harness.maxRounds; round++) {
       const roundT0 = Date.now();

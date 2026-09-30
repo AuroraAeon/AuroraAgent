@@ -227,6 +227,9 @@ export function createAgentApi(deps) {
         ignoreEnabled: cfg.ignore?.enabled !== false, sanitizeChildEnv: cfg.sanitizeChildEnv !== false,
         // 规则 toggle 表（用户显式关掉的规则不注入系统提示；见 util/agent/rules.mjs）
         ruleToggles: cfg.rules?.toggles || {},
+        // 声明式子代理（util/agent/subagents.mjs）：目录由 Loop 自己按数据目录发现，
+        // 这里只提供「模型 ID → 提供方」解析器（专人跑别的模型时按目标方口径拼请求）
+        resolveAgentProvider: (m) => ({ model: m, provider: resolveChatProvider('', m) }),
         providerFailover: cfg.providerFailover, providerFailoverMaxAttempts: cfg.providerFailoverMaxAttempts,
         failoverCandidates,
         failoverState,

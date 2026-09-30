@@ -20,6 +20,8 @@ export function toolLabel(name) {
   if (TOOL_LABELS[n]) return TOOL_LABELS[n];
   const m = /^mcp__([^_]+)__(.+)$/.exec(n);
   if (m) return `${m[1]}.${m[2]}（MCP）`;
+  const s = /^task__(.+)$/.exec(n); // 声明式子代理 task__<名称>
+  if (s) return `${s[1]}（子代理）`;
   return n;
 }
 
@@ -27,6 +29,7 @@ export function toolLabel(name) {
 export function toolIconKey(name) {
   const n = String(name || '');
   if (n.startsWith('mcp__')) return 'plug';
+  if (n.startsWith('task__')) return 'task';
   const keys = {
     read_file: 'file', list_dir: 'folder', write_file: 'write', edit_file: 'edit',
     shell: 'shell', web_fetch: 'globe', grep: 'search', glob: 'search',
@@ -43,6 +46,7 @@ export function toolResourceOf(name, args) {
   if (n === 'grep') return String(a.pattern || '');
   if (n === 'web_fetch') return String(a.url || '');
   if (n === 'task') return String(a.tasks?.length ? `${a.tasks.length} 个子任务` : '');
+  if (n.startsWith('task__')) return String(a.task || '').slice(0, 60);
   if (n === 'computer_use') return String(a.app || '前台界面');
   if (n === 'cron') {
     const when = a.schedule?.kind === 'cron' ? `cron ${a.schedule?.expr || ''}` : a.schedule?.kind === 'interval' ? `每 ${Math.round(Number(a.schedule?.everyMs || 0) / 1000)} 秒` : '';

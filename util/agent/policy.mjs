@@ -38,6 +38,9 @@ export function defaultRules() {
     { action: 'glob', resource: '*', effect: 'allow' },
     { action: 'todo', resource: '*', effect: 'allow' },
     { action: 'task', resource: '*', effect: 'allow' },
+    // 声明式子代理（task__<名称>，util/agent/subagents.mjs）：与 task 同姿态（专人专用，
+    // 但同样只是派发受限子 turn，真正的副作用仍在子 turn 里过同一套权限门控）
+    { action: 'subagent', resource: '*', effect: 'allow' },
     // goal 簿记工具（create_goal / update_goal / get_goal）：只读写数据目录内的目标文件，无外部副作用
     { action: 'create_goal', resource: '*', effect: 'allow' },
     { action: 'update_goal', resource: '*', effect: 'allow' },

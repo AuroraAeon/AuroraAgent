@@ -6,6 +6,8 @@
  * 不 import loop.mjs：runTurn 由调用方注入，避免环依赖。
  */
 
+import { findAgentConfig, subagentOverrides } from './subagents.mjs';
+
 /** 单次派发的子代理数量上限（控成本） */
 export const MAX_CHILDREN = 4;
 /** 嵌套深度上限：超过后不再派生（防递归失控） */
@@ -23,17 +25,34 @@ export function createSpawner(ctx) {
     rules = [], gen = {}, extraTools = [], workspace = '', depth = 0, agentProxy = '', log = () => {},
     sanitizeChildEnv = true, ignoreEnabled = true,
     providerFailover = true, providerFailoverMaxAttempts, failoverCandidates = null,
+    // 声明式子代理（util/agent/subagents.mjs）：专人专用的模型 / 工具集 / 系统提示
+    agents = [], resolveAgentProvider = null, ruleToggles = {},
   } = ctx;
 
-  /** 跑一个子代理：新建子会话（继承工作目录与权限规则）→ 嵌套 turn → 汇总 */
-  const spawnOne = async (taskText, childHarness = harness) => {
+  /** 跑一个子代理：新建子会话（继承工作目录与权限规则）→ 嵌套 turn → 汇总。
+   *  opts.agent 指名声明式子代理时按配置覆盖模型 / 工具集 / 系统提示（专人专用） */
+  const spawnOne = async (taskText, childHarness = harness, opts = {}) => {
     const task = String(taskText || '').slice(0, 500);
     if (depth >= MAX_DEPTH) {
       return { task, ok: false, text: `子代理嵌套深度已达上限（${MAX_DEPTH} 层），不再派生`, sessionId: '', rounds: 0, tools: 0 };
     }
+    const cfg = opts.agent ? findAgentConfig(agents, opts.agent) : null;
+    if (opts.agent && !cfg) {
+      return { task, ok: false, text: `没有名为「${opts.agent}」的声明式子代理`, sessionId: '', rounds: 0, tools: 0 };
+    }
+    const override = cfg ? subagentOverrides(cfg, {
+      resolveProvider: resolveAgentProvider,
+      harnessTools: childHarness.tools,
+      log,
+    }) : null;
+    // 模型覆盖：专人可跑别的模型（便宜模型干粗活），提供方随模型重新解析；
+    // 解析不到就沿用父会话的，一条配置写错不该让整个派发失败
+    const useModel = override?.model || model;
+    const useProvider = override?.provider || provider;
+    const useSkills = override?.skills?.length ? override.skills : skills;
     const child = store.create({
-      name: `子任务：${task.slice(0, 24)}`,
-      model, provider: provider.id, harness: childHarness.id, workspace,
+      name: cfg ? `${cfg.name}：${task.slice(0, 20)}` : `子任务：${task.slice(0, 24)}`,
+      model: useModel, provider: useProvider.id, harness: childHarness.id, workspace,
     });
     if (rules.length) store.patch(child.id, { rules: rules.map(({ action, resource, effect }) => ({ action, resource, effect })) });
     const childController = new AbortController();
@@ -49,8 +68,14 @@ export function createSpawner(ctx) {
     let result;
     try {
       result = await runTurn({
-        store, usage, session: child, input: task, provider, model, harness: childHarness,
-        builtinPrice, skills, gen, extraTools,
+        store, usage, session: child, input: task, provider: useProvider, model: useModel,
+        harness: childHarness, builtinPrice, skills: useSkills, gen, extraTools,
+        // 专人专用的系统提示经 extraSystem 注入（叠加在 harness 提示之上，不替换它）
+        extraSystem: override?.systemPrompt || '',
+        // 专人专用的工具集：只在这一个子 turn 里收窄，父会话工具箱不受影响
+        toolNames: override?.toolNames || null,
+        agentName: cfg?.name || '',
+        ruleToggles,
         emit: childEmit, controller: childController,
         requestPermission, permissionMode, titleMode,
         planMode: false, // 计划是父层契约，子代理直接执行
@@ -82,7 +107,7 @@ export function createSpawner(ctx) {
       .filter(Boolean)
       .slice(0, MAX_CHILDREN);
     if (!list.length) return { output: '没有可派发的子任务：task 或 tasks 至少填一项，且描述不能为空', extra: { children: [] } };
-    const children = await Promise.all(list.map((t) => spawnOne(t, childHarness)));
+    const children = await Promise.all(list.map((t) => spawnOne(t, childHarness, opts)));
     const okCount = children.filter((c) => c.ok).length;
     const lines = [`子代理结果（${okCount}/${children.length} 成功）：`];
     children.forEach((c, i) => {
