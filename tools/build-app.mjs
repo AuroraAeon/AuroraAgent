@@ -68,7 +68,12 @@ for (const d of ['util', 'public', 'skills', 'test', 'tools']) {
   cpSync(join(ROOT, d), join(BUNDLE_APP, d), { recursive: true });
 }
 cpSync(join(ROOT, 'docs'), join(CONTENTS, 'Resources', 'docs'), { recursive: true });
-console.log('  代码与文档已拷贝');
+// tools/ 是整目录拷贝，捆绑的 ripgrep 二进制（tools/bin/<arch>/rg）随之进 Bundle——
+// grep / glob 优先用它，装过的机器开箱就是快的那条路（node tools/download-ripgrep.mjs 可补装）
+const bundledRg = join(ROOT, 'tools', 'bin', process.arch, 'rg');
+console.log(existsSync(bundledRg)
+  ? `  代码与文档已拷贝（含捆绑 ripgrep: tools/bin/${process.arch}/rg）`
+  : '  代码与文档已拷贝（未捆绑 ripgrep，检索将回退 PATH 或纯 JS 遍历）');
 
 // 3) 数据迁移（config / usage 不存在才拷贝，绝不覆盖已有数据；旧名 config 按新名落盘）
 for (const [from, to] of [['auroraagent.config.json', 'auroraagent.config.json'], ['usage.jsonl', 'usage.jsonl'], ['modeltester.config.json', 'auroraagent.config.json']]) {

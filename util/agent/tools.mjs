@@ -14,6 +14,7 @@ import { toOpenAIFunction, toAnthropicTool } from '../llm/tool.mjs';
 import { proxyFetch } from '../proxy.mjs';
 import { findSkill, renderSkillContent, skillDirs, SKILL_FOLLOWUP } from './skills.mjs';
 import { IGNORE_FILE_NAME, LOCK_TEXT_SYMBOL } from '../ignore.mjs';
+import { runRipgrepAsync, excludeGlobs } from '../ripgrep.mjs';
 
 const MAX_OUTPUT = 32 * 1024;   // 单次工具回给模型的文本上限
 const MAX_FETCH = 64 * 1024;    // web_fetch 正文上限
@@ -233,6 +234,68 @@ export function globToRegExp(pattern) {
   return new RegExp(`^${re}$`);
 }
 
+/**
+ * 检索用的 rg 排除参数：把 SKIP_DIRS 转成 rg 的 -g 排除（ripgrep 的 --no-ignore --hidden
+ * 已关掉它自己的忽略文件与隐藏文件过滤，目录黑名单因此必须显式给，否则 .git 会被翻个底朝天）。
+ * 名单只有 SKIP_DIRS 一份，ripgrep 路径与纯 JS 路径共用，不会各自漂移。
+ */
+const RG_EXCLUDE = excludeGlobs([...SKIP_DIRS]).flatMap((g) => ['-g', g]);
+const RG_COMMON = ['--no-ignore', '--hidden', '--color=never', '--no-messages', ...RG_EXCLUDE];
+
+/** 单行 rg JSON 输出 → 命中（rg 的 JSON 把 path / line_number / 文本分开给，路径或正文里带冒号也不会错位） */
+function rgMatchLine(raw, root, ctx) {
+  let ev;
+  try { ev = JSON.parse(raw); } catch { return null; }
+  if (ev?.type !== 'match' || !ev.data) return null;
+  const rel = String(ev.data.path?.text || '');
+  const line = Number(ev.data.line_number) || 0;
+  const text = String(ev.data.lines?.text || '').replace(/\n$/, '');
+  if (!rel || !line) return null;
+  return { abs: join(root, rel), line, text };
+}
+
+/**
+ * grep 的 ripgrep 路径。返回 null = 该回退到纯 JS 遍历（rg 没装 / 起不来 / rg 自己报错，
+ * 典型是正则用了 Rust regex 不支持的语法）。过滤与截断仍由本文件负责：rg 只当快速遍历器用，
+ * 「装没装 rg」因此不影响检索结果，只影响快慢。
+ */
+async function grepWithRipgrep(pattern, root, nameRe, cap, ctx) {
+  // 末尾的 '.' 不能省：rg 没拿到路径参数时会转去读 stdin，而子进程的 stdin 是永不关闭的
+  // 管道——那就不是「搜得慢」，是直接挂死到超时（本文件踩过的坑）
+  const out = await runRipgrepAsync(['--json', '--regexp', pattern, '.', ...RG_COMMON], { cwd: root });
+  if (!out || out.status === 2) return null;
+  const skip = ignorePredicate(ctx);
+  const hits = [];
+  for (const raw of out.stdout.split('\n')) {
+    if (!raw || hits.length >= cap) continue;
+    const hit = rgMatchLine(raw, root, ctx);
+    if (!hit) continue;
+    if (nameRe && !nameRe.test(hit.abs.split('/').pop())) continue;
+    if (skip(hit.abs)) continue;
+    hits.push(`${displayPath(ctx, hit.abs)}:${hit.line}: ${hit.text.trimEnd().slice(0, 300)}`);
+  }
+  return hits;
+}
+
+/**
+ * glob 的 ripgrep 路径：只借 rg 的目录遍历（--files），glob 语义仍由本文件的 globToRegExp
+ * 判定（锚定 / 基名 / 单星不跨目录），保证两条路径对同一模式的答案一致。
+ * @returns {string[]|null} 绝对路径数组；null = 回退
+ */
+async function globFilesWithRipgrep(root, ctx) {
+  const out = await runRipgrepAsync(['--files', '--null', '.', ...RG_COMMON], { cwd: root });
+  if (!out || out.status === 2) return null;
+  const skip = ignorePredicate(ctx);
+  const files = [];
+  for (const rel of out.stdout.split('\0')) {
+    if (!rel) continue;
+    const abs = join(root, rel);
+    if (skip(abs)) continue;
+    files.push(abs);
+  }
+  return files;
+}
+
 export const TOOLS = [
   {
     name: 'read_file',
@@ -426,13 +489,20 @@ export const TOOLS = [
       },
       required: ['pattern'],
     },
-    run(args, ctx) {
+    async run(args, ctx) {
       let re;
       try { re = new RegExp(String(args.pattern || '')); } catch (e) { throw new ToolError(`正则无效：${e.message}`, 'bad_args'); }
       const root = resolveInside(ctx.workspace, args.path || '.', readRoots(ctx));
       gateIgnored(ctx, root, args.path || '.');
       const nameRe = args.glob ? fileGlobRe(args.glob) : null;
       const cap = Math.min(200, Math.max(1, Number(args.max_results) || 50));
+      // ripgrep 优先（util/ripgrep.mjs）：拿不到结果才回退到纯 JS 遍历
+      const fast = await grepWithRipgrep(String(args.pattern || ''), root, nameRe, cap, ctx);
+      if (fast) {
+        if (!fast.length) return `未匹配到 /${args.pattern}/`;
+        const more = fast.length >= cap ? `\n[已达上限 ${cap} 条，缩小 pattern 或 path 后重试]` : '';
+        return truncate(`匹配 ${fast.length} 条：\n${fast.join('\n')}${more}`);
+      }
       const hits = [];
       let scanned = 0;
       const skip = ignorePredicate(ctx);
@@ -466,7 +536,7 @@ export const TOOLS = [
       },
       required: ['pattern'],
     },
-    run(args, ctx) {
+    async run(args, ctx) {
       const pattern = String(args.pattern || '').trim();
       if (!pattern) throw new ToolError('pattern 不能为空', 'bad_args');
       const root = resolveInside(ctx.workspace, args.path || '.', readRoots(ctx));
@@ -475,12 +545,23 @@ export const TOOLS = [
       const re = globToRegExp(pattern);
       const out = [];
       const skip = ignorePredicate(ctx);
-      walkFiles(root, (abs) => {
-        if (out.length >= 500) return;
-        const rel = relative(root, abs).split(sep).join('/');
-        const target = hasSlash ? rel : rel.split('/').pop();
-        if (re.test(target)) out.push(displayPath(ctx, abs));
-      }, { skipDir: skip, skipFile: skip });
+      // ripgrep 只负责「快速把文件列出来」，模式匹配仍走上面的 globToRegExp
+      const fast = await globFilesWithRipgrep(root, ctx);
+      if (fast) {
+        for (const abs of fast) {
+          if (out.length >= 500) break;
+          const rel = relative(root, abs).split(sep).join('/');
+          const target = hasSlash ? rel : rel.split('/').pop();
+          if (re.test(target)) out.push(displayPath(ctx, abs));
+        }
+      } else {
+        walkFiles(root, (abs) => {
+          if (out.length >= 500) return;
+          const rel = relative(root, abs).split(sep).join('/');
+          const target = hasSlash ? rel : rel.split('/').pop();
+          if (re.test(target)) out.push(displayPath(ctx, abs));
+        }, { skipDir: skip, skipFile: skip });
+      }
       out.sort();
       if (!out.length) return `未匹配到 ${pattern}`;
       const more = out.length >= 500 ? `\n[已达上限 500 条，缩小 pattern 后重试]` : '';
