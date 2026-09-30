@@ -1,6 +1,6 @@
 # Screen Control (computer_use)
 
-`computer_use` lets the model look at your screen and drive the frontmost graphical interface: observe with a screenshot first, then click, type, press keys, scroll or launch apps at pixel coordinates taken from that screenshot. Localized from OpenBitFun v1.0.2 #3191, implemented as a zero-dependency macOS subset in `util/agent/computer.mjs`.
+`computer_use` lets the model look at your screen and drive the frontmost graphical interface: observe with a screenshot first, then click, type, press keys, scroll or launch apps at pixel coordinates taken from that screenshot. Implemented as a zero-dependency macOS subset in `util/agent/computer.mjs`.
 
 ## Capability boundary
 

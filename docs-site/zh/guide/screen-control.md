@@ -1,6 +1,6 @@
 # 屏幕操作（computer_use）
 
-`computer_use` 让模型看你的屏幕并操作前台图形界面：先截图观察，再按截图里的像素坐标点击、输入、按键、滚动、启动应用。语义本地化 OpenBitFun v1.0.2 的 #3191，按 macOS 零依赖子集实现在 `util/agent/computer.mjs`。
+`computer_use` 让模型看你的屏幕并操作前台图形界面：先截图观察，再按截图里的像素坐标点击、输入、按键、滚动、启动应用。按 macOS 零依赖子集实现在 `util/agent/computer.mjs`。
 
 ## 能力边界
 

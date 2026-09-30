@@ -1,6 +1,6 @@
 # 定时任务
 
-让 AuroraAgent 在指定时间替你做一件事：到点后在目标会话里把 `prompt` 当作用户消息跑一轮 Agent。语义本地化 OpenBitFun v1.0.2 的 #3149，零依赖实现在 `util/jobs/`（`cron-expr.mjs` / `store.mjs` / `schedule.mjs` / `bus.mjs` / `http.mjs`）与 `util/agent/cron-tool.mjs`。
+让 AuroraAgent 在指定时间替你做一件事：到点后在目标会话里把 `prompt` 当作用户消息跑一轮 Agent。零依赖实现在 `util/jobs/`（`cron-expr.mjs` / `store.mjs` / `schedule.mjs` / `bus.mjs` / `http.mjs`）与 `util/agent/cron-tool.mjs`。
 
 ## 两种排程
 

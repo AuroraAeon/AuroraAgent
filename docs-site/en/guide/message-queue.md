@@ -1,6 +1,6 @@
 # Message Queue
 
-One session runs one active turn at a time. While that turn is still going you can keep typing and sending: the message joins a queue and is picked up automatically once the previous turn settles. Instead of being pushed back with "a task is already running", and without dropping anything. Localized from OpenBitFun v1.0.2 #3212 / #3220, implemented with zero dependencies in `util/agent/queue.mjs`.
+One session runs one active turn at a time. While that turn is still going you can keep typing and sending: the message joins a queue and is picked up automatically once the previous turn settles. Instead of being pushed back with "a task is already running", and without dropping anything. Implemented with zero dependencies in `util/agent/queue.mjs`.
 
 ## Behavior
 

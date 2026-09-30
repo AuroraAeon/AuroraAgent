@@ -1,6 +1,6 @@
 # Scheduled Tasks
 
-Let AuroraAgent do something at a given time: when the task comes due, its `prompt` is injected as a user message into the target session and one Agent turn runs. Localized from OpenBitFun v1.0.2 #3149, implemented with zero dependencies in `util/jobs/` (`cron-expr.mjs` / `store.mjs` / `schedule.mjs` / `bus.mjs` / `http.mjs`) and `util/agent/cron-tool.mjs`.
+Let AuroraAgent do something at a given time: when the task comes due, its `prompt` is injected as a user message into the target session and one Agent turn runs. Implemented zero dependencies in `util/jobs/` (`cron-expr.mjs` / `store.mjs` / `schedule.mjs` / `bus.mjs` / `http.mjs`) and `util/agent/cron-tool.mjs`.
 
 ## Two schedule forms
 
