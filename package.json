@@ -1,6 +1,6 @@
 {
   "name": "auroraagent",
-  "version": "7.4.0",
+  "version": "7.5.0",
   "private": true,
   "type": "module",
   "description": "AuroraAgent：本地 Agent 运行时（终端 + 网页，零依赖后端，可打包为独立 macOS Application）；模型速测能力作为底座保留",
