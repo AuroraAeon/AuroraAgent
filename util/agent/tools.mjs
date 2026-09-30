@@ -15,6 +15,7 @@ import { proxyFetch } from '../proxy.mjs';
 import { findSkill, renderSkillContent, skillDirs, SKILL_FOLLOWUP } from './skills.mjs';
 import { IGNORE_FILE_NAME, LOCK_TEXT_SYMBOL } from '../ignore.mjs';
 import { runRipgrepAsync, excludeGlobs } from '../ripgrep.mjs';
+import { staleFileNotice } from './file-tracker.mjs';
 
 const MAX_OUTPUT = 32 * 1024;   // 单次工具回给模型的文本上限
 const MAX_FETCH = 64 * 1024;    // web_fetch 正文上限
@@ -318,6 +319,7 @@ export const TOOLS = [
       try { st = statSync(abs); } catch { throw new ToolError(`文件不存在：${args.path}`, 'not_found'); }
       if (st.isDirectory()) throw new ToolError(`${args.path} 是目录，请改用 list_dir`, 'is_dir');
       const raw = readFileSync(abs, 'utf8');
+      ctx?.fileTracker?.note(abs); // 记下指纹：之后 edit_file 能发现「这文件被外部改过」
       // 文件以一个换行结尾时不把它算成空行（与编辑器行数一致）
       const lines = (raw.endsWith('\n') ? raw.slice(0, -1) : raw).split('\n');
       const from = Math.max(1, Number(args.offset) || 1);
@@ -367,9 +369,12 @@ export const TOOLS = [
       const abs = resolveInside(ctx.workspace, args.path);
       gateIgnored(ctx, abs, args.path);
       captureForCheckpoint(ctx, abs); // 检查点镜像（非 git 工作区）：落笔前抄下原内容
+      const stale = ctx?.fileTracker?.changedSince(abs);
       mkdirSync(dirname(abs), { recursive: true });
       writeFileSync(abs, String(args.content ?? ''));
-      return `已写入 ${args.path}（${String(args.content ?? '').length} 字符）`;
+      ctx?.fileTracker?.refresh(abs); // 刷新指纹：别把自己这次的写算成外部改动
+      const head = `已写入 ${args.path}（${String(args.content ?? '').length} 字符）`;
+      return stale ? `${head}\n${staleFileNotice(args.path)}` : head;
     },
   },
   {
@@ -392,6 +397,8 @@ export const TOOLS = [
       const oldStr = String(args.old_string ?? '');
       const newStr = String(args.new_string ?? '');
       if (!oldStr) throw new ToolError('old_string 不能为空', 'bad_args');
+      // 落笔前探一次新鲜度：模型可能隔着好几轮才来改这个文件，期间用户改过它
+      const stale = ctx?.fileTracker?.changedSince(abs);
       let text;
       try { text = readFileSync(abs, 'utf8'); } catch { throw new ToolError(`文件不存在：${args.path}`, 'not_found'); }
       const parts = text.split(oldStr);
@@ -403,9 +410,11 @@ export const TOOLS = [
       const next = args.replace_all ? parts.join(newStr) : text.replace(oldStr, newStr);
       captureForCheckpoint(ctx, abs); // 检查点镜像（非 git 工作区）：落笔前抄下原内容
       writeFileSync(abs, next);
+      ctx?.fileTracker?.refresh(abs); // 刷新指纹：别把自己这次的写当成外部改动
       const diff = lineDiff(text, next);
+      const head = `已替换 ${args.path} 中 ${args.replace_all ? count : 1} 处`;
       return {
-        output: `已替换 ${args.path} 中 ${args.replace_all ? count : 1} 处\n${diffToText(diff)}`,
+        output: `${head}\n${stale ? staleFileNotice(args.path) : ''}${diffToText(diff)}`,
         extra: { diff, path: args.path },
       };
     },

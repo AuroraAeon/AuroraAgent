@@ -17,6 +17,7 @@ import { findSkill } from './skills.mjs';
 import { PermissionPolicy, defaultRules } from './policy.mjs';
 import { createSpawner } from './swarm.mjs';
 import { IgnoreController } from '../ignore.mjs';
+import { FileTracker } from './file-tracker.mjs';
 import { discoverRules, collectCandidatePaths } from './rules.mjs';
 import { discoverAgentConfigs, subagentTools } from './subagents.mjs';
 import { nullHooks } from './hooks/index.mjs';
@@ -386,6 +387,9 @@ export async function runAgentTurn(ctx) {
   // 忽略文件闸门（util/ignore.mjs）：按会话工作目录加载 .auroraagentignore 并热加载，
   // 文件类工具在 resolveInside 之后过闸。子代理各自 turn 各持一份（工作目录相同则规则相同）
   const ignore = ignoreEnabled ? new IgnoreController({ workspace: session.workspace, log }).load() : null;
+  // 文件新鲜度追踪（util/agent/file-tracker.mjs）：按 turn 建，turn 结束即弃——
+  // 「模型读过的文件」本来就只在当轮有效，跨轮持有只会累积陈指纹
+  const fileTracker = new FileTracker();
   // 规则（用户指令层，rules.mjs）：项目 AGENTS.md / .auroraagent/rules + 数据目录 rules，
   // 每个 turn 开头发现一次（规则文件改动在下轮生效，不值得为它起 watch）；条件激活的候选
   // 路径 = 本轮发言里提到的路径 + 会话记录里工具真正碰过的路径
@@ -575,7 +579,7 @@ export async function runAgentTurn(ctx) {
     let out;
     try {
       // signal 进 ctx：长动作（computer_use 批量操作）可在用户中止时立刻停手，不留野进程
-      const res = await tool.run(runArgs, { workspace: session.workspace, skills, todoStore, spawn, proxy: agentProxy, skillsLoaded, signal: controller?.signal, ignore, sanitizeChildEnv, checkpoint: checkpoints });
+      const res = await tool.run(runArgs, { workspace: session.workspace, skills, todoStore, spawn, proxy: agentProxy, skillsLoaded, signal: controller?.signal, ignore, sanitizeChildEnv, checkpoint: checkpoints, fileTracker });
       // 工具可返回字符串或 { output, extra }：extra 是结构化负载（diff / todos），
       // 进转录与 tool_event 供两端渲染，但不进模型消息（模型只看 output 文本）
       if (call.name === 'skill') grantSkillTools(runArgs.name);
@@ -749,6 +753,7 @@ export async function runAgentTurn(ctx) {
     return { turnId, text: finalText, rounds: round, tools: totalTools, failed: true };
   } finally {
     ignore?.close(); // 释放 fs.watch： turn 结束即不再需要热加载
+    fileTracker.clear();
     // hook 收尾：turn_end / turn_error / turn_abort 三选一（各收尾路径已写 turnOutcome）。
     // 放在 finally 里是因为 turn 有多个 return 点（计划驳回 / 触顶 / 失败 / 中止），逐处补容易漏
     try {
