@@ -62,6 +62,22 @@ Read and written via `GET/POST /api/settings/tui` (Settings dialog, "Terminal" p
 | `notifications.method` | `auto` | `auto` / `osc9` / `osc777` / `bel` |
 | `notifications.events` | all four | `turn-complete` / `turn-failed` / `permission-required` / `question-required` |
 
+### ignore / sanitizeChildEnv / promptCache (security and prompt cache)
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `ignore.enabled` | `true` | Master switch for the `.auroraagentignore` no-entry gate (only `false` turns it off) |
+| `sanitizeChildEnv` | `true` | Sanitize the `shell` tool's child environment: drops variables matching `KEY` / `TOKEN` / `SECRET` / `PASSWORD` / `CREDENTIAL`, keeping only the runtime essentials `PATH` / `HOME` / `SHELL` / `TMPDIR` / `LANG` / `LC_*` / `USER` / `LOGNAME` / `TERM` / `TZ` / `PWD` / `ZDOTDIR` |
+| `promptCache` | `auto` | Prompt cache mode `auto` / `off`; it only takes effect when the provider also declares `capacity.supportsPromptCache`, see [Prompt Cache](/en/reference/prompt-cache) |
+
+### rules section (rule toggle table)
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `rules.<rule name>` | On | One boolean toggle per rule; `false` disables that rule (the file stays, activation is still evaluated) |
+
+Rule files themselves are edited on disk, see [Rules](/en/reference/rules).
+
 ## Environment variables
 
 | Variable | Effect |
@@ -72,6 +88,8 @@ Read and written via `GET/POST /api/settings/tui` (Settings dialog, "Terminal" p
 | `AURORAAGENT_FAILOVER` | `0` disables multi-provider failover / `1` enables (overrides the file) |
 | `AURORAAGENT_FAILOVER_MAX_ATTEMPTS` | total failover attempts 1–5 (overrides the file) |
 | `AURORAAGENT_EXPERIMENTAL_MCP` | enable the MCP experiment |
+| `AURORAAGENT_EXPERIMENTAL_HOOKS` | enable the event hooks experiment |
+| `AURORAAGENT_NO_RIPGREP` | when `1`, `grep` / `glob` always take the pure-JavaScript fallback path (no ripgrep) |
 | `AURORAAGENT_EXPERIMENTAL_FLAG` | enable all experiments |
 | `PORT` / `NO_OPEN` | web port / do not open a browser |
 | `LOG_LEVEL` | `debug` for verbose logs |

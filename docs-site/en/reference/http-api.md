@@ -30,6 +30,13 @@ Same-origin `/api/*`, all JSON; SSE frames are `event:` + `data:` lines.
 | `POST /api/agent/plan` | `{ sessionId, decision: approve/reject }` |
 | `GET /api/agent/skills` | skill catalog |
 | `GET /api/files/search?sessionId=&q=` | read-only file search inside the session workspace (path-jailed, dependency dirs skipped); 404 for unknown sessions |
+| `GET /api/agent/checkpoints?sessionId=` | List checkpoints (snapshots), including the snapshot path type; 400 for unknown sessions |
+| `GET /api/agent/checkpoints/preview?sessionId=&turnIndex=` | Rollback preview: files touched after that turn; 404 when no such checkpoint |
+| `POST /api/agent/checkpoints/restore` | Roll back to a turn `{ sessionId, turnIndex, restoreFiles?, restoreChat? }` (workspace only, conversation untouched, by default); 409 on restore failure |
+| `DELETE /api/agent/checkpoints` | Clear this session's checkpoints (git private refs and mirror backups) |
+| `GET /api/agent/hooks?workspace=` | Discovered event hooks and the experimental gate status (200 with `enabled:false` even when gated off) |
+| `GET /api/agent/observations?kind=&sessionId=&limit=` | Observations referenceable from mentions: `kind=problems` reads the error log, `kind=terminal` scans commands run in this session; 400 for unknown kind or missing sessionId |
+| `GET /api/sessions/search?q=` | Full-text session search (titles + transcripts, BM25 ranked); `/api/agent/sessions/search` is a synonym; 400 without `q` |
 
 Two turn SSE events relate to the queue and scheduled tasks: `turn_queued` (a submission was queued, with `position` and `duplicate`) and `jobs_changed` (scheduled tasks changed inside a turn).
 
@@ -57,6 +64,7 @@ Two turn SSE events relate to the queue and scheduled tasks: `turn_queued` (a su
 | `GET/POST /api/settings/failover` | read / write multi-provider failover preferences (`providerFailover` boolean + `providerFailoverMaxAttempts` 1–5); 400 on non-boolean or out-of-range values, 405 for other methods |
 | `GET/POST /api/settings/generation` | read / write generation parameters (`temperature` 0–1, `maxTokens` positive integer ≤1000000, partial merge); 400 on out-of-range or non-integer values and on an empty body, 405 for other methods |
 | `GET/POST /api/settings/key` | write the API key (`apiKey` non-empty, no whitespace, ≤200 chars) and query whether one exists; GET returns only `hasKey` and never the key itself; 409 when an env-var key takes precedence so the write would be ignored |
+| `GET/POST /api/settings/rules` | Rule toggle table: GET returns discovered rules (source / condition / active) plus toggle values, POST replaces the table wholesale |
 
 ## Scheduled tasks
 

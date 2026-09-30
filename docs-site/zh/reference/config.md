@@ -51,6 +51,22 @@ socks5 等其它协议暂不支持（错误消息会说明）；http 目标走�
 
 环境变量 `AURORAAGENT_FAILOVER`（`0` 关 / `1` 开）与 `AURORAAGENT_FAILOVER_MAX_ATTEMPTS`（1–5）优先于盘上配置。
 
+### ignore / sanitizeChildEnv / promptCache（安全与提示缓存）
+
+| 键 | 缺省 | 说明 |
+| --- | --- | --- |
+| `ignore.enabled` | `true` | `.auroraagentignore` 禁入区闸门总开关（仅 `false` 关） |
+| `sanitizeChildEnv` | `true` | `shell` 工具子进程环境净化：剔除匹配 `KEY` / `TOKEN` / `SECRET` / `PASSWORD` / `CREDENTIAL` 的变量，只保留 `PATH` / `HOME` / `SHELL` / `TMPDIR` / `LANG` / `LC_*` / `USER` / `LOGNAME` / `TERM` / `TZ` / `PWD` / `ZDOTDIR` 等运行必需项 |
+| `promptCache` | `auto` | 提示缓存档位 `auto` / `off`；真正生效还要提供方声明 `capacity.supportsPromptCache`，详见 [提示缓存](/zh/reference/prompt-cache) |
+
+### rules 段（规则开关表）
+
+| 键 | 缺省 | 说明 |
+| --- | --- | --- |
+| `rules.<规则名>` | 缺省开 | 每条规则一个布尔开关；`false` 关掉该规则（文件保留，条件判定仍进行） |
+
+规则文件本身在文件系统里编辑，详见 [规则](/zh/reference/rules)。
+
 ### tui 段（终端偏好）
 
 经 `GET/POST /api/settings/tui` 读写（设置页「终端」面板）；终端启动时读取一次，下一次启动生效。
@@ -72,6 +88,8 @@ socks5 等其它协议暂不支持（错误消息会说明）；http 目标走�
 | `AURORAAGENT_FAILOVER` | `0` 关闭多提供方故障转移 / `1` 开启（优先于配置） |
 | `AURORAAGENT_FAILOVER_MAX_ATTEMPTS` | 故障转移总尝试次数 1–5（优先于配置） |
 | `AURORAAGENT_EXPERIMENTAL_MCP` | 开启 MCP 实验特性 |
+| `AURORAAGENT_EXPERIMENTAL_HOOKS` | 开启事件钩子实验特性 |
+| `AURORAAGENT_NO_RIPGREP` | `1` 时 `grep` / `glob` 强制走纯 JS 回退路径（不用 ripgrep） |
 | `AURORAAGENT_EXPERIMENTAL_FLAG` | 开启全部实验特性 |
 | `PORT` / `NO_OPEN` | 网页端口 / 不自动开浏览器 |
 | `LOG_LEVEL` | `debug` 时输出调试日志 |

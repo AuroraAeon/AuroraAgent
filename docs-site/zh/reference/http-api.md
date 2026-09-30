@@ -30,6 +30,13 @@
 | `POST /api/agent/plan` | 计划决策 `{ sessionId, decision: approve/reject }` |
 | `GET /api/agent/skills` | 技能目录 |
 | `GET /api/files/search?sessionId=&q=` | 会话工作目录内只读文件搜索（路径禁锢，跳过依赖目录）；会话不存在 404 |
+| `GET /api/agent/checkpoints?sessionId=` | 检查点（快照）列表，含快照路径类型；会话不存在 400 |
+| `GET /api/agent/checkpoints/preview?sessionId=&turnIndex=` | 回滚预览：该轮之后动过的文件；无此检查点 404 |
+| `POST /api/agent/checkpoints/restore` | 回滚到某一轮 `{ sessionId, turnIndex, restoreFiles?, restoreChat? }`（默认只回滚工作区不动对话）；恢复失败 409 |
+| `DELETE /api/agent/checkpoints` | 清理本会话检查点（清 git 私有 ref 与镜像备份） |
+| `GET /api/agent/hooks?workspace=` | 事件钩子清单与实验门控状态（未开门控也 200，`enabled:false`） |
+| `GET /api/agent/observations?kind=&sessionId=&limit=` | 提及时可引用的「观察」：`kind=problems` 读错误日志、`kind=terminal` 扫本会话跑过的命令；未知 kind / 缺 sessionId 400 |
+| `GET /api/sessions/search?q=` | 会话全文检索（标题 + 转录，BM25 排序）；`/api/agent/sessions/search` 同义；缺 q 400 |
 
 turn SSE 事件里与队列 / 定时任务相关的两帧：`turn_queued`（提交已入队，带 `position` 与 `duplicate`）与 `jobs_changed`（turn 内改了定时任务）。
 
@@ -57,6 +64,7 @@ turn SSE 事件里与队列 / 定时任务相关的两帧：`turn_queued`（提�
 | `GET/POST /api/settings/failover` | 多提供方故障转移偏好读写（`providerFailover` 布尔 + `providerFailoverMaxAttempts` 1–5）；非布尔 / 越界 400，其他方法 405 |
 | `GET/POST /api/settings/generation` | 生成参数读写（`temperature` 0–1、`maxTokens` 正整数 ≤1000000，局部合并）；越界 / 非整数 400，空体 400，其他方法 405 |
 | `GET/POST /api/settings/key` | API Key 写入（`apiKey` 非空、无空白、≤200 字符）与「有没有 Key」查询；GET 只回 `hasKey`，绝不回传 Key 本身；环境变量 Key 生效时写盘无效，返回 409 |
+| `GET/POST /api/settings/rules` | 规则开关表读写：GET 回报发现到的规则（来源 / 条件 / 是否激活）与开关值，POST 整表替换 |
 
 ## 定时任务
 
