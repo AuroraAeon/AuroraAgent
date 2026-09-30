@@ -59,7 +59,7 @@ function json(res, status, obj) {
  * @returns {(req, res, url) => Promise<void>} 只处理 /api/agent/ 前缀的请求
  */
 export function createAgentApi(deps) {
-  const { dataDir, usage, resolveChatProvider, providerStore = null, loadConfig, pickModel, log = () => {}, builtinPrice } = deps;
+  const { dataDir, usage, resolveChatProvider, providerStore = null, loadConfig, pickModel, log = () => {}, builtinPrice, errorLog = null } = deps;
   // 故障转移候选源：全部提供方（内置在前）；挑选时的同模型 / 有 Key / 排除已试 / 队列 / 熔断
   // 过滤都在 llm/failover.mjs 与 llm/circuit.mjs
   const failoverCandidates = providerStore ? () => providerStore.all() : null;
@@ -380,6 +380,44 @@ export function createAgentApi(deps) {
         hooks: runner.describe(),
         events: HOOK_EVENT_NAMES,
       });
+    }
+
+    // —— 提及时可引用的「观察」：problems（错误日志）/ terminal（本会话跑过的命令）——
+    // 复用已有能力的读出面，不新造数据源：错误日志就是本机最近真出过的问题，
+    // 转录里的 shell 调用就是最近真跑过的命令。截断后再回，避免把 4KB 明细塞满输入框。
+    if (req.method === 'GET' && url === '/api/agent/observations') {
+      const q = new URL(req.url, 'http://localhost').searchParams;
+      const kind = q.get('kind') || '';
+      const limit = Math.max(1, Math.min(20, Number(q.get('limit')) || 8));
+      if (kind === 'problems') {
+        const entries = errorLog ? errorLog.list(limit) : [];
+        return json(res, 200, {
+          kind, items: entries.map((e) => ({
+            id: `${e.ts}-${e.kind}`, label: e.message, at: e.ts, kind: e.kind,
+            text: `[${e.ts}] ${e.kind}\n${e.message}${e.detail ? `\n${String(e.detail).slice(0, 600)}` : ''}`,
+          })),
+        });
+      }
+      if (kind === 'terminal') {
+        const sessionId = q.get('sessionId') || '';
+        const meta = sessionId ? sessions.get(sessionId) : null;
+        if (!meta) return json(res, 400, { error: { message: '缺少或未知的 sessionId' } });
+        const recs = sessions.records(sessionId);
+        const items = [];
+        for (let i = recs.length - 1; i >= 0 && items.length < limit; i--) {
+          const r = recs[i];
+          if (r.t !== 'tool_call' || r.name !== 'shell') continue;
+          const res2 = recs.find((x) => x.t === 'tool_result' && x.id === r.id);
+          const cmd = String(r.args?.command || '').slice(0, 400);
+          if (!cmd) continue;
+          items.push({
+            id: r.id, label: cmd, at: meta.updatedAt, kind: 'terminal',
+            text: `$ ${cmd}\n${String(res2?.output || '').slice(0, 1200)}`,
+          });
+        }
+        return json(res, 200, { kind, items });
+      }
+      return json(res, 400, { error: { message: 'kind 必须是 problems 或 terminal' } });
     }
 
     // —— 检查点（快照回滚）：列表 / 恢复 / 清理 ——

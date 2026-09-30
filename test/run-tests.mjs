@@ -4564,6 +4564,47 @@ await test('检查点：预览列出这一轮之后动过的文件，坏参数�
   await fetch(`${AGENT}/sessions/${s.id}`, { method: 'DELETE' });
 });
 
+await test('观察面：problems 读错误日志、terminal 读本会话跑过的命令，坏 kind 400', async () => {
+  // 造一条错误日志（与设置页错误日志同一份文件，这里直接写行验证读出面）
+  const logDir = join(tmpDataDir, 'logs');
+  mkdirSync(logDir, { recursive: true });
+  appendFileSync(join(logDir, 'errors.log'), `${JSON.stringify({ ts: '2026-09-30T00:00:00.000Z', kind: 'backend', message: '上游 500', detail: 'stack', version: 'test' })}\n`);
+  const ps = await (await fetch(`${AGENT}/observations?kind=problems`)).json();
+  eq(ps.kind, 'problems', 'kind 透出');
+  eq(ps.items.length, 1, '读到刚写的那条');
+  assert(ps.items[0].text.includes('上游 500'), '条目带正文');
+  const s = await createAgentSession();
+  appendFileSync(join(tmpDataDir, 'sessions', `${s.id}.jsonl`), [
+    { t: 'tool_call', id: 'c1', name: 'shell', args: { command: 'echo 你好' } },
+    { t: 'tool_result', id: 'c1', name: 'shell', ok: true, output: '你好' },
+    { t: 'tool_call', id: 'c2', name: 'read_file', args: { path: 'x' } },
+    { t: 'tool_result', id: 'c2', name: 'read_file', ok: true, output: '' },
+  ].map((r) => `${JSON.stringify(r)}\n`).join(''));
+  const ts = await (await fetch(`${AGENT}/observations?kind=terminal&sessionId=${s.id}`)).json();
+  eq(ts.items.length, 1, '只收 shell 调用（read_file 不算「跑过的命令」）');
+  eq(ts.items[0].label, 'echo 你好', 'label 是命令原文');
+  assert(ts.items[0].text.includes('你好'), '条目带输出');
+  const noSession = await fetch(`${AGENT}/observations?kind=terminal`);
+  eq(noSession.status, 400, '缺 sessionId 给 400');
+  const bad = await fetch(`${AGENT}/observations?kind=whatever`);
+  eq(bad.status, 400, '未知 kind 给 400');
+  await fetch(`${AGENT}/sessions/${s.id}`, { method: 'DELETE' });
+});
+
+await test('提及候选组装：文件 / 问题 / 命令 / 技能四类同序，查询本地过滤', async () => {
+  const { buildMentionItems } = await import('../web-ui/src/mention-items.mjs');
+  const items = buildMentionItems(
+    ['a.ts', 'b.ts'],
+    [{ name: '写作', description: '写文章', source: 'builtin', active: true }],
+    [{ id: 'p1', label: '上游 500', at: 't', kind: 'backend', text: 'x' }],
+    [{ id: 't1', label: 'echo hi', at: 't', kind: 'terminal', text: 'hi' }],
+    '',
+  );
+  eq(items.map((i) => i.kind).join(','), 'file,file,problems,terminal,skill', '四类同序（两个文件在前）');
+  eq(buildMentionItems(['a.ts'], [], [{ id: 'p1', label: '上游 500', at: 't', kind: 'backend', text: 'x' }], [], '上游').map((i) => i.kind).join(','), 'problems', '查询只留命中的问题');
+  eq(buildMentionItems(['a.ts'], [], [], [], 'zzz').length, 0, '无命中给空');
+});
+
 await test('Agent turn：titleMode=model 经上游总结标题并记账', async () => {
   const s = (await (await fetch(`${AGENT}/sessions`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),

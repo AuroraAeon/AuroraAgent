@@ -37,6 +37,11 @@ export const getUsage = (lite = false) => api<UsageSummary>(`/api/usage${lite ? 
 /** 版本更新检查（默认走 6 小时缓存；force=1 强制重查 GitHub Releases） */
 export const checkUpdate = (force = false) => api<UpdateInfo>(`/api/update/check${force ? '?force=1' : ''}`);
 export const getWorkspace = (path: string) => api<WorkspaceInfo>(`/api/workspace?path=${encodeURIComponent(path)}`);
+/** 提及时可引用的「观察」：problems（错误日志）/ terminal（本会话跑过的命令） */
+export const listObservations = (kind: 'problems' | 'terminal', sessionId: string) =>
+  api<{ kind: string; items: { id: string; label: string; at: string; kind: string; text: string }[] }>(
+    `/api/agent/observations?kind=${kind}&sessionId=${encodeURIComponent(sessionId)}`,
+  );
 /** 检查点（每个用户轮的工作区快照）：列表 / 回滚预览 / 恢复 / 清理 */
 export const listCheckpoints = (sessionId: string) =>
   api<{ sessionId: string; kind: string; checkpoints: CheckpointEntry[] }>(`/api/agent/checkpoints?sessionId=${encodeURIComponent(sessionId)}`).then(normalizeCheckpointEntries);

@@ -24,8 +24,9 @@ import type { SlashRow } from '../slash-commands';
 import { CommandPalette } from './CommandPalette';
 import { HarnessPicker, PermPicker, TitlePicker } from './ComposerPickers';
 import { MentionPalette } from './MentionPalette';
-import type { MentionItem } from './MentionPalette';
-import { searchFiles } from '../api';
+import { buildMentionItems } from '../mention-items.mjs';
+import type { MentionItem, ObservationItem } from '../mention-items.mjs';
+import { listObservations, searchFiles } from '../api';
 import { onQuote } from '../quote-bus.mjs';
 import { toast } from '../toast';
 import type { QueueItem } from '../types';
@@ -252,6 +253,10 @@ export function Composer({
   const [slashIdx, setSlashIdx] = useState(0);
   const [mentionIdx, setMentionIdx] = useState(0);
   const [mentionFiles, setMentionFiles] = useState<string[]>([]);
+  // 提及其它两类观察：问题（错误日志）与命令（本会话跑过的 shell）。与文件不同，
+  // 这两类不过滤查询（列表本来就小，查询只在前端本地过滤），故打开时取一次即可
+  const [mentionProblems, setMentionProblems] = useState<ObservationItem[]>([]);
+  const [mentionTerminal, setMentionTerminal] = useState<ObservationItem[]>([]);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   // 斜杠命令菜单：行首或空白之后的 / 开始一个词时展开（对齐 dsh 的 slash 触发：词首才认，
@@ -292,6 +297,21 @@ export function Composer({
     }, 150);
     return () => { dead = true; clearTimeout(id); };
   }, [atOpen, sessionId, at?.[2]]);
+
+  // 问题 / 命令两类观察：打开提及时取一次（失败按空处理——没有观察不该让输入框罢工）
+  useEffect(() => {
+    if (!atOpen || !sessionId) { setMentionProblems([]); setMentionTerminal([]); return; }
+    let dead = false;
+    Promise.all([
+      listObservations('problems', sessionId).catch(() => ({ kind: 'problems', items: [] })),
+      listObservations('terminal', sessionId).catch(() => ({ kind: 'terminal', items: [] })),
+    ]).then(([p, t]) => {
+      if (dead) return;
+      setMentionProblems(p.items || []);
+      setMentionTerminal(t.items || []);
+    });
+    return () => { dead = true; };
+  }, [atOpen, sessionId]);
 
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
@@ -360,6 +380,17 @@ export function Composer({
 
   /** 把 @<query> 尾缀替换为 @路径 或 /技能名（后者即技能调用的既定形态） */
   const insertMention = (it: MentionItem) => {
+    if (it.kind === 'problems' || it.kind === 'terminal') {
+      // 观察类不换词，而是把原文块追加到输入框末尾：问题要连报错一起给，命令要连输出一起给，
+      // 只插一个标签对模型没有任何信息量。标签属性带来源与时间，模型能判断新旧
+      const open = it.kind === 'problems'
+        ? `<problem kind="${it.errKind}" at="${it.at}">`
+        : `<terminal command="${it.label}">`;
+      setText((prev) => `${prev.replace(/@([^\s@]*)$/, '').replace(/\s*$/, '')}\n\n${open}\n${it.text}\n${it.kind === 'problems' ? '</problem>' : '</terminal>'}\n\n`);
+      setMentionIdx(0);
+      taRef.current?.focus();
+      return;
+    }
     setText((prev) => prev.replace(/@([^\s@]*)$/, it.kind === 'file' ? `@${it.label} ` : `/${it.label} `));
     setMentionIdx(0);
     taRef.current?.focus();
@@ -435,6 +466,8 @@ export function Composer({
         <MentionPalette
           files={mentionFiles}
           skills={skills}
+          problems={mentionProblems}
+          terminal={mentionTerminal}
           query={at?.[2] || ''}
           active={mentionIdx}
           onClose={() => setMentionIdx(0)}
@@ -493,11 +526,7 @@ export function Composer({
             // IME 组合态不拦截（keyCode 229 为部分浏览器合成中的上报值）
             if (e.nativeEvent.isComposing || e.keyCode === 229) return;
             if (atOpen) {
-              const kw = (at?.[2] || '').toLowerCase();
-              const shown: MentionItem[] = [
-                ...mentionFiles.filter((f) => !kw || f.toLowerCase().includes(kw)).slice(0, 12).map((f) => ({ kind: 'file' as const, key: `f:${f}`, label: f })),
-                ...skills.filter((s) => !kw || s.name.toLowerCase().includes(kw) || s.description.toLowerCase().includes(kw)).slice(0, 6).map((s) => ({ kind: 'skill' as const, key: `s:${s.name}`, label: s.name, desc: s.description })),
-              ];
+              const shown: MentionItem[] = buildMentionItems(mentionFiles, skills, mentionProblems, mentionTerminal, at?.[2] || '');
               if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIdx((i) => (shown.length ? (i + 1) % shown.length : 0)); return; }
               if (e.key === 'ArrowUp') { e.preventDefault(); setMentionIdx((i) => (shown.length ? (i - 1 + shown.length) % shown.length : 0)); return; }
               if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {

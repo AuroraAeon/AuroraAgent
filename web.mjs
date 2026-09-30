@@ -71,6 +71,8 @@ const agentApi = createAgentApi({
   pickModel: (raw, fallback) => (MODEL_RE.test(String(raw || '')) ? String(raw) : fallback),
   log: (level, msg, extra) => log(level, msg, extra),
   builtinPrice: PRICE,
+  // 提及时「问题」分类的数据源：与设置页错误日志同一份文件（读出面复用，不另存一份）
+  errorLog,
 });
 
 /** 脱敏后的单个提供方（供保存后回显，形状与 /api/providers 列表一致） */
