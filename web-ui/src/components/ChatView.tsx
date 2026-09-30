@@ -8,7 +8,8 @@ import { PlanCard } from './PlanCard';
 import { fmtCostYen } from '../projection';
 import { TurnNavigator } from './TurnNavigator';
 import { ContextMeter } from './ContextMeter';
-import { IconChevronDown, IconSpark } from '../icons';
+import { IconAt, IconChevronDown, IconSpark } from '../icons';
+import { emitQuote, quoteBlock } from '../quote-bus.mjs';
 import type { LiveTurn, MsgView, TodoItem } from '../types';
 
 const SUGGESTIONS = [
@@ -80,12 +81,40 @@ export function ChatView({ messages, live, hasSession, onDecide, onPick, todos, 
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true); // 用户是否贴底：贴底才跟随滚动，上翻读历史时不抢滚动位置
   const [atBottom, setAtBottom] = useState(true);
+  // 选中引用：在转录里划词后浮出引用钮，点击把这段原文以 Markdown 引用块塞进输入框。
+  // 选区监听挂在 document 上（mouseup 才是「选完了」的时刻），但只认落在本滚动区内的选区——
+  // 在侧栏或设置里划词不该蹦出引用钮。按钮用 mousedown preventDefault 保住选区，
+  // 否则点击瞬间 selection 被清空，再读 window.getSelection() 已是空的。
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [quote, setQuote] = useState<{ x: number; y: number; text: string } | null>(null);
+
+  useEffect(() => {
+    const onUp = () => {
+      const sel = window.getSelection();
+      const root = scrollRef.current;
+      const wrap = wrapRef.current;
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0 || !root || !wrap || !sel.anchorNode || !root.contains(sel.anchorNode)) {
+        setQuote(null);
+        return;
+      }
+      const text = sel.toString().replace(/\u00a0/g, ' ').trim();
+      // 太短的选区（误触一下鼠标）不值得弹钮；过长的选区（整篇全选）塞进输入框会把话挤没
+      if (text.length < 2 || text.length > 4000) { setQuote(null); return; }
+      const rect = sel.getRangeAt(0).getBoundingClientRect();
+      const box = wrap.getBoundingClientRect();
+      if (!rect.width && !rect.height) { setQuote(null); return; }
+      setQuote({ x: rect.left - box.left + rect.width / 2, y: rect.top - box.top, text });
+    };
+    document.addEventListener('mouseup', onUp);
+    return () => document.removeEventListener('mouseup', onUp);
+  }, []);
 
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
     stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 96;
     setAtBottom(stickRef.current);
+    setQuote(null); // 滚动了选区位置就作废，别留一个钉在旧坐标上的钮
   };
 
   useEffect(() => {
@@ -126,7 +155,7 @@ export function ChatView({ messages, live, hasSession, onDecide, onPick, todos, 
     );
   }
   return (
-    <div className="chat-wrap">
+    <div className="chat-wrap" ref={wrapRef}>
       <div className="chat-scroll" id="chatScroll" ref={scrollRef} onScroll={onScroll}>
         <div className="chat-inner">
           {/* 上下文窗口占用：只有真拿到估算值才显示（估算为 0 说明后端没给，别显示个 0% 吓人） */}
@@ -145,6 +174,19 @@ export function ChatView({ messages, live, hasSession, onDecide, onPick, todos, 
         </div>
       </div>
       <TurnNavigator views={messages} live={live} scrollRef={scrollRef} />
+      {quote ? (
+        <button
+          type="button"
+          className="quotebtn"
+          title="引用这段内容"
+          style={{ left: `${Math.max(30, Math.min(quote.x, (wrapRef.current?.clientWidth || 0) - 30))}px`, top: `${Math.max(4, quote.y)}px` }}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => { emitQuote(quoteBlock(quote.text)); setQuote(null); }}
+        >
+          <IconAt size={13} />
+          <span>引用</span>
+        </button>
+      ) : null}
     </div>
   );
 }

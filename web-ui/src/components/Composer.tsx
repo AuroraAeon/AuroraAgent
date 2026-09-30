@@ -26,6 +26,7 @@ import { HarnessPicker, PermPicker, TitlePicker } from './ComposerPickers';
 import { MentionPalette } from './MentionPalette';
 import type { MentionItem } from './MentionPalette';
 import { searchFiles } from '../api';
+import { onQuote } from '../quote-bus.mjs';
 import { toast } from '../toast';
 import type { QueueItem } from '../types';
 
@@ -350,6 +351,12 @@ export function Composer({
       taRef.current?.focus();
     }
   }, [goalPrefill]);
+
+  // 选中引用：转录里划词点「引用」→ 原文以 Markdown 引用块接在输入框末尾（不覆盖已在打的内容）
+  useEffect(() => onQuote((block) => {
+    setText((prev) => `${prev.replace(/\s*$/, '')}${prev.trim() ? '\n\n' : ''}${block}`);
+    taRef.current?.focus();
+  }), []);
 
   /** 把 @<query> 尾缀替换为 @路径 或 /技能名（后者即技能调用的既定形态） */
   const insertMention = (it: MentionItem) => {

@@ -1432,6 +1432,16 @@ html[data-code-wrap="on"] .md pre { white-space:pre-wrap; overflow-x:visible; wo
   box-shadow:var(--shadow-card); cursor:pointer; z-index:5;
 }
 .chat-jump:hover { color:var(--text); border-color:var(--accent-line); }
+
+/* ---------- 对话区：划词引用浮钮 ---------- */
+.quotebtn {
+  position:absolute; transform:translate(-50%,-100%); z-index:6;
+  display:flex; align-items:center; gap:4px; padding:3px 9px 3px 7px; border-radius:99px;
+  background:var(--accent); color:var(--accent-ink, #fff); font-size:0.7857rem; line-height:1.4;
+  border:1px solid var(--accent-line); box-shadow:var(--shadow-card); cursor:pointer;
+}
+.quotebtn:hover { filter:brightness(1.08); }
+.quotebtn svg { flex:none; }
 /* 说明：这里刻意不用 content-visibility:auto 做「视口外跳过渲染」——占位尺寸会让加载长会话后
    的自动贴底滚动落点偏上（未渲染行按 contain-intrinsic-size 估算高度），读历史时位置还会跳。
    流式掉帧的主因是历史消息被反复重渲染，已由 Message 的 memo 解决。 */
