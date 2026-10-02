@@ -194,13 +194,18 @@ html { font-size: var(--ui-font-size, 14px); }
   display:flex; align-items:center; gap:8px; width:100%; min-height:36px; border:0; border-radius:8px;
   background:none; color:var(--dim); font:inherit; font-size:1rem; padding:7px 8px; text-align:left;
 }
-/* 行只是容器：设置按钮与更新按钮并列。负边距把设置按钮的 hover 衬底撑满整行 */
+/* 悬停衬底归整行（同会话行 .sb-row:hover 口径）：早年把它挂在设置按钮上、再用
+   margin:-7px -8px 往左右两侧硬撑，结果负边距被 gap 吃个精光——撑出来的衬底右沿
+   正好压在版本号左沿上（浏览器实测两者右边/左边同一坐标，零间距；亚像素取整还会
+   啃掉「v」的半个字形），版本号一长就这样糊成一条。现在衬底从版本号底下穿到行尾，
+   左右两端与会话行严格对齐，右侧不再有交界；文案提亮跟着 hover 作用域走。 */
+.sb-foot-row:hover { background:var(--sidebar-hover); }
+.sb-foot-row:hover .sb-foot-main { color:var(--text); }
 .sb-foot-main {
   flex:1; min-width:0; display:flex; align-items:center; gap:8px; border:0; border-radius:8px;
-  background:none; color:var(--dim); font:inherit; font-size:1rem; margin:-7px -8px; padding:7px 8px;
+  background:none; color:var(--dim); font:inherit; font-size:1rem; padding:7px 8px;
   cursor:pointer; text-align:left;
 }
-.sb-foot-main:hover { background:var(--sidebar-hover); color:var(--text); }
 .sb-ver { flex:none; color:var(--faint); font-size:0.7857rem; }
 /* 常驻更新按钮：版本号旁，任何页面都能一键检查（与设置页 / 帮助菜单入口同 handler） */
 .sb-upd {
