@@ -2,6 +2,39 @@
 
 本文件记里程碑版本（Keep a Changelog 格式，中文）。逐提交的发布笔记由 `npm run docs:notes` 从 git 历史生成，进文档站 `release-notes` 页。
 
+## [7.5.0](https://github.com/AuroraAeon/AuroraAgent/compare/v7.4.0...v7.5.0) (2026-09-30)
+
+
+### Features
+
+* **agent:** 事件钩子——脚本在 turn 各阶段自动触发（实验特性） ([84ee52f](https://github.com/AuroraAeon/AuroraAgent/commit/84ee52f181349908e41ee5a53b8a99f05a71af15))
+* **agent:** 会话全文检索——转录倒排索引 + BM25，侧栏搜索从标题扩到正文（本地化 Cline 会话搜索） ([0ca10b5](https://github.com/AuroraAeon/AuroraAgent/commit/0ca10b575198ef78b7d1c189c19819881f7ebc76))
+* **agent:** 压缩切点落在无悬空 tool_call 边界并按 token 预算投影 ([fe4f7a5](https://github.com/AuroraAeon/AuroraAgent/commit/fe4f7a53c7deb9c76c29aed723668acb773499cb))
+* **agent:** 同提供方内重试与 Loop 韧性补强（上下文溢出恢复 / 长度续写 / 中途发言） ([ecdfde7](https://github.com/AuroraAeon/AuroraAgent/commit/ecdfde7c9d6a3e383eb4c0157b5bc7e1939c0513))
+* **agent:** 声明式子代理——把常用子代理写成配置，模型经 task__&lt;名称&gt; 派发 ([8ca2482](https://github.com/AuroraAeon/AuroraAgent/commit/8ca24824fa4b7c2e092caa79a4f01bbdce4a0c9d))
+* **agent:** 文件新鲜度追踪——改文件前发现「它被外部动过」，并登记架构地图 ([11f089a](https://github.com/AuroraAeon/AuroraAgent/commit/11f089a70287e49266f3916f1117da82f1d5db94))
+* **agent:** 检查点——每个用户轮拍快照，可整体回滚工作区而对话不丢 ([69d1c33](https://github.com/AuroraAeon/AuroraAgent/commit/69d1c33734dbbafdd38c04c68b20a0ca2d71dbf2))
+* **agent:** 终端 /rules 家族——规则看得见、开得了关得上 ([da59b7f](https://github.com/AuroraAeon/AuroraAgent/commit/da59b7f76d456522cd1dfcbc3b6055f6b8c38689))
+* **agent:** 规则系统（用户指令层）——按路径条件注入的项目约定 ([cb764df](https://github.com/AuroraAeon/AuroraAgent/commit/cb764df9ffbc1cf804796729cb4b03501bbfde8f))
+* **llm:** 提示缓存——按提供方能力声明插 cache_control / prompt_cache_key 断点（本地化 Cline prompt caching） ([d758870](https://github.com/AuroraAeon/AuroraAgent/commit/d7588701fcc506063d521cd8eceb325945e06a82))
+* **web:** 上下文窗口占用进度与压缩分隔行四态（本地化 Cline 上下文计量） ([050ae00](https://github.com/AuroraAeon/AuroraAgent/commit/050ae007d42568a5041ff2926378f1ccd575cb2d))
+* **web:** 侧栏搜索打到转录全文——输入即检索，命中行带原文片段 ([a25cc4e](https://github.com/AuroraAeon/AuroraAgent/commit/a25cc4eb4e3f2d6334d676f03c051a5f48033448))
+* **web:** 划词引用——转录里选区浮出引用钮，把原文以引用块送进输入框 ([e8a674d](https://github.com/AuroraAeon/AuroraAgent/commit/e8a674dc522493c823d00859fa15140a56b9b596))
+* **web:** 工具卡补子代理执行列表与钩子执行行（四态只来自看得见的信号） ([da84f4c](https://github.com/AuroraAeon/AuroraAgent/commit/da84f4c378dea1d17025c1658f0d13df7d25b4e0))
+* **web:** 提及扩「问题」与「命令」两类观察 ([999f865](https://github.com/AuroraAeon/AuroraAgent/commit/999f865ce472ce4e276bfa2b9c422bf6a6a794e7))
+* **web:** 每用户轮「回滚到此」——先看预览再决定范围 ([76fe315](https://github.com/AuroraAeon/AuroraAgent/commit/76fe31537bee0fcbe7bf9ec81df714706256ae8f))
+* **web:** 用量面板透出提示缓存命中 / 写入 / 命中率 ([092f27e](https://github.com/AuroraAeon/AuroraAgent/commit/092f27e91f70515768639fa7b5c07e04d0826c10))
+
+
+### Bug Fixes
+
+* **agent:** 检查点历史读取——sessions.get 返回 {meta, records}，别把外层壳传给 readCheckpointHistory ([3908b71](https://github.com/AuroraAeon/AuroraAgent/commit/3908b713e6baf747170098b6c3325b9747066106))
+
+
+### Performance Improvements
+
+* **agent:** 检索工具改走 ripgrep，未安装时干净回退纯 JS 遍历 ([6cb95d3](https://github.com/AuroraAeon/AuroraAgent/commit/6cb95d334b6f6182650b1338242291cea5d2c22f))
+
 ## [7.4.0](https://github.com/AuroraAeon/AuroraAgent/compare/v7.3.2...v7.4.0) (2026-09-30)
 
 
