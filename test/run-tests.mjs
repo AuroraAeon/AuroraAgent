@@ -3,7 +3,8 @@
  * 运行: npm test
  */
 import { spawn } from 'node:child_process';
-import { writeFileSync, mkdtempSync, rmSync, existsSync, appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { writeFileSync, mkdtempSync, rmSync, existsSync, appendFileSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { turnCheckpointPath, readTurnCheckpoint, writeTurnCheckpoint, clearTurnCheckpoint, planTurnRecovery, isSafeTurnId } from '../util/agent/turn-checkpoint.mjs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,6 +55,7 @@ import { runSkillsTests } from './skills.mjs';
 import { runApiShapesTests } from './api-shapes.mjs';
 import { runTitleTests } from './title.mjs';
 import { runGoalTests } from './goal.mjs';
+import { runCodemodeTests } from './codemode.mjs';
 import { completePrefix, SideSession } from '../util/agent/side-session.mjs';
 import { TurnQueue, newOpId } from '../util/agent/queue.mjs';
 import { JobStore, JobValidationError, computeNextRunAt } from '../util/jobs/store.mjs';
@@ -62,10 +64,12 @@ import { parseCron, nextCronRun, isValidCron } from '../util/jobs/cron-expr.mjs'
 import { createCronRuntime } from '../util/agent/cron-tool.mjs';
 import { formatJobLines, parseCronArg, parseScheduleText, pickJob } from '../util/agent/cron-cmd.mjs';
 import { parseQueueArg, formatQueueLines, pickQueueItem } from '../util/agent/queue-cmd.mjs';
+import { formatUpdateLines } from '../util/agent/update-cmd.mjs';
 import { runComputer, createComputerRuntime } from '../util/agent/computer.mjs';
 import { searchWorkspaceFiles } from '../util/agent/files.mjs';
 import { readWorkspaceInfo, readGitBranch } from '../util/workspace.mjs';
 import { TITLE_MAX_TOKENS } from '../util/agent/title-model.mjs';
+import { loadExtensions, approveExtension, revokeExtension, extensionTools, extensionDir, listExtensionFiles, loadExtensionTrust, trustKey, validateExtensionModule, EXT_TOOL_PREFIX } from '../util/agent/extensions.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MOCK_PORT = 18901;
@@ -137,6 +141,7 @@ await runTuiComponentTests(test, assert, eq);
   await runApiShapesTests(test, assert, eq);
 await runTitleTests(test, assert, eq);
 await runGoalTests(test, assert, eq);
+await runCodemodeTests(test, assert, eq);
 await runGuardTests(test, assert);
 
 // ---------- 单元测试: 侧边对话（/btw） ----------
@@ -726,15 +731,45 @@ await test('工具集：shell 执行、退出码与超时终止', async () => {
   try {
     const ok = await getTool('shell').run({ command: 'echo 你好' }, ctx);
     assert(ok.includes('退出码: 0') && ok.includes('你好'), 'echo 应成功');
+    assert(ok.includes('耗时 '), '回包应带 wall time（移植 pi bash.ts 口径）');
     const bad = await getTool('shell').run({ command: 'exit 3' }, ctx);
     assert(bad.includes('退出码: 3'), '退出码应透传');
     const slow = await getTool('shell').run({ command: 'sleep 8', timeout_seconds: 5 }, ctx);
     assert(slow.includes('已超时终止'), '超时应终止并标注');
+    // 进程组杀整树（移植 pi killProcessTree）：zsh -lc 'sleep 4 && touch marker' 超时被杀后，
+    // shell 自己的后代不得残留成孤儿——macOS 没有进程树工具，detached + 杀组是最简做法
+    const marker = join(ws, 'orphan-marker');
+    // 注意 timeout_seconds 有 5 秒下限钳制（工具侧 Math.max(5, …)），故用 6 秒命令配 5 秒超时
+    const tree = await getTool('shell').run({ command: `sleep 6 && touch ${marker}`, timeout_seconds: 5 }, ctx);
+    assert(tree.includes('已超时终止'), '嵌套命令也要超时终止');
+    await new Promise((r) => setTimeout(r, 2000));
+    assert(!existsSync(marker), '超时杀的是整个进程组，shell 后代不得残留');
+    // 用户中止（ctx.signal 预置 aborted）：说停就真停，且回包与超时可区分
+    const stopped = new AbortController();
+    stopped.abort();
+    const stopOut = await getTool('shell').run({ command: 'sleep 5' }, { workspace: ws, signal: stopped.signal });
+    assert(stopOut.includes('已中止'), '用户中止应标注已中止');
     threwCheck: {
       let threw = false;
       try { await getTool('web_fetch').run({ url: 'ftp://x' }, ctx); } catch (e) { threw = e.code === 'bad_args'; }
       assert(threw, '非 http(s) URL 必须拒绝');
     }
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+await test('工具集：shell 大输出 spill 到临时文件（32KB 截断不丢全文）', async () => {
+  const ws = mkdtempSync(join(tmpdir(), 'mt-sh-spill-'));
+  const ctx = { workspace: ws };
+  try {
+    const r = await getTool('shell').run({ command: 'seq 1 30000' }, ctx);
+    assert(r.includes('已截断'), '超上限应截断');
+    const m = /全文在 (\/\S+?)（/.exec(r);
+    assert(m, '截断提示应带 spill 路径');
+    const full = readFileSync(m[1], 'utf8');
+    assert(full.length > r.length, 'spill 全文应长于回给模型的截断文本');
+    assert(full.startsWith('$ seq 1 30000'), 'spill 应从命令原文开始（含被截断区间）');
   } finally {
     rmSync(ws, { recursive: true, force: true });
   }
@@ -806,6 +841,42 @@ await test('todo 工具：增删完成与状态机', () => {
   let noCtx = false;
   try { todo.run({ action: 'list' }, {}); } catch (e) { noCtx = e.code === 'no_ctx'; }
   assert(noCtx, '缺会话上下文应拒绝');
+});
+
+await test('tool_search：BM25 检索未声明的 deferred 工具（中文 bigram 切词）', () => {
+  const ts = getTool('tool_search');
+  assert(ts, 'tool_search 应为内置工具');
+  // harness 注册：standard / ultimate 都要能发现 deferred 外部工具
+  assert(getHarness('standard').tools.includes('tool_search'), 'standard 应收录 tool_search');
+  assert(getHarness('ultimate').tools.includes('tool_search'), 'ultimate 应收录 tool_search');
+  const deferredTools = [
+    { name: 'read_file', description: '读取工作目录内的文件内容，支持 offset / limit 分段读', parameters: { type: 'object', properties: { path: { type: 'string', description: '文件路径' } }, required: ['path'] } },
+    { name: 'mcp__github__create_issue', description: '在 GitHub 仓库创建议题（issue），需要标题与正文', parameters: { type: 'object', properties: { title: { type: 'string', description: '议题标题' }, body: { type: 'string', description: '议题正文' } }, required: ['title'] } },
+    { name: 'mcp__db__run_query', description: '在数据库上执行 SQL 查询并返回结果行', parameters: { type: 'object', properties: { sql: { type: 'string', description: 'SQL 语句' } }, required: ['sql'] } },
+  ];
+  const ctxOf = { allTools: () => [...deferredTools.map((t) => ({ ...t, deferred: true })), { name: 'shell', description: '执行 shell 命令', parameters: { type: 'object' }, deferred: false }] };
+  const hitFile = ts.run({ query: '读取文件内容' }, ctxOf);
+  assert(hitFile.includes('read_file') && hitFile.includes('参数 Schema') && hitFile.includes('文件路径'), '中文描述应能检索到 read_file 并给出 schema');
+  const hitIssue = ts.run({ query: 'github issue' }, ctxOf);
+  assert(hitIssue.includes('mcp__github__create_issue'), '跨命名空间英文词应能命中');
+  const none = ts.run({ query: 'zzzzqqq 完全不存在的词' }, ctxOf);
+  assert(none.includes('未检索到'), '无命中给中文提示');
+  let threw = false;
+  try { ts.run({ query: '' }, ctxOf); } catch (e) { threw = e.code === 'bad_args'; }
+  assert(threw, '空 query 应 bad_args');
+  const noDeferred = ts.run({ query: '读文件' }, { allTools: () => [{ name: 'shell', description: '执行 shell 命令', parameters: { type: 'object' } }] });
+  assert(noDeferred.includes('没有可检索的工具'), '无 deferred 工具时明确告知');
+  // 缺 allTools / 坏形状不炸
+  assert(ts.run({ query: 'x' }, {}).includes('没有可检索的工具'), '缺 ctx 不应抛异常');
+  // LIMIT 生效：limit=1 只回一个
+  const one = ts.run({ query: '文件', limit: 1 }, ctxOf);
+  eq(one.split('\n').find((l) => l.startsWith('1. ')) !== undefined && !one.includes('2. '), true, 'limit=1 只返回一个');
+  // deferred 过滤接到请求侧：被标记的工具不进 schema，摘标记后立刻恢复（缓存键含标记位）
+  const extra = [{ name: 'x_tool', description: 'X', parameters: { type: 'object' }, deferred: true }];
+  eq(toolSchemas(['read_file', 'x_tool'], extra).length, 1, 'deferred 工具不进请求 tools[]（内置 read_file 仍声明）');
+  eq(toolSchemas(['read_file', 'x_tool'], extra)[0].function.name, 'read_file', '保留下来的应是 read_file');
+  delete extra[0].deferred;
+  eq(toolSchemas(['read_file', 'x_tool'], extra).length, 2, '摘掉标记后同批对象应恢复声明（缓存不陈旧）');
 });
 
 await test('edit_file：diff 结构化 extra 与紧凑文本', () => {
@@ -1225,6 +1296,152 @@ await test('MCP：HTTP 传输走 POST 并解析 JSON 响应', async () => {
   } finally { globalThis.fetch = realFetch; }
 });
 
+await test('MCP OAuth 2.1：401 挑战 → 发现链 → 授权码换令牌 → 重连 → 撤销', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mt-oauth-'));
+  const reg = new McpRegistry({ dataDir: dir });
+  reg.upsert({ id: 'remote', name: '远端', transport: 'http', url: 'https://mcp.test/rpc', oauth: { clientId: 'auroraagent', scope: 'tools:read' } });
+  eq(reg.servers[0].oauth.clientId, 'auroraagent', 'oauth 段必须随草稿落盘（否则用户填了 clientId 也白填）');
+  const hits = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => {
+    const u = String(url);
+    hits.push(u);
+    if (u.includes('/.well-known/oauth-protected-resource')) {
+      return new Response(JSON.stringify({ resource: 'https://mcp.test/mcp', authorization_servers: ['https://auth.test'] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (u.includes('/.well-known/oauth-authorization-server')) {
+      return new Response(JSON.stringify({ issuer: 'https://auth.test', authorization_endpoint: 'https://auth.test/authorize', token_endpoint: 'https://auth.test/token' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (u === 'https://auth.test/token') {
+      return new Response(JSON.stringify({ access_token: 'AT', refresh_token: 'RT', token_type: 'Bearer', expires_in: 3600, scope: 'tools:read' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    // MCP 端点：没令牌 401 + Bearer 挑战，有令牌才正常握手
+    const auth = (opts.headers || {}).Authorization || '';
+    if (!auth) {
+      return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'WWW-Authenticate': 'Bearer realm="mcp", resource_metadata="https://mcp.test/.well-known/oauth-protected-resource"' } });
+    }
+    const msg = JSON.parse(opts.body);
+    const result = msg.method === 'initialize'
+      ? { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: { name: 'oauth-mcp', version: '1' } }
+      : msg.method === 'tools/list' ? { tools: [{ name: 'ping', description: 'pong', inputSchema: { type: 'object', properties: {} } }] } : {};
+    return new Response(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  try {
+    // 未授权：401 挑战转成 「需要授权」 状态，不炸整个注册表
+    const first = await reg.refresh();
+    const row = first.find((x) => x.id === 'remote');
+    eq(row.connected, false, '未授权连不上');
+    eq(row.needsAuth, true, '应标出需要授权');
+    assert(row.oauth && row.oauth.authorized === false, '状态里应带未授权详情');
+    // 授权流程：start 给出带 PKCE 的 URL，坏 state 必须拒
+    const started = await reg.oauthStart('remote');
+    eq(started.ok, true, 'start 应成功');
+    assert(started.authorizationUrl.includes('code_challenge=') && started.authorizationUrl.includes('code_challenge_method=S256'), '授权 URL 必须带 PKCE S256');
+    assert(started.authorizationUrl.includes('client_id=auroraagent'), '授权 URL 带 clientId');
+    const badRes = await reg.oauthComplete('remote', 'code-1', 'wrong-state');
+    eq(badRes.ok, false, 'state 不匹配必须拒');
+    assert(String(badRes.error).includes('state'), '拒绝原因应点明 state');
+    const done = await reg.oauthComplete('remote', 'code-1', started.state);
+    eq(done.ok, true, '授权码交换应成功');
+    eq(done.oauth.authorized, true, '落盘后立即显示已授权');
+    eq(done.oauth.scope, 'tools:read', 'scope 应落库');
+    const tokenFile = join(dir, 'mcp-oauth.json');
+    eq(statSync(tokenFile).mode & 0o777, 0o600, '令牌库必须 0600（含 access_token）');
+    assert(readFileSync(tokenFile, 'utf8').includes('AT'), '令牌应落盘');
+    // 有令牌后重连成功，且请求真的带了 Authorization 头
+    const second = await reg.refresh();
+    const row2 = second.find((x) => x.id === 'remote');
+    eq(row2.connected, true, '带令牌应连上');
+    assert(!row2.needsAuth, '连上后不再需要授权');
+    assert(hits.some((u) => u.includes('/.well-known/oauth-authorization-server')), '应走过 RFC 8414 发现');
+    const revoked = await reg.oauthRevoke('remote');
+    eq(revoked.ok, true, '撤销应成功');
+    eq(reg.oauth.status('remote').authorized, false, '撤销后回到未授权');
+  } finally { globalThis.fetch = realFetch; rmSync(dir, { recursive: true, force: true }); }
+});
+
+await test('扩展系统：未批准不加载；批准按内容哈希；改文件即退回未信任', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mt-ext-'));
+  mkdirSync(join(dir, 'extensions'), { recursive: true });
+  const src = 'export default { name: "demo", tools: [{ name: "x", description: "扩展示例", parameters: { type: "object", properties: {} }, run: async () => "from-ext" }] };\n';
+  writeFileSync(join(dir, 'extensions', 'demo.mjs'), src);
+  eq(extensionDir(dir), join(dir, 'extensions'), '扩展目录 = <数据目录>/extensions');
+  let view = await loadExtensions(dir);
+  eq(view.extensions.length, 0, '未批准的扩展不得加载（供应链门）');
+  eq(view.untrusted.length, 1, '磁盘上应有这个待批准项');
+  eq(view.untrusted[0].file, 'demo.mjs', '待批准项带文件名');
+  eq(extensionTools(view.extensions).length, 0, '没加载就没有工具');
+  const approved = approveExtension(dir, 'demo.mjs');
+  eq(approved.ok, true, '批准应成功');
+  eq(approved.key, trustKey(readFileSync(join(dir, 'extensions', 'demo.mjs'))), '批准键 = 内容 sha256（不是路径）');
+  eq(statSync(join(dir, 'extensions-trust.json')).mode & 0o777, 0o600, '信任表必须 0600');
+  eq(Object.keys(loadExtensionTrust(dir)).length, 1, '信任表应有一条记录');
+  view = await loadExtensions(dir);
+  eq(view.extensions.length, 1, '批准后应加载');
+  const tools = extensionTools(view.extensions);
+  eq(tools.length, 1, '应产出一个工具');
+  eq(tools[0].name, 'ext__demo__x', '工具名 = ext__<扩展>__<工具>');
+  eq(tools[0].action, 'ext__demo__x', 'action 与名字一致');
+  assert(tools[0].description.includes('[扩展:demo]'), '描述应标注来源');
+  eq(await tools[0].run({}), 'from-ext', '扩展工具应真的能跑');
+  // 改了文件哈希就变：立刻退回未信任 —— 「批准过的扩展悄悄换了实现」在这里失效
+  writeFileSync(join(dir, 'extensions', 'demo.mjs'), src.replace('扩展示例', '改过了').replace('from-ext', 'evil'));
+  view = await loadExtensions(dir);
+  eq(view.extensions.length, 0, '文件被改动后必须退回未信任');
+  eq(view.untrusted.length, 1, '改动后的版本重新等待批准');
+  eq(view.untrusted[0].key !== approved.key, true, '新内容是新哈希');
+  approveExtension(dir, 'demo.mjs');
+  view = await loadExtensions(dir);
+  eq(view.extensions.length, 1, '重新批准后恢复');
+  // 信任表按「内容哈希」记账：文件改过后旧哈希成了孤儿条目，撤销它照样成功，
+  // 但不影响当前已批准版本（反过来，内容回退到批准过的版本会自动重新受信）
+  eq(revokeExtension(dir, approved.key).ok, true, '孤儿条目也可撤销');
+  view = await loadExtensions(dir);
+  eq(view.extensions.length, 1, '撤销旧哈希不影响当前已批准版本');
+  const nowKey = trustKey(readFileSync(join(dir, 'extensions', 'demo.mjs')));
+  eq(revokeExtension(dir, nowKey).ok, true, '按当前哈希撤销应成功');
+  view = await loadExtensions(dir);
+  eq(view.extensions.length, 0, '撤销后不再加载');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+await test('扩展系统：坏模块 fail-open 只跳过自己，扩展工具默认要权限', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mt-ext-'));
+  mkdirSync(join(dir, 'extensions'), { recursive: true });
+  writeFileSync(join(dir, 'extensions', 'good.mjs'), 'export default { name: "good", tools: [{ name: "ok", description: "好", parameters: { type: "object", properties: {} }, run: async () => "good" }] };\n');
+  writeFileSync(join(dir, 'extensions', 'broken.mjs'), 'throw new Error("导入即炸");\n');
+  writeFileSync(join(dir, 'extensions', 'badshape.mjs'), 'export default { name: "bad shape!", tools: [{ name: "y" }] };\n');
+  // 坏模块也要先批准才会进入加载路径（未批准的只算待批准，不算失败）
+  approveExtension(dir, 'good.mjs');
+  approveExtension(dir, 'broken.mjs');
+  approveExtension(dir, 'badshape.mjs');
+  const view = await loadExtensions(dir);
+  eq(view.extensions.length, 1, '好模块照常加载');
+  eq(view.errors.length, 2, '两个坏模块各报一条错');
+  assert(view.errors.every((e) => e.file && e.error), '错误必须带文件名与原因');
+  assert(view.errors.some((e) => e.file === 'broken.mjs'), '导入失败的应点名');
+  assert(view.errors.some((e) => e.file === 'badshape.mjs'), '契约不符的应点名');
+  // 路径禁锢：只认 extensions/ 下一层 .mjs
+  mkdirSync(join(dir, 'extensions', 'sub'), { recursive: true });
+  writeFileSync(join(dir, 'extensions', 'sub', 'deep.mjs'), 'export default { name: "deep", tools: [] };\n');
+  eq(listExtensionFiles(dir).includes('sub'), false, '子目录不进列表');
+  eq(approveExtension(dir, '../evil.mjs').ok, false, '穿越路径拒批准');
+  eq(approveExtension(dir, 'sub/deep.mjs').ok, false, '子目录路径拒批准');
+  eq(approveExtension(dir, 'evil.txt').ok, false, '非 .mjs 拒批准');
+  eq(approveExtension(dir, 'nope.mjs').ok, false, '不存在的文件拒批准');
+  // 契约校验：name / 工具名 / 重复名 / commands 形态
+  eq(validateExtensionModule(null, 'a').ok, false, '无默认导出拒');
+  eq(validateExtensionModule({ name: 'ok', tools: [{ name: 'a', run: () => {} }, { name: 'a', run: () => {} }] }, 'a').ok, false, '工具名重复拒');
+  eq(validateExtensionModule({ name: 'ok', commands: [{ name: 'x', run: () => {} }] }, 'a').ok, false, '命令名必须以 / 开头');
+  eq(validateExtensionModule({ name: 'ok', tools: [{ name: 'a', run: () => {} }] }, 'a').ok, true, '合法模块通过');
+  // policy：扩展跑在本进程内，与 MCP 同姿态默认 ask
+  eq(EXT_TOOL_PREFIX, 'ext__', '前缀常量');
+  eq(new PermissionPolicy(defaultRules(), { permissionMode: 'ask_when_needed' }).effective('ext__good__ok', 'x'), 'ask', '扩展工具默认要权限');
+  eq(new PermissionPolicy(defaultRules(), { permissionMode: 'never_ask' }).effective('ext__good__ok', 'x'), 'allow', 'never_ask 下放行');
+  eq(new PermissionPolicy([...defaultRules(), { action: 'ext__good__ok', resource: '*', effect: 'deny' }], { permissionMode: 'never_ask' }).effective('ext__good__ok', 'x'), 'deny', 'deny 仍然最严');
+  rmSync(dir, { recursive: true, force: true });
+});
+
 console.log('\nAgent Loop 单元测试（stub fetch）');
 
 /** 构造 SSE 响应（真实 Response + ReadableStream，loop 用 getReader 消费） */
@@ -1248,7 +1465,7 @@ const toolFrames = (name, args) => [
 ];
 
 /** 一次性 loop 运行环境：临时数据目录 + stub fetch + 事件收集 */
-async function runLoopOnce({ framesByCall, harness = getHarness('standard'), permission = 'allow', seedRecords = [], providerExtra = {}, input = '开始', planMode = false, planDecision = 'approve', sessionName = '', titleMode = 'local', agentProxy = '', wsFiles = {}, ignoreFile = '', sanitizeChildEnv, steer = null } = {}) {
+async function runLoopOnce({ framesByCall, harness = getHarness('standard'), permission = 'allow', seedRecords = [], providerExtra = {}, input = '开始', planMode = false, planDecision = 'approve', sessionName = '', titleMode = 'local', agentProxy = '', wsFiles = {}, ignoreFile = '', sanitizeChildEnv, steer = null, promptCacheWarm = null, turnId = null, before = null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'mt-loop-'));
   const ws = join(dir, 'workspace');
   mkdirSync(ws, { recursive: true });
@@ -1280,20 +1497,35 @@ async function runLoopOnce({ framesByCall, harness = getHarness('standard'), per
   };
   const controller = new AbortController();
   let permCalls = 0;
-  const result = await runAgentTurn({
-    store, usage, session, input, provider, model: 'm1', harness,
-    builtinPrice: { input: 2, output: 8 },
-    emit: (type, payload) => events.push({ type, ...payload }),
-    controller,
-    requestPermission: async () => { permCalls++; return permission; },
-    planMode,
-    titleMode,
-    agentProxy,
-    sanitizeChildEnv,
-    requestPlanDecision: async () => planDecision,
-    modelSteer: steer || undefined,
-    log: () => {},
-  }).finally(() => { globalThis.fetch = realFetch; });
+  let result;
+  // before：turn 开跑前的最后插手点（预写断点文件 / 预置外部状态都走这里）
+  if (typeof before === 'function') await before({ dir, ws, store, session });
+  try {
+    result = await runAgentTurn({
+      store, usage, session, input, provider, model: 'm1', harness,
+      builtinPrice: { input: 2, output: 8 },
+      promptCacheWarm,
+      ...(turnId ? { turnId } : {}),
+      emit: (type, payload) => events.push({ type, ...payload }),
+      controller,
+      requestPermission: async () => { permCalls++; return permission; },
+      planMode,
+      titleMode,
+      agentProxy,
+      sanitizeChildEnv,
+      requestPlanDecision: async () => planDecision,
+      modelSteer: steer || undefined,
+      log: () => {},
+    });
+    // 缓存续命在 turn 结束后延迟发（ttlMs 15s → 5s 后）：等账本出现 purpose=warm 行再撤 stub
+    //（「请求已发出」到「usage 落盘」之间还有流读取，只等请求数会 races 掉断言）
+    if (promptCacheWarm) {
+      const deadline = Date.now() + 9000;
+      while (Date.now() < deadline && !usage.read().some((r) => r.purpose === 'warm')) await new Promise((r) => setTimeout(r, 100));
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+  }
   return { dir, ws, store, usage, session, events, requests, result, permCalls };
 }
 
@@ -1836,6 +2068,174 @@ await test('Loop：触顶轮次上限以 max_rounds 收尾', async () => {
   eq(done.finishReason, 'max_rounds');
 });
 
+await test('Loop：usage 口径静默溢出时先压缩再重放本轮（移植 pi overflow.ts Case 2）', async () => {
+  const seed = [];
+  for (let i = 0; i < 6; i++) {
+    seed.push({ t: 'user', text: `历史提问 ${i}` });
+    seed.push({ t: 'assistant', text: `历史回答 ${i}` });
+  }
+  const { events, requests, result } = await runLoopOnce({
+    providerExtra: { capacity: { contextWindow: 200000 } },
+    seedRecords: seed,
+    framesByCall: (n) => (n === 0
+      ? [
+        { choices: [{ index: 0, delta: { content: '溢出轮内容' } }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 198500, completion_tokens: 5 } },
+      ]
+      : textFrames(n === 1 ? '压缩摘要' : '压缩后重放的终稿')),
+  });
+  assert(events.some((e) => e.type === 'context_compression_started'), '溢出后应触发一次压缩');
+  eq(requests.length, 3, '调用序应为 溢出轮 → 压缩 → 重放');
+  eq(result.text, '压缩后重放的终稿', '终稿应来自重放轮（溢出轮内容整轮作废）');
+  const last = requests.at(-1);
+  assert(last.body.messages.some((m) => m.role === 'system' && String(m.content).includes('压缩摘要')), '重放请求应带压缩摘要');
+});
+
+await test('Loop：length 早退（产出远低于上限）时先压缩再重放而非无脑续写（移植 pi isRecoverableLength）', async () => {
+  const seed = [];
+  for (let i = 0; i < 6; i++) {
+    seed.push({ t: 'user', text: `历史提问 ${i}` });
+    seed.push({ t: 'assistant', text: `历史回答 ${i}` });
+  }
+  const { requests, result } = await runLoopOnce({
+    providerExtra: { capacity: { contextWindow: 200000 }, maxTokens: 100 },
+    seedRecords: seed,
+    framesByCall: (n) => (n === 0
+      ? [
+        { choices: [{ index: 0, delta: { content: '半截回答' } }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: 'length' }], usage: { prompt_tokens: 10, completion_tokens: 5 } },
+      ]
+      : textFrames(n === 1 ? '压缩摘要' : '压缩后重放的终稿')),
+  });
+  eq(requests.length, 3, '调用序应为 截断轮 → 压缩 → 重放');
+  eq(result.text, '压缩后重放的终稿', '终稿应来自重放轮');
+  const last = requests.at(-1);
+  const sys = last.body.messages.filter((m) => m.role === 'system').map((m) => String(m.content)).join('\n');
+  assert(!sys.includes('【续写要求】'), '上下文挤占走向不该带续写提示（续写只会再被截断）');
+  assert(sys.includes('压缩摘要'), '重放请求应带压缩摘要');
+});
+
+await test('Loop：产出顶上限的真截断仍走续写路径（可恢复长度判定不误吃）', async () => {
+  const { requests, result } = await runLoopOnce({
+    providerExtra: { maxTokens: 100 },
+    framesByCall: (n) => (n === 0
+      ? [
+        { choices: [{ index: 0, delta: { content: '前半' } }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: 'length' }], usage: { prompt_tokens: 10, completion_tokens: 100 } },
+      ]
+      : textFrames('续写后半')),
+  });
+  eq(result.text, '前半续写后半', '终稿应为原文与续写拼接');
+  const last = requests.at(-1);
+  const sys = last.body.messages.filter((m) => m.role === 'system').map((m) => String(m.content)).join('\n');
+  assert(sys.includes('【续写要求】'), '真截断应带续写提示');
+});
+
+await test('Loop：提示缓存续命只在经济学划算且配置开启时发同前缀 1-token 请求（移植 pi cache-warmer）', async () => {
+  const providerExtra = { capacity: { supportsPromptCache: true } };
+  // 缺省关：不动一个字节的老行为
+  const off = await runLoopOnce({ providerExtra, framesByCall: [textFrames('答')] });
+  eq(off.requests.length, 1, '缺省不续命：turn 只有一次真实请求');
+  const on = await runLoopOnce({
+    providerExtra,
+    promptCacheWarm: { enabled: true, ttlMs: 15000 },
+    framesByCall: [[
+      { choices: [{ index: 0, delta: { content: '答' } }] },
+      { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 100_000, completion_tokens: 5 } },
+    ]],
+  });
+  eq(on.requests.length, 2, '开启后续命应多发一次请求');
+  eq(on.requests[1].body.max_tokens, 1, '续命请求 max_tokens=1（pi 同款廉价回放）');
+  const warmRow = on.usage.read().find((r) => r.purpose === 'warm');
+  assert(warmRow, '续命应按 purpose=warm 单独记账');
+  eq(warmRow.inputTokens, 100_000, '续命记账取自上游 usage');
+  eq(warmRow.cost > 0, true, '续命成本照实入账');
+});
+
+await test('工具级断点：写 / 读 / 清与恢复计划（durable-lite）', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mt-tc-'));
+  const tid = 'op-123_abc';
+  // 没写过 → 读不到
+  eq(readTurnCheckpoint(dir, tid), null, '无断点文件应读为 null');
+  // 非法 turnId 一律当没有（防目录穿越）
+  for (const bad of ['', '../x', 'a'.repeat(65), 'a/b']) {
+    eq(readTurnCheckpoint(dir, bad), null, '非法 turnId 必须读不到：' + JSON.stringify(bad));
+    clearTurnCheckpoint(dir, bad); // 不得抛
+  }
+  writeTurnCheckpoint(dir, tid, { round: 3, assistant: { toolCalls: [{ id: 'c1', name: 'read_file', args: { path: 'a' } }] }, settled: [] });
+  const got = readTurnCheckpoint(dir, tid);
+  assert(got && got.v === 1, '断点应带版本号');
+  eq(got.round, 3, 'round 原样保留');
+  eq(got.assistant.toolCalls[0].name, 'read_file', '调用原样保留');
+  // 断点文件权限必须 0600（含 turnId 与工具参数）
+  const mode = statSync(turnCheckpointPath(dir, tid)).mode & 0o777;
+  eq(mode, 0o600, '断点文件应 0600');
+  // 结构损坏 / 版本不符 → 安静当没有
+  writeFileSync(turnCheckpointPath(dir, tid), '{ 坏 JSON');
+  eq(readTurnCheckpoint(dir, tid), null, '损坏 JSON 应读为 null');
+  writeTurnCheckpoint(dir, tid, { round: 1, assistant: { toolCalls: [] }, settled: [] });
+  writeFileSync(turnCheckpointPath(dir, tid), JSON.stringify({ v: 99, assistant: { toolCalls: [] }, settled: [] }));
+  eq(readTurnCheckpoint(dir, tid), null, '版本不符应读为 null');
+  // 恢复计划：有结果的跳过；settled 的跳过；其余待跑；转录缺 tool_call 记录的要补记录
+  const plan = planTurnRecovery({ v: 1, round: 2, settled: ['c2'], assistant: { toolCalls: [
+    { id: 'c1', name: 'shell', args: { command: 'ls' } },
+    { id: 'c2', name: 'shell', args: { command: 'pwd' } },
+    { id: 'c3', name: 'grep', args: { pattern: 'x' } },
+  ] } }, [
+    { t: 'tool_call', id: 'c1', name: 'shell', args: {} },
+    { t: 'tool_result', id: 'c1', name: 'shell', ok: true, output: 'a.txt' },
+    { t: 'tool_call', id: 'c2', name: 'shell', args: {} },
+  ]);
+  eq(plan.skipped, 2, '有结果与已 settled 的各跳一个');
+  eq(plan.round, 2, 'round 透出供日志');
+  eq(plan.pending.map((c) => c.id).join(','), 'c3', '只剩 c3 待跑');
+  eq(plan.pending[0].needsRecord, true, '转录里没有 c3 的 tool_call 记录 → 需补记录');
+  clearTurnCheckpoint(dir, tid);
+  eq(existsSync(turnCheckpointPath(dir, tid)), false, '清除后文件应消失');
+});
+
+await test('Agent turn：断点恢复只补跑未完成的工具，不重跑已完成批（durable-lite）', async () => {
+  const tid = 'resume-op-1';
+  // 模拟上一进程：assistant 想跑两个 shell；第一个已落 tool_result，第二个只落了 tool_call 记录。
+  // 预写必须走 before（runLoopOnce 自己建目录，测试里另外建的 dir 不是它那个）
+  const { store: st2, session, events, requests, result, dir } = await runLoopOnce({
+    turnId: tid,
+    seedRecords: [
+      { t: 'tool_call', id: 'call_a', name: 'shell', args: { command: 'cat done.txt' } },
+      { t: 'tool_result', id: 'call_a', name: 'shell', ok: true, output: 'done' },
+      { t: 'tool_call', id: 'call_b', name: 'shell', args: { command: 'cat todo.txt' } },
+    ],
+    wsFiles: { 'done.txt': 'done\n', 'todo.txt': 'todo\n' },
+    before: ({ dir: d }) => writeTurnCheckpoint(d, tid, { round: 1, assistant: { toolCalls: [
+      { id: 'call_a', name: 'shell', args: { command: 'cat done.txt' } },
+      { id: 'call_b', name: 'shell', args: { command: 'cat todo.txt' } },
+    ] }, settled: ['call_a'] }),
+    framesByCall: () => textFrames('补跑完成'),
+  });
+  const rows = st2.records(session.id);
+  const gotB = rows.find((r) => r.t === 'tool_result' && r.id === 'call_b');
+  assert(gotB, '未完成的调用应被补跑并落 tool_result');
+  assert(String(gotB.output).includes('todo'), '补跑结果应是真实输出');
+  eq(rows.filter((r) => r.t === 'tool_result' && r.id === 'call_a').length, 1, '已完成的调用不得重跑（不重复落结果）');
+  const started = events.filter((e) => e.type === 'tool_event' && e.phase === 'started').map((e) => e.toolId);
+  assert(!started.includes('call_a'), '已完成的调用不得再发 started 事件');
+  assert(started.includes('call_b'), '补跑的调用应发 started 事件');
+  eq(requests.length, 1, '恢复不重放模型轮：只有一次上游请求');
+  eq(result.text, '补跑完成', '终稿应来自恢复后的那一轮');
+  eq(existsSync(turnCheckpointPath(dir, tid)), false, 'turn 结束断点文件应被清除');
+  const tools = requests[0].body.messages.filter((m) => m.role === 'tool');
+  assert(tools.some((m) => m.tool_call_id === 'call_a'), '已完成调用的结果应在上下文里');
+  assert(tools.some((m) => m.tool_call_id === 'call_b'), '补跑调用的结果应在上下文里');
+});
+
+await test('Agent turn：无断点时 turnId 只是幂等键，行为与之前逐字节一致', async () => {
+  const a = await runLoopOnce({ turnId: 'fresh-op-1', framesByCall: () => textFrames('答') });
+  const b = await runLoopOnce({ framesByCall: () => textFrames('答') });
+  eq(a.requests.length, b.requests.length, '有无 turnId 请求数一致');
+  eq(a.result.text, b.result.text, '终稿一致');
+  eq(existsSync(turnCheckpointPath(a.dir, 'fresh-op-1')), false, '无旧断点不应留下文件');
+});
+
 await test('Loop：计划模式批准后进入执行（计划轮只读工具）', async () => {
   const { events, result, requests } = await runLoopOnce({
     framesByCall: (call) => (call === 0 ? textFrames('计划：先读后改') : textFrames('已按计划完成')),
@@ -2071,6 +2471,31 @@ await test('更新检查：走 GitHub latest、结果缓存 6 小时、失败不
   eq(refreshed.updateAvailable, false, '上游更低不误报有更新');
   eq(calls, 6);
   rmSync(dir, { recursive: true, force: true });
+});
+
+await test('update-cmd: /update 展示行（有更新 / 已最新 / 上游不更高 / 检查失败）', () => {
+  const up = formatUpdateLines({ ok: true, current: '7.4.0', latest: '7.5.0', updateAvailable: true, url: 'https://github.com/x/y/releases/tag/v7.5.0', publishedAt: '2026-09-30T00:30:40Z' });
+  eq(up[0], '发现新版本 v7.5.0（当前 v7.4.0）', '首行应讲清新旧版本');
+  assert(up[1].includes('2026') && up[1].includes('发布'), '应带发布日期');
+  assert(up[2].includes('https://github.com/x/y/releases/tag/v7.5.0'), '应给发布页链接');
+  assert(up.some((l) => l.includes('不会自动安装')), '应声明只告知不自动安装');
+  const latest = formatUpdateLines({ ok: true, current: '7.4.0', latest: '7.4.0', updateAvailable: false });
+  eq(latest.length, 1, '已最新只出一行');
+  eq(latest[0], '已是最新版本 v7.4.0');
+  const lower = formatUpdateLines({ ok: true, current: '8.0.0', latest: '7.9.0', updateAvailable: false });
+  assert(lower.some((l) => l.includes('不高于当前')), '上游更低应解释为什么不提示更新');
+  const bad = formatUpdateLines({ ok: false, current: '7.4.0', error: '网络不通' });
+  assert(bad[0].includes('检查更新失败') && bad[0].includes('网络不通'), '失败行应带原因');
+  assert(bad.some((l) => l.includes('限流')), '失败应提示限流可能');
+});
+await test('终端接线源码契约：/update 命令、版本唯一来源、强制重查', () => {
+  const term = readFileSync(join(__dirname, '..', 'util', 'agent', 'terminal.mjs'), 'utf8');
+  assert(term.includes("{ name: 'update'") && term.includes('检查新版本'), '终端应登记 /update 命令');
+  assert(term.includes("checkUpdate({ current: VERSION, dataDir, force: true })"), '/update 应强制重查（不走 6 小时缓存）');
+  assert(term.includes("from './update-cmd.mjs'"), '终端应经 update-cmd 纯函数层出展示行');
+  assert(term.includes("readFileSync(new URL('../../package.json', import.meta.url)"), '版本号应取 package.json（与 web.mjs 同源）');
+  const docs = readFileSync(join(__dirname, '..', 'docs-site', 'zh', 'reference', 'commands.md'), 'utf8');
+  assert(docs.includes('`/update`'), '文档站命令页应登记 /update');
 });
 
 // ---------- 单元测试: 消息队列（本地化 #3212 / #3220） ----------
@@ -2524,6 +2949,7 @@ try {
     const t = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'toast.tsx'), 'utf8');
     assert(t.includes('ToastViewport') && t.includes('useSyncExternalStore'), '应有 toast 视口与单例 store');
     assert(t.includes('toast-viewport') && t.includes('aria-live'), '视口应挂 aria-live 供读屏软件播报');
+    assert(t.includes("onFocus={() => setPaused(true)}") && t.includes('onBlur={() => setPaused(false)}'), '键盘聚焦进通知也应冻结计时，不能只剩悬停一路');
     assert(t.includes("role={t.level === 'error' ? 'alert' : 'status'}"), '错误通知应用 role=alert');
     assert(/VISIBLE_MAX = 4/.test(t) && t.includes('DEDUPE_WINDOW'), '应限同屏条数并对重复提示去重');
     assert(t.includes('items = items.map((t) => (t.id === hit.id') && !/hit\.repeat \+=/.test(t), '重复提示必须换新快照（useSyncExternalStore 靠引用变化重渲染），不能原地改');
@@ -3113,7 +3539,7 @@ try {
       assert(bodyCss.includes(decl), `思考展开内容应按 ZCode pt-3 / ml-2 / text-ui-base 声明 ${decl}`);
     }
   });
-  await test('更新检查源码契约：设置页入口、路由与缓存语义', () => {
+  await test('更新检查源码契约：设置页入口、侧栏常驻按钮、路由与缓存语义', async () => {
     const general = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'GeneralPanel.tsx'), 'utf8');
     assert(general.includes('checkUpdate(true)') && general.includes('检查更新'), '设置页应有检查更新入口');
     assert(general.includes('updateAvailable') && general.includes('查看发布页与安装包'), '发现新版本应给出去发布页的链接');
@@ -3124,6 +3550,19 @@ try {
     assert(upd.includes('CACHE_TTL_MS') && upd.includes('releases/latest'), '应有 6 小时缓存与 GitHub latest 查询');
     assert(upd.includes('FETCH_TIMEOUT_MS'), '查询应带超时，别让界面干等');
     assert(upd.includes('readCache(cachePath, current)') && upd.includes('j.current !== current'), '缓存必须按本地版本号作 key：本地版本一变，旧 latest 结论立刻作废');
+    // 侧栏常驻更新按钮：版本号旁任何页面可点（设置页与帮助菜单之外的第三入口）
+    const sidebar = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'Sidebar.tsx'), 'utf8');
+    assert(sidebar.includes('className="sb-upd"') && sidebar.includes('aria-label="检查更新"') && sidebar.includes('IconRefresh'), '侧栏版本号旁应有常驻更新按钮');
+    assert(sidebar.includes('checkingUpdate') && sidebar.includes('Promise.resolve(onCheckUpdate())'), '更新按钮应有忙态且等 handler Promise 落地');
+    const app = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'App.tsx'), 'utf8');
+    assert(app.includes('onCheckUpdate={checkUpdateNow}'), 'App 应把更新 handler 接进侧栏');
+    assert(app.includes('useCallback(() => checkUpdate(true).then('), 'checkUpdateNow 应返回 Promise（供忙态等待）');
+    const css = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'app.css'), 'utf8');
+    assert(css.includes('.sb-upd {') && css.includes('.sb-upd-spin'), '更新按钮应有样式与旋转忙态');
+    assert(css.includes('@media (prefers-reduced-motion: reduce) { .sb-upd-spin { animation:none; } }'), '减少动效时旋转应停');
+    const page = await (await fetch(`${BASE}/`)).text();
+    const js = await (await fetch(`${BASE}${/\/app\/assets\/[A-Za-z0-9._-]+\.js/.exec(page)[0]}`)).text();
+    assert(js.includes('sb-upd'), '构建产物应含侧栏更新按钮（改了 web-ui 忘了 build:web 会红）');
   });
   await test('设置弹层分级导航源码契约：左分类轨、懒挂载缓存与壳承担 section 标题', () => {
     const settings = readFileSync(join(__dirname, '..', 'web-ui', 'src', 'components', 'SettingsDialog.tsx'), 'utf8');
@@ -4536,6 +4975,63 @@ await test('POST /api/agent/sessions/:id/fork 复制历史到新会话，源会�
   await fetch(`${AGENT}/sessions/${f.id}`, { method: 'DELETE' });
 });
 
+await test('会话树：记录带 rid/parent 链，fork 支持从任意条目拉分支（p1-1）', async () => {
+  const s = await createAgentSession();
+  for (const text of ['第一个问题', '第二个问题']) {
+    const resp = await fetch(`${AGENT}/turn`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: s.id, input: text }),
+    });
+    await drainAgentStream(openAgentStream(resp));
+  }
+  const detail = await (await fetch(`${AGENT}/sessions/${s.id}`)).json();
+  assert(detail.records.length >= 4, '两轮 turn 应留下至少 4 条记录');
+  const rids = detail.records.map((r) => r.rid);
+  assert(rids.every(Boolean), '新记录都应带 rid（稳定记录 id）');
+  eq(detail.records[detail.records.length - 1].parent, rids[rids.length - 2], '末条的 parent 应指向上一条 rid');
+
+  const branchFrom = async (from) => (await (await fetch(`${AGENT}/sessions/${s.id}/fork`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(from === undefined ? {} : { from }),
+  })).json());
+  const br = await branchFrom(3);
+  assert(br.session && br.session.id !== s.id, '应返回新会话');
+  eq(br.session.name, '测试会话（分支）', '名字应加分支后缀');
+  eq(br.session.forkedFrom?.position, 3, 'meta 应记分支位置');
+  eq(br.session.forkedFrom?.records, detail.records.length, 'meta 应记源会话记录总数');
+  const bd = await (await fetch(`${AGENT}/sessions/${br.session.id}`)).json();
+  eq(bd.records.length, 3, '分支只含到第 3 条为止的前缀');
+  eq(bd.records[2].rid, detail.records[2].rid, '分支点前的 rid 链原样保留（祖先可溯）');
+
+  const br2 = await branchFrom(detail.records[1].rid);
+  const bd2 = await (await fetch(`${AGENT}/sessions/${br2.session.id}`)).json();
+  eq(bd2.records.length, 2, '按 rid 拉分支应截到该条为止');
+  const byRid = await (await fetch(`${AGENT}/sessions/${s.id}/fork`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: 'no-such-rid' }),
+  }));
+  eq(byRid.status, 400, '查无此 rid 应 400');
+  const over = await (await fetch(`${AGENT}/sessions/${s.id}/fork`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: 999 }),
+  }));
+  eq(over.status, 400, '越界序号应 400');
+
+  const cp = await branchFrom();
+  eq(cp.session.name, '测试会话（副本）', '缺省 from 仍是整卷复制（副本）');
+  const cpDetail = await (await fetch(`${AGENT}/sessions/${cp.session.id}`)).json();
+  eq(cpDetail.records.length, detail.records.length, '副本仍整体复制');
+
+  // 分支会话继续 turn：新村 tip 从 fork 点接上，rid 链不乱
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: br.session.id, input: '分支里的新问题' }),
+  });
+  await drainAgentStream(openAgentStream(resp));
+  const after = await (await fetch(`${AGENT}/sessions/${br.session.id}`)).json();
+  assert(after.records.length > 3, '分支会话应能继续追加');
+  eq(after.records[3].parent, after.records[2].rid, 'fork 后续首条的 parent 应接上分支点');
+  for (const id of [s.id, br.session.id, br2.session.id, cp.session.id]) await fetch(`${AGENT}/sessions/${id}`, { method: 'DELETE' });
+});
+
 await test('检查点：预览列出这一轮之后动过的文件，坏参数与无检查点各有说法', async () => {
   const s = await createAgentSession();
   // 检查点由 Loop 在真实 turn 开头拍（test/checkpoint.mjs 覆盖）；这里直接在会话文件里
@@ -5635,6 +6131,64 @@ await test('MCP 显示开关：停用后工具不进请求，再开即恢复；�
   await drainAgentStream(stream2);
   const del = await fetch(`${BASE}/api/mcp/servers/mock`, { method: 'DELETE' });
   eq((await del.json()).removed, 1, '删除应生效');
+});
+
+await test('扩展 REST 面：列出 / 批准 / 撤销，已批准的工具进请求顶层', async () => {
+  const extDir = join(tmpDataDir, 'extensions');
+  mkdirSync(extDir, { recursive: true });
+  writeFileSync(join(extDir, 'demo.mjs'), 'export default { name: "demo", tools: [{ name: "x", description: "扩展示例", parameters: { type: "object", properties: {} }, run: async () => "from-ext" }] };\n');
+  const listed = await (await fetch(`${BASE}/api/agent/extensions`)).json();
+  eq(listed.dir, extDir, '应回出扩展目录');
+  eq(listed.onDisk.length, 1, '磁盘上应看到这个文件');
+  eq(listed.loaded.length, 0, '未批准不得加载');
+  eq(listed.untrusted.length, 1, '应列出待批准项');
+  eq(listed.untrusted[0].file, 'demo.mjs', '待批准项带文件名');
+  assert(listed.untrusted[0].key && listed.untrusted[0].bytes > 0, '待批准项带哈希与大小');
+  // 未批准时扩展工具不进请求
+  const s0 = await createAgentSession();
+  const resp0 = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s0.id, input: 'USE_EXT 调用扩展工具' }),
+  });
+  await drainAgentStream(openAgentStream(resp0));
+  const sent0 = (mock.state.lastChatBody?.tools || []).map((t) => t.function?.name || t.name);
+  assert(!sent0.includes('ext__demo__x'), '未批准的扩展工具不得进请求');
+  // 批准（按内容哈希）后工具进入请求顶层 tools[]
+  const approved = await fetch(`${BASE}/api/agent/extensions/approve`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ file: 'demo.mjs' }),
+  });
+  eq(approved.status, 200, '批准应成功');
+  const after = await (await fetch(`${BASE}/api/agent/extensions`)).json();
+  eq(after.loaded.length, 1, '批准后应加载');
+  eq(after.loaded[0].name, 'demo', '扩展名透出');
+  eq(after.loaded[0].tools.join(','), 'x', '工具名透出');
+  eq(after.untrusted.length, 0, '没有待批准项了');
+  eq(after.trusted.length, 1, '信任表应有一条');
+  const s = await createAgentSession();
+  const resp = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s.id, input: 'USE_EXT 调用扩展工具' }),
+  });
+  await drainAgentStream(openAgentStream(resp));
+  const sent = (mock.state.lastChatBody?.tools || []).map((t) => t.function?.name || t.name);
+  assert(sent.includes('ext__demo__x'), '已批准的扩展工具应进入请求顶层 tools[]');
+  // 撤销后工具退出请求
+  const key = trustKey(readFileSync(join(extDir, 'demo.mjs')));
+  const revoked = await fetch(`${BASE}/api/agent/extensions/trust`, {
+    method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }),
+  });
+  eq(revoked.status, 200, '撤销应成功');
+  const gone = await (await fetch(`${BASE}/api/agent/extensions`)).json();
+  eq(gone.loaded.length, 0, '撤销后不再加载');
+  const s2 = await createAgentSession();
+  const resp2 = await fetch(`${AGENT}/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: s2.id, input: 'USE_EXT 调用扩展工具' }),
+  });
+  await drainAgentStream(openAgentStream(resp2));
+  const sent2 = (mock.state.lastChatBody?.tools || []).map((t) => t.function?.name || t.name);
+  assert(!sent2.includes('ext__demo__x'), '撤销后扩展工具应退出请求');
+  rmSync(extDir, { recursive: true, force: true });
 });
 
 await test('Agent turn：空输入 400、未知会话 404', async () => {

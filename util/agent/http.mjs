@@ -25,6 +25,8 @@ import { createJobsApi } from '../jobs/http.mjs';
 import { subscribeJobEvents, publishJobEvent } from '../jobs/bus.mjs';
 import { PERMISSION_MODES, TITLE_MODES, experimentalEnabled } from '../config.mjs';
 import { McpRegistry } from '../mcp/registry.mjs';
+import { parseCompactionConfig } from './context.mjs';
+import { loadExtensions, approveExtension, revokeExtension, listExtensionFiles, loadExtensionTrust, extensionTools, extensionDir } from './extensions.mjs';
 import { createHookRunner } from './hooks/index.mjs';
 import { createCheckpointRuntime, readCheckpointHistory } from './checkpoint.mjs';
 import { restoreCheckpoint, trimRecordsToTurn, filesTouchedAfter } from './checkpoint-restore.mjs';
@@ -63,6 +65,19 @@ export function createAgentApi(deps) {
   // 故障转移候选源：全部提供方（内置在前）；挑选时的同模型 / 有 Key / 排除已试 / 队列 / 熔断
   // 过滤都在 llm/failover.mjs 与 llm/circuit.mjs
   const failoverCandidates = providerStore ? () => providerStore.all() : null;
+  // 上下文压缩专用提供方（配置段 compaction：{ providerId, model }）：解析一次，turn 里直接用。
+  // 解析不出来（提供方被删 / 没 Key / 模型为空）就当没配——退回主力模型压缩，绝不因为一个
+  // 便宜模型配错就让整个会话压不了上下文
+  const resolveCompactionProvider = (cfgCompaction) => {
+    const c = parseCompactionConfig(cfgCompaction);
+    if (!c.providerId) return null;
+    let found = null;
+    try { found = providerStore ? providerStore.get(c.providerId) : null; } catch { found = null; }
+    if (!found) return null;
+    if (typeof found.apiKey === 'function' ? !found.apiKey() : !found.apiKey) return null;
+    if (!c.model) return null;
+    return { provider: found, model: c.model };
+  };
   // 熔断器与运行时状态（failover-state.mjs）：跨 turn 共享才有多请求记忆的意义
   const failoverState = deps.failoverState || null;
   const failoverQueue = providerStore ? () => providerStore.failoverQueueIds() : null;
@@ -201,13 +216,25 @@ export function createAgentApi(deps) {
    * 本轮请求的额外工具：MCP 工具 + cron 定时任务工具。
    * 都按 harness.tools 门控（tools.mjs 的 pickTools 只收 names 里的名字），minimal 自然收不进来。
    */
+  // 扩展系统（util/agent/extensions.mjs）：<数据目录>/extensions/*.mjs，按「文件 + 内容哈希」显式
+  // 批准后才加载。未批准的扩展只是躺在磁盘上，一个字节都不进请求。侧边对话同样不给：
+  // 它本来就不落盘、可查性差，再把第三方代码塞进去更说不清
+  let extensionCache = { at: 0, extensions: [], untrusted: [], errors: [] };
+  const reloadExtensions = async ({ force = false } = {}) => {
+    if (!force && Date.now() - extensionCache.at < 5000) return extensionCache;
+    extensionCache = { at: Date.now(), ...(await loadExtensions(dataDir)) };
+    for (const e of extensionCache.errors) log('warn', '扩展加载失败（已跳过）', { file: e.file, error: e.error });
+    return extensionCache;
+  };
+  const extensionToolsFor = () => extensionTools(extensionCache.extensions);
   const extraToolsFor = (harness, side, sessionId) => {
     const extra = mcpTools();
-    // 侧边对话不派发子代理、不接管 goal，同样不给有持久副作用的定时任务工具与屏幕操作
     if (!side) {
       extra.push(...cronRuntimeFor(sessionId).tools);
       // computer_use 经 harness.tools 门控（仅 ultimate）；pickTools 自然把其余模式滤掉
       extra.push(computerRuntimeFor(sessionId));
+      // 扩展工具：默认 ask（policy 的 ext__* 规则），与 MCP 工具同姿态
+      extra.push(...extensionToolsFor());
     }
     return extra;
   };
@@ -268,10 +295,14 @@ export function createAgentApi(deps) {
     };
     // 队列接力的项带回自己的 opId，结算时按终态剪掉（跑完即从队列视图消失）
     const opId = String(body.opId || '').trim();
+    // 断点 turnId：外部 opId 合法时透传（进程被杀后同 opId 重放可续上未跑完的工具），
+    // Loop 内部会再过一次 isSafeTurnId 闸，非法值回退随机 UUID
+    const turnId = opId;
     let turnFailed = false;
     try {
       await runAgentTurn({
         store, usage, session: sessionMeta, input, inputSkill, provider, model, harness,
+        turnId,
         builtinPrice, skills,
         gen: { maxTokens: cfg.maxTokens, temperature: cfg.temperature, thinkingOn: body.thinking !== false },
         emit, controller, permissionMode, planMode, titleMode, extraTools: extraToolsFor(harness, side, sessionId),
@@ -279,6 +310,13 @@ export function createAgentApi(deps) {
         ignoreEnabled: cfg.ignore?.enabled !== false, sanitizeChildEnv: cfg.sanitizeChildEnv !== false,
         // 提示缓存档位（auto / off）：提供方声明 supportsPromptCache 时才真的插断点
         promptCache: cfg.promptCache,
+        // tool_search 阈值（配置段 toolSearch，缺省关）：外部工具超阈值时标 deferred 省 token
+        toolSearch: cfg.toolSearch,
+        // 代码模式（QuickJS 沙箱脚本）：配置段 codeMode，缺省开；每次脚本调用仍要过权限确认
+        codeMode: cfg.codeMode,
+        // 上下文压缩专用模型（配置段 compaction）：压缩是「读一大段写 300 字」的活，
+        // 用便宜模型做能省下这笔维护费的大头；没配 / 配错就当没配
+        compaction: resolveCompactionProvider(cfg.compaction),
         // hook 运行器（util/agent/hooks/）：按会话工作目录取（项目钩子与个人钩子的发现根不同）
         hooks: hookRunnerFor(sessionMeta.workspace),
         // 检查点运行时（util/agent/checkpoint.mjs）：侧边对话不传（不落盘无从回滚）
@@ -590,11 +628,15 @@ export function createAgentApi(deps) {
       return json(res, 200, { meta: sessions.patch(sessionMatch[1], changes) });
     }
 
-    // 派生会话：复制 meta + 转录到新会话（新 id / 新时间戳），源会话只读不动
+    // 派生会话：复制 meta + 转录到新会话（新 id / 新时间戳），源会话只读不动；
+    // p1-1：body 带 { from }（1-based 序号或记录 id）时从该条拉分支而不是整卷复制，坏值 400
     if (req.method === 'POST' && SESSION_FORK_RE.test(url)) {
-      const meta = sessions.fork(SESSION_FORK_RE.exec(url)[1]);
+      const body = await readBody(req, 4 * 1024);
+      let meta = null;
+      try { meta = sessions.fork(SESSION_FORK_RE.exec(url)[1], { from: body.from }); }
+      catch (e) { return json(res, 400, { error: { message: String(e.message || e) } }); }
       if (!meta) return json(res, 404, { error: { message: '会话不存在或已删除' } });
-      log('info', 'Agent 会话已派生', { from: SESSION_FORK_RE.exec(url)[1], sessionId: meta.id });
+      log('info', 'Agent 会话已派生', { from: SESSION_FORK_RE.exec(url)[1], sessionId: meta.id, branch: body.from ?? '' });
       return json(res, 200, { session: meta });
     }
 
@@ -655,7 +697,7 @@ export function createAgentApi(deps) {
       log('info', 'MCP 服务器已保存', { id: r.server.id });
       return json(res, 200, { ok: true, server: r.server, servers: mcp.status() });
     }
-    const mcpMatch = /^\/api\/mcp\/servers\/([A-Za-z0-9._-]{1,48})(\/probe|\/enabled)?$/.exec(url);
+    const mcpMatch = /^\/api\/mcp\/servers\/([A-Za-z0-9._-]{1,48})(\/probe|\/enabled|\/oauth|\/oauth\/complete)?$/.exec(url);
     if (mcpMatch && req.method === 'DELETE') {
       if (!mcp) return json(res, 404, { error: { message: 'MCP 为实验特性：设置 AURORAAGENT_EXPERIMENTAL_MCP=1 开启' } });
       const r = mcp.remove(mcpMatch[1]);
@@ -677,6 +719,61 @@ export function createAgentApi(deps) {
       await mcp.refresh();
       log('info', body.enabled ? 'MCP 服务器已启用' : 'MCP 服务器已停用', { id: r.server.id });
       return json(res, 200, { ok: true, server: r.server, servers: mcp.status() });
+    }
+    // OAuth 2.1（迁移 pi packages/mcp/src/oauth 的本地化下半场）：发起授权 / 粘贴授权码 / 撤销
+    if (mcpMatch && mcpMatch[2] === '/oauth' && req.method === 'POST') {
+      if (!mcp) return json(res, 404, { error: { message: 'MCP 为实验特性：设置 AURORAAGENT_EXPERIMENTAL_MCP=1 开启' } });
+      const r = await mcp.oauthStart(mcpMatch[1]);
+      if (!r.ok) return json(res, 400, { error: { message: r.error } });
+      log('info', 'MCP OAuth 授权已发起', { id: mcpMatch[1] });
+      return json(res, 200, r);
+    }
+    if (mcpMatch && mcpMatch[2] === '/oauth/complete' && req.method === 'POST') {
+      if (!mcp) return json(res, 404, { error: { message: 'MCP 为实验特性：设置 AURORAAGENT_EXPERIMENTAL_MCP=1 开启' } });
+      const body = await readBody(req, 4 * 1024);
+      const code = String(body.code || '').trim();
+      const state = String(body.state || '').trim();
+      if (!code) return json(res, 400, { error: { message: '缺少授权码 code' } });
+      const r = await mcp.oauthComplete(mcpMatch[1], code, state);
+      if (!r.ok) return json(res, 400, { error: { message: r.error } });
+      log('info', 'MCP OAuth 授权完成', { id: mcpMatch[1] });
+      return json(res, 200, { ...r, servers: mcp.status() });
+    }
+    if (mcpMatch && mcpMatch[2] === '/oauth' && req.method === 'DELETE') {
+      if (!mcp) return json(res, 404, { error: { message: 'MCP 为实验特性：设置 AURORAAGENT_EXPERIMENTAL_MCP=1 开启' } });
+      const r = mcp.oauthRevoke(mcpMatch[1]);
+      await mcp.refresh();
+      return json(res, 200, { ...r, servers: mcp.status() });
+    }
+    // ---------- 扩展 REST 面：列出 / 批准 / 撤销（util/agent/extensions.mjs） ----------
+    // 未批准的扩展只报「有这个文件、哈希是多少」，绝不加载、绝不入列
+    if (url === '/api/agent/extensions' && req.method === 'GET') {
+      const view = await reloadExtensions();
+      const trust = loadExtensionTrust(dataDir);
+      return json(res, 200, {
+        dir: extensionDir(dataDir),
+        trusted: Object.entries(trust).map(([key, v]) => ({ key, name: v.name, at: v.at })),
+        loaded: view.extensions.map((e) => ({ name: e.name, file: e.file, tools: (e.tools || []).map((t) => t.name), commands: (e.commands || []).map((c) => c.name) })),
+        untrusted: view.untrusted.map((u) => ({ file: u.file, key: u.key, bytes: u.bytes })),
+        errors: view.errors,
+        onDisk: listExtensionFiles(dataDir),
+      });
+    }
+    if (url === '/api/agent/extensions/approve' && req.method === 'POST') {
+      const body = await readBody(req, 4 * 1024);
+      const r = approveExtension(dataDir, body.file);
+      if (!r.ok) return json(res, 400, { error: { message: r.error } });
+      await reloadExtensions({ force: true });
+      log('info', '扩展已批准', { file: String(body.file || '') });
+      return json(res, 200, { ok: true, extensions: (await reloadExtensions()).extensions.map((e) => e.name) });
+    }
+    if (url === '/api/agent/extensions/trust' && req.method === 'DELETE') {
+      const body = await readBody(req, 4 * 1024);
+      const r = revokeExtension(dataDir, body.key);
+      if (!r.ok) return json(res, 400, { error: { message: r.error } });
+      await reloadExtensions({ force: true });
+      log('info', '扩展批准已撤销', { key: String(body.key || '') });
+      return json(res, 200, { ok: true });
     }    // ---------- Goal REST 面：一会话一目标；用户操作的优先级永远高于模型提案 ----------
     // GET 走路径带 sessionId（web.mjs 委派时已剥掉 query）；POST 与 turn 一致从 body 取
     // 输入区 @ 提及：只读工作目录内文件名搜索（web.mjs 委派时已剥 query，这里从 req.url 解析）

@@ -22,7 +22,7 @@ export const HARNESSES = [
     id: 'standard',
     label: 'Standard',
     summary: '日常任务：按需调用工具，多步推进并核对结果',
-    tools: ['read_file', 'list_dir', 'write_file', 'edit_file', 'shell', 'web_fetch', 'grep', 'glob', 'todo', 'task', 'create_goal', 'update_goal', 'get_goal', 'cron'],
+    tools: ['read_file', 'list_dir', 'write_file', 'edit_file', 'shell', 'web_fetch', 'grep', 'glob', 'todo', 'task', 'create_goal', 'update_goal', 'get_goal', 'cron', 'code', 'tool_search'],
     maxRounds: 24,
     compactRatio: 0.7,
     systemPrompt: [
@@ -35,6 +35,7 @@ export const HARNESSES = [
       '任务可拆成相互独立的子任务时用 task 派发子代理并行处理；子任务描述必须自含（子代理看不到当前会话）。',
       '用户明确要求「盯着一个目标直到完成」时用 create_goal 建立目标；目标进行中用 get_goal 查看用量，达成后用 update_goal 提案完成，确实受阻时提案受阻。不要从普通任务里推断目标。',
       '需要「到点自动做某事」时用 cron 工具建立定时任务（add 新建 / update 改写 / list 列出 / remove 删除 / run 立即跑 / get_time 读当前时间）；任务到期会在指定会话里把 prompt 作为用户消息跑一轮 Agent。',
+      '多步文件处理（同一种改动遍及多个文件、读出来筛一遍再汇总）用 code 工具写一段 JavaScript 编排工具调用，比逐个工具往返更省轮次；脚本只能调用已注入的工具，没有任何其它能力。',
       '回答使用与用户相同的语言，简洁、直接、可执行。',
     ].join('\n'),
   },
@@ -42,7 +43,7 @@ export const HARNESSES = [
     id: 'ultimate',
     label: 'Ultimate',
     summary: '复杂任务：充分探索、逐步验证、汇总结果',
-    tools: ['read_file', 'list_dir', 'write_file', 'edit_file', 'shell', 'web_fetch', 'grep', 'glob', 'todo', 'task', 'create_goal', 'update_goal', 'get_goal', 'cron', 'computer_use'],
+    tools: ['read_file', 'list_dir', 'write_file', 'edit_file', 'shell', 'web_fetch', 'grep', 'glob', 'todo', 'task', 'create_goal', 'update_goal', 'get_goal', 'cron', 'computer_use', 'code', 'tool_search'],
     maxRounds: 64,
     compactRatio: 0.6,
     systemPrompt: [
@@ -55,6 +56,7 @@ export const HARNESSES = [
       '找内容用 grep、找文件用 glob；多步任务用 todo 规划并逐项更新。',
       '用户明确要求「盯着一个目标直到完成」时用 create_goal 建立目标；目标进行中用 get_goal 查看用量，达成后用 update_goal 提案完成，确实受阻时提案受阻。不要从普通任务里推断目标。',
       '需要「到点自动做某事」时用 cron 工具建立定时任务（add 新建 / update 改写 / list 列出 / remove 删除 / run 立即跑 / get_time 读当前时间）；任务到期会在指定会话里把 prompt 作为用户消息跑一轮 Agent。',
+      '多步文件处理（同一种改动遍及多个文件、读出来筛一遍再汇总）用 code 工具写一段 JavaScript 编排工具调用：脚本在 QuickJS 沙箱里跑，唯一能力是调用注入的工具，嵌套调用与直接调用一样过权限确认。',
       '需要「看屏幕并点界面」时用 computer_use：先 observe 拿一张新鲜截图，按截图里的像素坐标批量提交 click / type / key / scroll / open_app；没有控件树，坐标判断全凭截图，界面一变就重新 observe。每次调用都会请用户确认，不要用它做批量重复劳动。',
       '回答使用与用户相同的语言，简洁、直接、可执行。',
     ].join('\n'),

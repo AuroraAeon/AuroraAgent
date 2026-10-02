@@ -1,6 +1,6 @@
 # AuroraAgent — 本地 Agent 运行时
 
-本地 Agent 运行时：终端 + 网页双客户端共用同一套 Agent Loop（会话 / 轮次 / 工具 / 权限 / 上下文压缩），后端零依赖（只需 Node 18+），可打包为独立 macOS Application。原来的「全球厂商最新大模型速测」能力完整保留为底座——`/api/chat` 流式对话、自定义提供方、用量账本一切照旧。
+本地 Agent 运行时：终端 + 网页双客户端共用同一套 Agent Loop（会话 / 轮次 / 工具 / 权限 / 上下文压缩），后端基于 Node 18+ 内置模块 + 一个 QuickJS wasm 运行时，可打包为独立 macOS Application。原来的「全球厂商最新大模型速测」能力完整保留为底座——`/api/chat` 流式对话、自定义提供方、用量账本一切照旧。
 
 **当前接入厂商：美团 LongCat-2.5-Preview**（2026-09-25 上线，万亿参数级 Agentic 模型，1M 上下文、128K 输出，OpenAI / Anthropic 双协议兼容）。Base URL、模型目录、Key 均为配置项，接入新厂商不改架构。
 
@@ -191,14 +191,14 @@ npm run publish     # 先构建前端（build:web）再打 .app 并重启常驻�
 npm run app:build   # 只构建不重启
 ```
 
-`app:build` 会**先删除目标 .app 再重建**，因此必须在 Bundle 之外的源码目录执行（脚本内置拒绝保护）。Bundle 内含 React 构建产物（`public/app/`），运行时**不依赖 node_modules**；`web-ui/` 源码与依赖只存在于开发副本。重建后按输出提示把服务重注册到 Bundle 内路径即可。
+`app:build` 会**先删除目标 .app 再重建**，因此必须在 Bundle 之外的源码目录执行（脚本内置拒绝保护）。Bundle 内含 React 构建产物（`public/app/`）与 QuickJS wasm 运行时（`node_modules/quickjs-wasi`）；`web-ui/` 源码与依赖只存在于开发副本。构建 Bundle 前先 `npm install`（只为取 `quickjs-wasi`）。重建后按输出提示把服务重注册到 Bundle 内路径即可。
 
 Bundle 结构：
 
 ```
 ~/Applications/AuroraAgent.app/Contents/
 ├── MacOS/AuroraAgent        # zsh 启动器（自定位目录，Bundle 可随意搬移）
-├── Resources/app/           # 全部后端代码（零依赖，Node 18+）
+├── Resources/app/           # 全部后端代码（Node 18+，含 node_modules/quickjs-wasi）
 │   ├── web.mjs              # 网页服务：/api/* 路由 + SSE 代理 + /app/ 静态服务
 │   ├── chat.mjs             # 终端客户端入口（可 import：loadConfig / streamChat）
 │   ├── check.mjs            # 连通性自检

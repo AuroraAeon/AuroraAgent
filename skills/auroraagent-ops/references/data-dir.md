@@ -16,6 +16,6 @@
 
 ## 依赖例外
 
-- 后端零依赖：只用 Node 18+ 内置模块，无构建步骤。
+- 后端依赖：以 Node 18+ 内置模块为主，唯一 npm 依赖是 `quickjs-wasi`（QuickJS wasm 沙箱，代码模式用）；无构建步骤。
 - 前端依赖仅限 `web-ui/`（react / react-dom / katex / vite / typescript / @vitejs/plugin-react / @types/*），构建产物随仓库提交在 `public/app/`，后端与 Bundle 运行时不接触 node_modules。
 - 文档站依赖例外仅 `docs-site/`（VitePress 唯一依赖），`docs-site/node_modules` 与构建产物不提交。

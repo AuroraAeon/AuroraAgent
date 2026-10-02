@@ -2,7 +2,9 @@
  * LLM 抽象层单元测试（util/llm/*）：工具归一化 + wire 转换 + 错误分类。
  */
 import { normalizeTool, toolAction, toOpenAIFunction, toAnthropicTool } from '../util/llm/tool.mjs';
-import { classifyStatus, classifyError, ERROR_KINDS, QUOTA_WORDING, upstreamHint, isContextOverflow } from '../util/llm/errors.mjs';
+import { classifyStatus, classifyError, ERROR_KINDS, QUOTA_WORDING, upstreamHint, isContextOverflow,
+  isUsageOverflow, isRecoverableLength, isTransientError, isNonRetryableWording } from '../util/llm/errors.mjs';
+import { sanitizeSurrogates, sanitizeSurrogatesDeep } from '../util/text.mjs';
 import { textOf, systemTextOf, toAnthropicContent, toAnthropicTurns } from '../util/llm/message.mjs';
 import { toolSchemas, anthropicToolSchemas, TOOLS } from '../util/agent/tools.mjs';
 import {
@@ -12,6 +14,14 @@ import {
 } from '../util/llm/failover.mjs';
 import { CircuitBreaker, CircuitRegistry, normalizeCircuitConfig, CIRCUIT_DEFAULTS } from '../util/llm/circuit.mjs';
 import { retryableSameProvider, RETRY_DEFAULTS, RETRY_ATTEMPT_LIMITS } from '../util/llm/provider.mjs';
+import { getCacheWarmingDelayMs, evaluateWarmEconomics, parsePromptCacheWarmConfig, PROMPT_CACHE_WARM_DEFAULTS } from '../util/llm/cache-warmer.mjs';
+import { withFileLock, withFileLockSync } from '../util/lock.mjs';
+import { parseWwwAuthenticate, isOAuthChallenge, pkcePair, oauthState, buildDiscoveryUrls, buildAuthorizationUrl, normalizeTokens, tokenExpired } from '../util/mcp/oauth.mjs';
+import { parseCompactionConfig, summaryFacts, droppedWorkSummary, compactionMessages } from '../util/agent/context.mjs';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 export async function runLlmTests(test, assert, eq) {
   console.log('\nLLM 抽象层单元测试');
@@ -146,6 +156,8 @@ export async function runLlmTests(test, assert, eq) {
     eq(isFailoverable({ kind: 'server' }), true, 'server 应可转移');
     eq(isFailoverable({ kind: 'network' }), true, 'network 应可转移');
     eq(isFailoverable(Object.assign(new TypeError('fetch failed'), {})), true, 'fetch 网络异常应可转移');
+    eq(isFailoverable(new Error('socket hang up')), true, '裸 Error 按瞬时措辞兜底可转移');
+    eq(isFailoverable({ kind: 'x', status: 501 }), false, 'HTTP 501 是请求自身问题，换路掩盖真实错误');
     for (const status of [400, 401, 402, 403, 404, 422]) {
       eq(isFailoverable({ kind: 'auth', status }), false, `HTTP ${status} 不应转移（配置 / 鉴权 / 计费问题）`);
     }
@@ -378,7 +390,10 @@ export async function runLlmTests(test, assert, eq) {
     eq(retryableSameProvider(mk('rate_limit')), true, '限流可原地重试');
     eq(retryableSameProvider(mk('server')), true, '服务端 5xx 可原地重试');
     eq(retryableSameProvider(mk('network')), true, '网络层失败可原地重试');
+    eq(retryableSameProvider(mk('timeout')), true, '首包 / 空闲超时（连接期零产出）可原地重试');
+    eq(retryableSameProvider(new Error('socket hang up')), true, '裸 Error 按瞬时措辞兜底可重试');
     eq(retryableSameProvider(new TypeError('fetch failed')), true, '尚未分类的 fetch 失败按网络层重试');
+    eq(retryableSameProvider(Object.assign(new TypeError('x'), { message: 'insufficient_quota: no funds' })), false, '披着 TypeError 外衣的额度措辞不重试');
     eq(retryableSameProvider(mk('aborted')), false, '用户主动中止不重试');
     eq(retryableSameProvider(Object.assign(new Error('x'), { name: 'AbortError' })), false, 'AbortError 不重试');
     eq(retryableSameProvider(mk('circuit_open')), false, '熔断开闸不重试');
@@ -400,7 +415,239 @@ export async function runLlmTests(test, assert, eq) {
     eq(isContextOverflow(mk(400, 'invalid api key')), false, '鉴权不是溢出');
     eq(isContextOverflow(mk(402, 'insufficient quota')), false, '计费不足不是溢出');
     eq(isContextOverflow(mk(429, 'rate limit exceeded, too many tokens')), false, '限流话术里带 token 也不算溢出');
+    eq(isContextOverflow(mk(400, 'ThrottlingException: Too many tokens, please wait')), false, 'Bedrock 限流措辞不误判成溢出（移植 pi 排除项）');
     eq(isContextOverflow(mk(500, 'context length exceeded')), false, '服务端 5xx 不按溢出恢复');
     eq(isContextOverflow(null), false, '空错误不判定');
+  });
+
+  await test('overflow: 用量口径静默溢出与可恢复长度判定（移植 pi overflow.ts Case 2/3）', () => {
+    eq(isUsageOverflow({ prompt_tokens: 199000, cachedTokens: 500 }, 200000), true, '输入+缓存顶到窗口 99% 即溢出');
+    eq(isUsageOverflow({ prompt_tokens: 199000, cachedTokens: 500 }, 0), false, '窗口未知无从判定');
+    eq(isUsageOverflow(null, 200000), false, 'usage 缺失无从判定');
+    eq(isUsageOverflow({ prompt_tokens: 100 }, 200000), false, '正常用量不误判');
+    eq(isUsageOverflow({ input_tokens: 199500 }, 200000), true, '兼容 input_tokens 字段名');
+    eq(isRecoverableLength('length', 10, 100), true, '产出远低于上限 = 上下文挤占，压缩可救');
+    eq(isRecoverableLength('length', 0, 100), true, 'output=0（上游静默截断）同样可救');
+    eq(isRecoverableLength('length', 100, 100), false, '产出已顶上限 = 真截断，该续写');
+    eq(isRecoverableLength('stop', 10, 100), false, '非 length 结束不判定');
+    eq(isRecoverableLength('length', 10, 0), false, '上限未知（自定义提供方未配）时不判定，行为同接入前');
+  });
+
+  await test('errors: 瞬时故障与额度措辞库（裸 Error 兜底，移植 pi）', () => {
+    eq(isTransientError(new Error('socket hang up')), true, 'socket 中断属瞬时故障');
+    eq(isTransientError(new Error('terminated')), true, '连接被终止属瞬时故障');
+    eq(isTransientError(new Error('insufficient_quota')), false, '额度措辞不重试');
+    eq(isTransientError(new Error('available balance is 0')), false, '余额措辞不重试');
+    eq(isTransientError(null), false, '空错误不判定');
+    eq(isNonRetryableWording('Monthly usage limit reached'), true, '订阅用量到顶不重试');
+    eq(isNonRetryableWording('boom'), false, '普通措辞不在拦截名单');
+  });
+
+  await test('text: sanitizeSurrogates 清未配对代理、保住成对 emoji', () => {
+    const emoji = 'Hello 🙂 World';
+    eq(sanitizeSurrogates(emoji), emoji, '成对代理（合法 emoji）原样保留');
+    eq(sanitizeSurrogates(`Text ${String.fromCharCode(0xD83D)} here`), 'Text  here', '未配对高代理被清除');
+    eq(sanitizeSurrogates(`Text ${String.fromCharCode(0xDE00)} here`), 'Text  here', '未配对低代理被清除');
+    eq(sanitizeSurrogates(sanitizeSurrogates('a\ud800b')), sanitizeSurrogates('a\ud800b'), '幂等');
+    eq(sanitizeSurrogates(42), 42, '非字符串原样返回');
+    const clean = 'no surrogate here';
+    eq(sanitizeSurrogates(clean), clean, '干净字符串走快路径');
+  });
+
+  await test('text: sanitizeSurrogatesDeep 在 stringify 前按值深度清洗（post-stringify 是空转）', () => {
+    const dirty = { a: 'x\ud800y', b: ['🙂', { c: 'z\udc00q' }], d: 1, e: null };
+    const deep = sanitizeSurrogatesDeep(dirty);
+    eq(deep.a, 'xy', '顶层字符串已清洗');
+    eq(deep.b[0], '🙂', '嵌套数组里的 emoji 保住');
+    eq(deep.b[1].c, 'zq', '嵌套对象字符串已清洗');
+    eq(deep.d, 1, '数字叶节点不动');
+    const serialized = JSON.stringify({ a: 'x\ud800y' });
+    eq(serialized.includes('\\ud800'), true, 'stringify 产物里 lone surrogate 是六字符转义文本');
+    eq(sanitizeSurrogates(serialized), serialized, '对转义文本跑码元正则 = 空转');
+    eq(JSON.stringify(sanitizeSurrogatesDeep({ a: 'x\ud800y' })).includes('\\ud800'), false, '先清洗再 stringify 才有效');
+  });
+
+  await test('cache-warmer：经济学判定与延迟（移植 pi core/cache-warmer.ts）', () => {
+    eq(getCacheWarmingDelayMs(300_000), 270_000, '5 分钟 TTL 在 90% 处续');
+    eq(getCacheWarmingDelayMs(15_000), 5_000, '短 TTL 保底 10 秒余量');
+    eq(getCacheWarmingDelayMs(8_000), undefined, 'TTL ≤10s 不续');
+    eq(getCacheWarmingDelayMs(NaN), undefined, '坏值不续');
+    // 20 万 token 输入：warm 成本 ≈命中价，省下的是「下一轮不必重写缓存」的差价
+    const warm = evaluateWarmEconomics({ promptTokens: 200_000, prices: { input: 2, output: 8, cacheRead: 0.2, cacheWrite: 2.5 } });
+    eq(warm.action, 'warm', '期望节省为正应续');
+    assert(warm.expectedSavings > 0 && warm.missCost > warm.warmCost, 'miss 差价应大于 warm 成本');
+    eq(warm.continuationProbability, 0.15, '闲置期打折');
+    eq(evaluateWarmEconomics({ promptTokens: 200_000, prices: { input: 2, output: 8, cacheRead: 0.2, cacheWrite: 2.5 }, phase: 'streaming' }).continuationProbability, 1, '运行期不打折');
+    // 微型输入：续命成本固定含 1 个 output token，expected 为负 → 不续
+    eq(evaluateWarmEconomics({ promptTokens: 10, prices: { input: 2, output: 8, cacheRead: 0.2, cacheWrite: 2.5 } }).action, 'stop', '小 prompt 不续');
+    const noPrice = evaluateWarmEconomics({ promptTokens: 1000, prices: {} });
+    eq(noPrice.action, 'stop', '无单价不续');
+    eq(noPrice.economicsAvailable, false, '经济学不可用');
+    eq(evaluateWarmEconomics({ promptTokens: 0, prices: { input: 2, output: 8, cacheRead: 0.2 } }).action, 'stop', '无 prompt 量不续');
+    // 配置段：缺省关 + 钳制
+    const dflt = parsePromptCacheWarmConfig(undefined);
+    eq(dflt.enabled, false, '缺省关');
+    eq(dflt.minExpectedSavings, PROMPT_CACHE_WARM_DEFAULTS.minExpectedSavings, '缺省门槛');
+    eq(dflt.ttlMs, PROMPT_CACHE_WARM_DEFAULTS.ttlMs, '缺省 TTL');
+    eq(parsePromptCacheWarmConfig({ enabled: true, minExpectedSavings: -3, ttlMs: 1 }).minExpectedSavings, 0, '负门槛钳到 0');
+    eq(parsePromptCacheWarmConfig({ enabled: 'yes' }).enabled, false, '只认布尔 true');
+    eq(parsePromptCacheWarmConfig({ ttlMs: 999999999 }).ttlMs, 3_600_000, 'TTL 上限 1 小时');
+  });
+
+  await test('lock：并发读改写一次不丢（lost update 归零）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mt-lock-'));
+    const file = join(dir, 'state.json');
+    writeFileSync(file, JSON.stringify({ n: 0 }));
+    const bump = async () => {
+      for (let i = 0; i < 50; i++) {
+        await withFileLock(file, () => {
+          const st = JSON.parse(readFileSync(file, 'utf8'));
+          st.n += 1;
+          writeFileSync(file, JSON.stringify(st));
+        });
+      }
+    };
+    await Promise.all([bump(), bump(), bump(), bump()]);
+    eq(JSON.parse(readFileSync(file, 'utf8')).n, 200, '四路并发各 50 次累加必须一次不丢');
+    eq(existsSync(`${file}.lock`), false, '锁用完必须释放');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  await test('lock：回调抛错仍释放，同进程重入不自己等自己', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mt-lock-'));
+    const file = join(dir, 's.json');
+    writeFileSync(file, '{}');
+    let err = null;
+    try { await withFileLock(file, () => { throw new Error('boom'); }); } catch (e) { err = e; }
+    assert(err && err.message === 'boom', '回调错误必须原样透出');
+    eq(existsSync(`${file}.lock`), false, '抛错后锁仍须释放');
+    // 重入：同步套同步、异步里套同步都不得等自己（否则白等 5s / 10s 再抛超时）
+    let inner = '';
+    withFileLockSync(file, () => { inner += 'a'; withFileLockSync(file, () => { inner += 'b'; }); inner += 'c'; });
+    eq(inner, 'abc', '同步嵌套必须直接放行');
+    let mixed = '';
+    await withFileLock(file, async () => { mixed += 'x'; withFileLockSync(file, () => { mixed += 'y'; }); mixed += 'z'; });
+    eq(mixed, 'xyz', '异步里套同步同路径锁也必须放行');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  await test('lock：等待期间仍互相排斥（不是谁都能直接穿过去）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mt-lock-'));
+    const file = join(dir, 'x.json');
+    writeFileSync(file, '{}');
+    const order = [];
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const holder = withFileLock(file, async () => { order.push('holder-in'); await gate; order.push('holder-out'); });
+    await new Promise((r) => setTimeout(r, 20));
+    const other = withFileLock(file, () => { order.push('other-in'); });
+    await new Promise((r) => setTimeout(r, 20));
+    eq(order.join(','), 'holder-in', '第二个任务必须在锁外等，不得并发进入');
+    release();
+    await Promise.all([holder, other]);
+    eq(order.join(','), 'holder-in,holder-out,other-in', '临界区必须严格串行');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  await test('mcp oauth：WWW-Authenticate 解析与挑战判定', () => {
+    const parsed = parseWwwAuthenticate('Bearer realm="mcp", error="invalid_token", resource_metadata="https://mcp.test/.well-known/oauth-protected-resource"');
+    assert(parsed && parsed.realm === 'mcp', '带引号的 auth-param 应解析');
+    assert(parsed.error === 'invalid_token', 'error 参数应解析');
+    assert(parsed.resource_metadata === 'https://mcp.test/.well-known/oauth-protected-resource', 'resource_metadata 应解析');
+    assert(parsed.scope === undefined, '没有的 param 不得编造');
+    eq(parseWwwAuthenticate('Basic realm="x"'), null, '非 Bearer 挑战返回 null');
+    eq(parseWwwAuthenticate(''), null, '空头返回 null');
+    eq(parseWwwAuthenticate('Bearer'), null, '没有任何 auth-param 返回 null');
+    eq(isOAuthChallenge(401, 'Bearer realm="mcp"'), true, '401 + Bearer 挑战 = 需要授权');
+    eq(isOAuthChallenge(403, 'Bearer realm="mcp"'), true, '403 同样算挑战');
+    eq(isOAuthChallenge(200, 'Bearer realm="mcp"'), false, '非 401/403 不算');
+    eq(isOAuthChallenge(401, ''), false, '没有挑战头不算');
+  });
+
+  await test('mcp oauth：PKCE / state / 发现链 URL / 授权 URL', () => {
+    const { verifier, challenge, method } = pkcePair();
+    eq(method, 'S256', 'PKCE 固定 S256');
+    assert(verifier.length >= 43 && verifier.length <= 128, `verifier 应 43-128 字符，实际 ${verifier.length}`);
+    eq(challenge, createHash('sha256').update(verifier).digest('base64url'), 'challenge = base64url(sha256(verifier))');
+    assert(oauthState().length >= 20, 'state 要有足够熵');
+    assert(pkcePair().verifier !== pkcePair().verifier, '每次授权都要新的 verifier');
+    const urls = buildDiscoveryUrls('https://auth.test/tenant/');
+    eq(urls[0].url, 'https://auth.test/.well-known/oauth-authorization-server/tenant', 'RFC 8414 oauth 优先');
+    eq(urls[0].type, 'oauth', '类型标注 oauth');
+    eq(urls[1].url, 'https://auth.test/.well-known/openid-configuration/tenant', 'OIDC 回退');
+    eq(urls[2].url, 'https://auth.test/tenant/.well-known/openid-configuration', '路径内嵌 OIDC');
+    eq(buildDiscoveryUrls('https://auth.test').length, 2, '根路径只两条');
+    const au = buildAuthorizationUrl({
+      authorizationEndpoint: 'https://auth.test/authorize', clientId: 'cid',
+      redirectUri: 'http://127.0.0.1:8765/callback', scope: 'tools:read', resource: 'https://mcp.test/mcp',
+      state: 'st', codeChallenge: challenge,
+    });
+    assert(au.includes(`code_challenge=${challenge}`), '授权 URL 带 challenge');
+    assert(au.includes('code_challenge_method=S256'), '授权 URL 声明 S256');
+    assert(au.includes('state=st') && au.includes('client_id=cid') && au.includes('scope=tools%3Aread'), '授权 URL 带 state / clientId / scope');
+    assert(au.includes('resource=https%3A%2F%2Fmcp.test%2Fmcp'), '授权 URL 带 resource（RFC 9728）');
+  });
+
+  await test('mcp oauth：令牌归一保留旧 refresh_token，过期判定留 30s 余量', () => {
+    const t1 = normalizeTokens({ access_token: 'at1', refresh_token: 'rt1', token_type: 'Bearer', expires_in: 3600, scope: 'a b' }, null, 0);
+    eq(t1.accessToken, 'at1', 'access_token 透出');
+    eq(t1.refreshToken, 'rt1', '新 refresh_token 采用');
+    eq(t1.expiresAt, 3600 * 1000, 'expires_in 换算成绝对时间');
+    const t2 = normalizeTokens({ access_token: 'at2', scope: 'a' }, t1, 0);
+    eq(t2.refreshToken, 'rt1', '缺 refresh_token（scope 收缩）时保留旧的');
+    eq(t2.scope, 'a', '新 scope 覆盖');
+    eq(t2.tokenType, 'Bearer', 'token_type 缺省沿用');
+    eq(normalizeTokens({ access_token: 'x' }, null, 0).expiresAt, 3600 * 1000, '缺 expires_in 当 1 小时');
+    let bad = null;
+    try { normalizeTokens({}); } catch (e) { bad = e; }
+    assert(bad && bad.message.includes('access_token'), '缺 access_token 必须抛错');
+    eq(tokenExpired(null), true, '无令牌按过期');
+    eq(tokenExpired({ accessToken: 'x' }), false, '未声明过期不猜，用到 401 再说');
+    eq(tokenExpired({ accessToken: 'x', expiresAt: 'abc' }), false, '非数字 expiresAt 当未声明');
+    eq(tokenExpired({ accessToken: 'x', expiresAt: 0 }), true, 'expiresAt 0 = 早已过期');
+    eq(tokenExpired({ accessToken: 'x', expiresAt: 100_000 }, 0), false, '远期有效');
+    eq(tokenExpired({ accessToken: 'x', expiresAt: 100_000 }, 69_999), false, '30s 余量外仍有效');
+    eq(tokenExpired({ accessToken: 'x', expiresAt: 100_000 }, 70_000), true, '进入 30s 余量即过期');
+    eq(tokenExpired({ accessToken: 'x', expiresAt: 100_000 }, 120_000), true, '已过期');
+    eq(tokenExpired({ expiresAt: 100_000 }, 0), true, '没有 access_token 按过期');
+  });
+
+  await test('compaction：parseCompactionConfig 钳制与坏值回落', () => {
+    const d = parseCompactionConfig(undefined);
+    eq(d.providerId, '', '缺省不指定提供方（继承当前）');
+    eq(d.model, '', '缺省不指定模型');
+    eq(parseCompactionConfig({ providerId: ' Cheap ', model: ' m ' }).providerId, 'Cheap', 'providerId 去空白');
+    eq(parseCompactionConfig({ providerId: 'bad/id', model: 'ok' }).providerId, '', '非法 providerId 回落空');
+    eq(parseCompactionConfig({ providerId: 'a'.repeat(49), model: 'ok' }).providerId, '', 'providerId 封顶 48');
+    eq(parseCompactionConfig({ model: 'a'.repeat(200) }).model.length, 120, 'model 封顶 120');
+    eq(parseCompactionConfig('x').model, '', '非对象按缺省');
+    eq(parseCompactionConfig(null).providerId, '', 'null 按缺省');
+  });
+
+  await test('compaction：facts 跨次累积与 4000 封顶，压缩输入与落盘同源', () => {
+    eq(droppedWorkSummary([]), '', '无 head 无事实');
+    const head = [
+      { t: 'tool_call', id: '1', name: 'read_file', args: { path: 'a.txt' } },
+      { t: 'tool_call', id: '2', name: 'edit_file', args: { path: 'b.txt' } },
+      { t: 'tool_call', id: '3', name: 'shell', args: { command: 'ls -la' } },
+      { t: 'tool_call', id: '4', name: 'grep', args: { pattern: 'TODO' } },
+    ];
+    const facts = droppedWorkSummary(head);
+    assert(facts.includes('a.txt'), '事实清单应含读过的文件');
+    assert(facts.includes('b.txt'), '事实清单应含改过的文件');
+    assert(facts.includes('ls -la') && facts.includes('TODO'), '事实清单应含命令与检索模式');
+    // 第二次压缩：上一次的 facts 就在 head[0]，必须原样续传（否则「上轮读过啥」彻底消失）
+    const second = droppedWorkSummary([{ t: 'summary', text: '摘要', facts }, ...head]);
+    assert(second.includes('（此前压缩已摘除的工作，原样续传）'), '第二次压缩应带续传标记');
+    assert(second.includes('a.txt'), '旧事实应保留');
+    assert(second.split('a.txt').length >= 2, '新事实与续传旧事实都在');
+    eq(summaryFacts({ t: 'summary', facts: 'x'.repeat(5000) }).length, 4000, 'facts 封顶 4000');
+    eq(summaryFacts({ t: 'user', text: 'x' }), '', '非 summary 记录无 facts');
+    eq(summaryFacts(null), '', 'null 安全');
+    // facts 由调用方算好透传：压缩输入与落盘记录永远是同一份
+    const msgs = compactionMessages([{ t: 'summary', text: '旧摘要', facts }], { facts });
+    assert(msgs.some((m) => m.role === 'user' && String(m.content).includes(facts.slice(0, 30))), '压缩输入应带注入的 facts');
+    const auto = compactionMessages(head);
+    assert(auto.some((m) => m.role === 'user' && String(m.content).includes('ls -la')), '不传 facts 时自行提取');
   });
 }

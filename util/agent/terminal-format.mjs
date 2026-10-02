@@ -1,6 +1,6 @@
 /**
  * 终端渲染纯助手：coordinator（terminal.mjs）与流式渲染器（terminal-turn.mjs）共用。
- * 只放无状态小函数，不 import 任何运行时（零依赖铁律）。
+ * 只放无状态小函数，不 import 任何运行时（纯函数，终端与测试共用同一份）。
  */
 
 // 工具词表（标签 / 图标键 / 资源摘要）单一真值源在 transcript.mjs，终端与 Web 共用

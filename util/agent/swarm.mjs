@@ -23,7 +23,9 @@ export function createSpawner(ctx) {
     runTurn, store, usage, provider, model, harness, skills = [], builtinPrice,
     emit, controller, requestPermission, permissionMode = 'ask_when_needed', titleMode = 'local',
     rules = [], gen = {}, extraTools = [], workspace = '', depth = 0, agentProxy = '', log = () => {},
-    sanitizeChildEnv = true, ignoreEnabled = true, promptCache = 'auto',
+    sanitizeChildEnv = true, ignoreEnabled = true, promptCache = 'auto', compaction = null,
+    // 代码模式开关随派发继承：父层能用沙箱脚本，子代理也能（权限口径一致，不出现「父关子开」）
+    codeMode = null,
     providerFailover = true, providerFailoverMaxAttempts, failoverCandidates = null,
     // 声明式子代理（util/agent/subagents.mjs）：专人专用的模型 / 工具集 / 系统提示
     agents = [], resolveAgentProvider = null, ruleToggles = {},
@@ -83,6 +85,8 @@ export function createSpawner(ctx) {
         agentProxy, // 子代理与父层共用同一条本机代理出站
         sanitizeChildEnv, ignoreEnabled, // 环境净化与忽略闸门开关随派发继承
         promptCache, // 提示缓存档位随派发继承（专人跑别的模型时按目标提供方口径决定是否插断点）
+        codeMode, // 代码模式开关随派发继承
+        compaction, // 压缩专用模型随派发继承（子代理上下文同样会长，省的是同一笔维护费）
         providerFailover, providerFailoverMaxAttempts, failoverCandidates, // 故障转移配置与候选源随派发继承
         log,
       });

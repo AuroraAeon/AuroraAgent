@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * AuroraAgent 终端客户端（零依赖，Node 18+）· 当前接入：LongCat-2.5-Preview
+ * AuroraAgent 终端客户端（Node 18+）· 当前接入：LongCat-2.5-Preview
  * 用法:
  *   node chat.mjs              # 交互式 Agent 会话（与网页共用同一套 Agent Loop）
  *   node chat.mjs -p "问题"     # 单次提问

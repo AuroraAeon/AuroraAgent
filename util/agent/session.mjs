@@ -18,6 +18,9 @@ export const DEFAULT_SESSION_NAME = '新会话';
 
 export class SessionStore {
   #recordsCache = new Map();
+  // 转录末条 id（tip）内存表：append 要给它挂 parent，又不能每次读全文件（O(n²)）。
+  // 写入口全部在本进程内（web / 终端各写各的会话），内存态即真值；replaceRecords / fork / remove 同步维护（p1-1 会话树）
+  #tips = new Map();
 
   constructor(dataDir, { warn = () => {}, onChange = null } = {}) {
     this.dir = join(dataDir, 'sessions');
@@ -99,13 +102,31 @@ export class SessionStore {
     return records.slice();
   }
 
-  /** 追加一条转录记录；写失败只告警不打断（与 usage.mjs 同策略） */
+  /**
+   * 追加一条转录记录；写失败只告警不打断（与 usage.mjs 同策略）。
+   * p1-1 会话树：每条记录落稳定 id（rid）与 parent（上一条 rid，首条 / 老转录为 null）——缺省即成线性链，
+   * 向后兼容旧文件。rid 不复用记录自身的 id 字段（tool_call 记录的 id 是模型调用 id，另有语义）。
+   */
   append(id, record) {
     this.#recordsCache.delete(String(id || ''));
     try {
-      appendFileSync(join(this.dir, `${id}.jsonl`), `${JSON.stringify({ at: new Date().toISOString(), ...record })}\n`);
+      const sid = String(id || '');
+      const rid = randomUUID();
+      const parent = this.#tipOf(sid);
+      appendFileSync(join(this.dir, `${sid}.jsonl`), `${JSON.stringify({ at: new Date().toISOString(), rid, parent, ...record })}\n`);
+      this.#tips.set(sid, rid);
       this.#notify('append', id, { record });
     } catch (e) { this.warn('会话转录写入失败', { id, error: String(e) }); }
+  }
+
+  /** 转录末条 rid：内存命中即返，否则读盘重建一次（老文件的记录没有 rid → null，之后新记录线性接续） */
+  #tipOf(id) {
+    const sid = String(id || '');
+    if (this.#tips.has(sid)) return this.#tips.get(sid);
+    const records = this.records(sid);
+    const tip = records.length ? records[records.length - 1].rid || null : null;
+    this.#tips.set(sid, tip);
+    return tip;
   }
 
   /** 整体重写转录（上下文压缩后：早期记录折叠为一条 summary），临时文件 + rename 原子落盘 */
@@ -115,6 +136,7 @@ export class SessionStore {
     try {
       const p = join(this.dir, `${sid}.jsonl`);
       writeFileAtomic(p, records.map((r) => JSON.stringify(r)).join('\n') + (records.length ? '\n' : '')); // tmp + fsync + rename + 0600
+      this.#tips.set(sid, records.length ? records[records.length - 1].rid || null : null);
       this.#notify('replace', sid, { records });
       return true;
     } catch (e) { this.warn('会话转录重写失败', { id: sid, error: String(e) }); return false; }
@@ -134,27 +156,53 @@ export class SessionStore {
    * 派生会话：把 meta 与全部转录复制到新会话（新 id、新时间戳、名字加「副本」后缀）。
    * 不复制 goal（目标按会话隔离，新会话从零开始）；用量汇总随转录一并保留——历史开销真实发生过。
    * 返回新 meta；源会话不存在返回 null。
+   *
+   * p1-1 会话树：传 { from } 时不再是整卷复制，而是「从任意条目拉分支」——只复制到该条为止的前缀
+   * （from 是 1-based 序号或记录 rid），名字加「（分支）」后缀，meta 记 forkedFrom 出处。
+   * 分支点前的 rid / parent 链原样保留（祖先可溯），分支点后的记录不与新村混合。from 越界 / 查无此条抛中文 Error。
    */
-  fork(id) {
+  fork(id, { from = '' } = {}) {
     const meta = this.#readMeta(String(id || ''));
     if (!meta) return null;
+    const records = this.records(meta.id);
+    const want = String(from ?? '').trim();
+    let kept = records;
+    let branch = null;
+    if (want) {
+      const pos = SessionStore.#branchPosition(records, want);
+      kept = records.slice(0, pos + 1);
+      branch = { sessionId: meta.id, from: want, position: pos + 1, recordId: kept[pos].rid || kept[pos].id || null, records: records.length };
+    }
     const now = new Date().toISOString();
     const next = {
       ...meta,
       id: randomUUID(),
-      name: `${meta.name || DEFAULT_SESSION_NAME}（副本）`.slice(0, 60),
+      name: `${meta.name || DEFAULT_SESSION_NAME}${branch ? '（分支）' : '（副本）'}`.slice(0, 60),
       createdAt: now,
       updatedAt: now,
+      ...(branch ? { forkedFrom: branch } : {}),
     };
     this.#writeMeta(next);
     this.#notify('fork', next.id, { meta: next });
-    const records = this.records(meta.id);
-    if (records.length) {
+    if (kept.length) {
       try {
-        writeFileSync(join(this.dir, `${next.id}.jsonl`), records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+        writeFileSync(join(this.dir, `${next.id}.jsonl`), kept.map((r) => JSON.stringify(r)).join('\n') + '\n');
       } catch (e) { this.warn('会话派生转录写入失败', { id: next.id, error: String(e) }); }
     }
+    this.#tips.set(next.id, kept.length ? kept[kept.length - 1].rid || null : null);
     return next;
+  }
+
+  /** from 归一：纯 1..N 整数按序号，其余按 rid 匹配；都不中抛中文原因（HTTP 面转 400） */
+  static #branchPosition(records, want) {
+    if (/^[1-9][0-9]*$/.test(want)) {
+      const n = Number(want);
+      if (n >= 1 && n <= records.length) return n - 1;
+      throw new Error(`分支位置越界：${want}（当前共 ${records.length} 条记录，可填 1..${records.length} 或某条记录 id）`);
+    }
+    const i = records.findIndex((r) => r.rid === want);
+    if (i < 0) throw new Error(`分支位置无效：${want}（可填 1..${records.length} 的序号或某条记录 id）`);
+    return i;
   }
 
   remove(id) {
@@ -165,6 +213,7 @@ export class SessionStore {
       const p = join(this.dir, f);
       if (existsSync(p)) { try { rmSync(p, { force: true }); ok = true; } catch (e) { this.warn('会话删除失败', { id: sid, error: String(e) }); } }
     }
+    this.#tips.delete(sid);
     this.#notify('remove', sid, {});
     return ok;
   }

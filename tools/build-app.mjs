@@ -8,10 +8,13 @@
  *   AuroraAgent.app/Contents/
  *     MacOS/AuroraAgent      启动器（已在运行就直接开浏览器，否则后台拉起服务）
  *     Resources/app/         全部代码（web.mjs / public / util / test / tools ...）
+ *     Resources/app/node_modules/quickjs-wasi/   QuickJS wasm 运行时（代码模式沙箱；构建前先 npm install）
  *     Resources/docs/        学术图与图表生成脚本
  *     AppIcon.icns           美团厂商图标（由 public/icon.svg 栅格化生成）
  *     Info.plist
  *   ~/Library/Application Support/AuroraAgent/   auroraagent.config.json + usage.jsonl（数据与 Bundle 解耦）
+ *
+ * 构建前先在源码目录 npm install（取 quickjs-wasi），否则 Bundle 内代码模式起不了沙箱。
  *
  * 构建后重新注册服务（指向 Bundle 内路径）：
  *   AURORAAGENT_DATA_DIR="$HOME/Library/Application Support/AuroraAgent" \
@@ -74,6 +77,16 @@ const bundledRg = join(ROOT, 'tools', 'bin', process.arch, 'rg');
 console.log(existsSync(bundledRg)
   ? `  代码与文档已拷贝（含捆绑 ripgrep: tools/bin/${process.arch}/rg）`
   : '  代码与文档已拷贝（未捆绑 ripgrep，检索将回退 PATH 或纯 JS 遍历）');
+// 代码模式的 QuickJS wasm 沙箱经 npm 依赖 quickjs-wasi 提供，Bundle 内必须自带——
+// require.resolve('quickjs-wasi/quickjs.wasm') 从 Resources/app 起解析，缺了它 Bundle 版
+// 的 code 工具直接起不了沙箱（AURORAAGENT_QUICKJS_WASM 是给用户改写盘路径的口子）
+const quickjsDir = join(ROOT, 'node_modules', 'quickjs-wasi');
+if (existsSync(join(quickjsDir, 'quickjs.wasm'))) {
+  cpSync(quickjsDir, join(BUNDLE_APP, 'node_modules', 'quickjs-wasi'), { recursive: true });
+  console.log('  已捆绑 QuickJS wasm 运行时: node_modules/quickjs-wasi');
+} else {
+  console.log('  未找到 node_modules/quickjs-wasi（先 npm install），Bundle 版代码模式将不可用');
+}
 
 // 3) 数据迁移（config / usage 不存在才拷贝，绝不覆盖已有数据；旧名 config 按新名落盘）
 for (const [from, to] of [['auroraagent.config.json', 'auroraagent.config.json'], ['usage.jsonl', 'usage.jsonl'], ['modeltester.config.json', 'auroraagent.config.json']]) {

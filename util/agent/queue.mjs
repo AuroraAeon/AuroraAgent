@@ -16,6 +16,7 @@
  */
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, unlinkSync } from 'node:fs';
 import { writeFileAtomic } from '../atomic.mjs';
+import { withFileLockSync } from '../lock.mjs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -74,7 +75,9 @@ export class TurnQueue {
       for (const item of list) if (LIVE_STATES.includes(item.state)) items.push(item);
     }
     try {
-      writeFileAtomic(this.file, JSON.stringify({ version: 1, items }, null, 2)); // tmp + fsync + rename + 0600
+      // 跨进程锁（util/lock.mjs）：队列是「读—改—整篇写回」，重启期新旧实例同时落盘会互相
+      // 抹掉对方的入队项（用户那句话就消失了）。原子写只治半截文件，不治丢更新
+      withFileLockSync(this.file, () => writeFileAtomic(this.file, JSON.stringify({ version: 1, items }, null, 2))); // tmp + fsync + rename + 0600
     } catch (e) {
       this.warn('queue 落盘失败（不影响本次入队）', { error: String(e) });
     }

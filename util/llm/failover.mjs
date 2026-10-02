@@ -15,6 +15,7 @@
  * 不重试 400/401/402/403/404/422：那是配置 / 鉴权 / 计费问题，换路只会掩盖真实错误。
  */
 import { normalizeCircuitConfig } from './circuit.mjs';
+import { isTransientError } from './errors.mjs';
 
 /** 默认参数：最多 3 次尝试（首次 + 2 次转移），切换前退避 300ms×attempt */
 export const FAILOVER_DEFAULTS = { enabled: true, maxAttempts: 3, backoffMs: 300 };
@@ -59,12 +60,15 @@ function clampInt(raw, fallback, min, max) {
 export function isFailoverable(err) {
   if (!err) return false;
   if (err.name === 'AbortError' || err.kind === 'aborted' || err.kind === 'circuit_open') return false;
-  if (err.kind === 'semantic' || err.kind === 'timeout') return true;
   const status = Number(err.status) || 0;
+  // 请求自身有问题的状态码（含 501 上游协议不支持）换路只会掩盖真实错误——先挡掉，
+  // 否则下方 5xx 通配会把 501 也放行（classifyOutcome 一直挡着，这边是对齐）
+  if (HEALTH_SAFE_STATUS.has(status)) return false;
+  if (err.kind === 'semantic' || err.kind === 'timeout') return true;
   if (status === 429 || status === 408) return true;
   if (status >= 500 && status <= 599) return true;
   if (err.kind === 'rate_limit' || err.kind === 'server' || err.kind === 'network') return true;
-  return err.name === 'TypeError'; // fetch 网络层失败（未分类时）：换一家可能只是本地链路问题
+  return isTransientError(err); // 裸 Error 按措辞兜底（fetch 之外的中断说法）
 }
 
 /**

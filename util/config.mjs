@@ -10,9 +10,14 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { parseGoalConfig } from './agent/goal/config.mjs';
 import { writeFileAtomic } from './atomic.mjs';
+import { withFileLockSync } from './lock.mjs';
 import { parseTuiConfig } from './tui/config.mjs';
 import { parseAgentProxy } from './proxy.mjs';
 import { parseIgnoreConfig } from './ignore.mjs';
+import { parseToolSearchConfig } from './agent/tool-search.mjs';
+import { parseCompactionConfig } from './agent/context.mjs';
+import { parseCodeModeConfig } from './agent/codemode/execute.mjs';
+import { parsePromptCacheWarmConfig } from './llm/cache-warmer.mjs';
 import { parseRulesConfig } from './agent/rules.mjs';
 import { parseFailoverConfig, parseFailoverSection, FAILOVER_DEFAULTS } from './llm/failover.mjs';
 
@@ -119,6 +124,14 @@ export function loadConfig({ warn } = {}) {
     promptCache: parsePromptCache(saved.promptCache),
     // 规则 toggle 表（用户显式关掉的规则不注入）：解析在 agent/rules.mjs，缺省全开
     rules: parseRulesConfig(saved),
+    // tool_search（外部工具超阈值时标 deferred 省 token）：解析在 agent/tool-search.mjs，缺省关
+    toolSearch: parseToolSearchConfig(saved.toolSearch),
+    // 提示缓存续命（turn 结束后用同前缀廉价请求把缓存条目续上）：解析在 llm/cache-warmer.mjs，缺省关
+    promptCacheWarm: parsePromptCacheWarmConfig(saved.promptCacheWarm),
+    compaction: parseCompactionConfig(saved.compaction),
+    // 代码模式（QuickJS 沙箱脚本）：开关 + 单次执行超时 + 输出 token 预算，解析在
+    // agent/codemode/execute.mjs，缺省开（工具本身仍要过 policy 权限确认）
+    codeMode: parseCodeModeConfig(saved.codeMode),
     providerFailover: failover.enabled,
     providerFailoverMaxAttempts: failover.maxAttempts,
     // failover 段原样透出（超时三件套 / 熔断五项 / 偏好有效期）：设置页读写与 saveConfig
@@ -163,6 +176,10 @@ export function saveConfig(cfg) {
     // 提示缓存档位：调用方未感知时保留盘上原值，防止其它设置保存把这一项抹掉
     promptCache: parsePromptCache(cfg.promptCache !== undefined ? cfg.promptCache : savedSection('promptCache')),
     rules: cfg.rules !== undefined ? parseRulesConfig(cfg.rules) : parseRulesConfig(savedSection('rules')),
+    toolSearch: cfg.toolSearch !== undefined ? parseToolSearchConfig(cfg.toolSearch) : parseToolSearchConfig(savedSection('toolSearch')),
+    promptCacheWarm: cfg.promptCacheWarm !== undefined ? parsePromptCacheWarmConfig(cfg.promptCacheWarm) : parsePromptCacheWarmConfig(savedSection('promptCacheWarm')),
+    compaction: cfg.compaction !== undefined ? parseCompactionConfig(cfg.compaction) : parseCompactionConfig(savedSection('compaction')),
+    codeMode: cfg.codeMode !== undefined ? parseCodeModeConfig(cfg.codeMode) : parseCodeModeConfig(savedSection('codeMode')),
     agentProxy: cfg.agentProxy !== undefined ? (parseAgentProxy(cfg.agentProxy) || '') : savedAgentProxy(),
     providerFailover: cfg.providerFailover !== undefined ? parseFailoverConfig(cfg, {}).enabled : savedFailover().providerFailover,
     providerFailoverMaxAttempts: cfg.providerFailoverMaxAttempts !== undefined
@@ -170,6 +187,9 @@ export function saveConfig(cfg) {
     failover: parseFailoverSection(cfg.failover),
   };
   if (!cfg.keyIsOverride) out.apiKey = cfg.apiKey;
-  // 原子落盘 + 0600：配置里可能有 API Key，半截文件与全局可读都是事故（util/atomic.mjs）
-  writeFileAtomic(join(resolveDataDir(), CONFIG_FILE), JSON.stringify(out, null, 2) + '\n');
+  // 原子落盘 + 0600：配置里可能有 API Key，半截文件与全局可读都是事故（util/atomic.mjs）。
+  // 外面再套跨进程锁（util/lock.mjs）：本函数是「读—改—整篇写回」，web 服务与终端同时保存时
+  // 后落的快照会把对方那一笔改动整篇抹掉（lost update），原子写只治半截不治丢更新
+  const configPath = join(resolveDataDir(), CONFIG_FILE);
+  withFileLockSync(configPath, () => writeFileAtomic(configPath, JSON.stringify(out, null, 2) + '\n'));
 }

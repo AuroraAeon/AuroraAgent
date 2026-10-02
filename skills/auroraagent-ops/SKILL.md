@@ -5,7 +5,7 @@ description: AuroraAgent 项目自身的操作规约：数据目录与机密文�
 
 # AuroraAgent 自身操作技能
 
-操作用户本机的 AuroraAgent（本地 Agent 运行时：终端 + 网页双客户端，后端零依赖）时遵循本规范。改代码前先读 `AGENTS.md`（项目宪法）与相关模块头注。
+操作用户本机的 AuroraAgent（本地 Agent 运行时：终端 + 网页双客户端）时遵循本规范。改代码前先读 `AGENTS.md`（项目宪法）与相关模块头注。
 
 ## 规则
 

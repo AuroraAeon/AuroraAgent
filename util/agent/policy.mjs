@@ -47,11 +47,18 @@ export function defaultRules() {
     { action: 'get_goal', resource: '*', effect: 'allow' },
     // cron 定时任务（util/agent/cron-tool.mjs）：到期会在目标会话跑一轮 Agent（花 token），必须问
     { action: 'cron', resource: '*', effect: 'ask' },
+    // code 沙箱脚本（util/agent/codemode/）：脚本本身在 VM 里跑，但它驱动的嵌套工具调用会真的
+    // 读写文件 / 执行命令，且一次脚本可能连串多次——每次调用都显式确认，与 computer_use 同类
+    { action: 'code', resource: '*', effect: 'ask' },
     // computer_use 屏幕操作（util/agent/computer.mjs）：会真的点击 / 输入 / 激活应用，每次调用都要用户显式确认
     { action: 'computer_use', resource: '*', effect: 'ask' },
     // MCP 工具（mcp__<服务器>__<工具>）默认 ask：外部系统副作用必须确认；
     // evaluate 对未命中规则本就回退 ask，此处显式声明便于阅读与 grep
     { action: 'mcp__*', resource: '*', effect: 'ask' },
+    // 扩展工具（ext__<扩展>__<工具>，util/agent/extensions.mjs）默认 ask：扩展运行在本进程内，
+    // 权限与本程序完全相同（能读会话转录 / API Key / 文件并代表用户动作）。它连 MCP 那种
+    // 「外部系统」的天然边界都没有，更没有理由默认放行。用户可在会话里选「总是允许」显式提权
+    { action: 'ext__*', resource: '*', effect: 'ask' },
     { action: 'write_file', resource: '*', effect: 'ask' },
     { action: 'edit_file', resource: '*', effect: 'ask' },
     { action: 'shell', resource: '*', effect: 'ask' },

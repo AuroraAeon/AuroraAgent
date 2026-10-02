@@ -5,7 +5,7 @@
  * 多提供方故障转移的判定与配置在 llm/failover.mjs，熔断器在 llm/circuit.mjs。
  */
 import { buildChatRequest, anthropicFrame, fetchUpstream } from '../wire.mjs';
-import { classifyStatus, upstreamHint } from './errors.mjs';
+import { classifyStatus, upstreamHint, isTransientError, isNonRetryableWording } from './errors.mjs';
 import {
   isFailoverable, failoverReason, pickFailoverCandidate, failoverBackoffMs, classifyOutcome,
   FAILOVER_DEFAULTS, FAILOVER_ATTEMPT_LIMITS,
@@ -21,13 +21,22 @@ export const RETRY_DEFAULTS = { attempts: 3, backoffMs: 500, maxBackoffMs: 8000 
 /** 原地重试次数钳制范围（1 = 关闭原地重试） */
 export const RETRY_ATTEMPT_LIMITS = { min: 1, max: 5 };
 
-/** 可原地重试判定：连接期零产出 + 限流 / 服务端 5xx / 网络层失败。
- *  中止（用户主动停止）与熔断开闸绝不重试；200 错误 envelope（semantic）留给换路判定。 */
+/** 可原地重试判定：连接期零产出 + 限流 / 服务端 5xx / 网络层失败 / 首包超时。
+ *  中止（用户主动停止）与熔断开闸绝不重试；200 错误 envelope（semantic）留给换路判定。
+ *  超时（kind=timeout，连接期时限，尚未发出任何字节）也是瞬时故障，与 failover.mjs
+ *  的换路判定对齐；未分类的裸 Error 按措辞兜底（llm/errors.mjs 的 TRANSIENT_WORDING）。 */
 export function retryableSameProvider(err) {
   if (!err) return false;
   if (err.name === 'AbortError' || err.kind === 'aborted' || err.kind === 'circuit_open' || err.kind === 'semantic') return false;
-  if (err.kind === 'rate_limit' || err.kind === 'server' || err.kind === 'network') return true;
-  return err.name === 'TypeError'; // fetch 网络层失败（尚未分类时）
+  if (err.kind === 'rate_limit' || err.kind === 'server' || err.kind === 'network' || err.kind === 'timeout') return true;
+  if (err.name === 'TypeError') return !isNonRetryable(err);
+  return isTransientError(err); // fetch 之外的中断说法（socket hang up / terminated / …）
+}
+
+/** 额度 / 订阅类措辞先行判定（fetch 失败也可能披着计费说法：insufficient_quota 等，
+ *  重试只会烧时间——判定与话术在 llm/errors.mjs） */
+function isNonRetryable(err) {
+  try { return isNonRetryableWording(err?.message); } catch { return false; }
 }
 
 /** 第 n 次原地重试前的退避（n 从 1 起）：500ms → 1s → 2s → 4s → 封顶 8s */

@@ -7,19 +7,44 @@
  * 经 sanitizeChildEnv 净化（剔除凭据形态变量），但无 OS 级沙箱——
  * 真正的门控是 policy.mjs 的权限决策与前端确认流。
  */
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, rmSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { resolve, sep, dirname, join, relative } from 'node:path';
+import { tmpdir } from 'node:os';
 import { toOpenAIFunction, toAnthropicTool } from '../llm/tool.mjs';
 import { proxyFetch } from '../proxy.mjs';
 import { findSkill, renderSkillContent, skillDirs, SKILL_FOLLOWUP } from './skills.mjs';
 import { IGNORE_FILE_NAME, LOCK_TEXT_SYMBOL } from '../ignore.mjs';
 import { runRipgrepAsync, excludeGlobs } from '../ripgrep.mjs';
 import { staleFileNotice } from './file-tracker.mjs';
+import { TOOL_SEARCH_DESCRIPTION, DEFAULT_TOOL_SEARCH_LIMIT, Bm25Ranker, createToolSearchDocument } from './tool-search.mjs';
 
 const MAX_OUTPUT = 32 * 1024;   // 单次工具回给模型的文本上限
 const MAX_FETCH = 64 * 1024;    // web_fetch 正文上限
 const MAX_ENTRIES = 500;        // list_dir 条数上限
+/** 杀整棵进程组：zsh -lc 起的后代（build / server / sleep &）不随 shell 一起退，
+ *  只杀 shell 自己会留下一堆孤儿进程（移植 pi bash.ts 的 killProcessTree 口径） */
+function killProcessTree(child) {
+  const pid = child.pid;
+  if (pid && process.platform !== 'win32') {
+    try { process.kill(-pid, 'SIGKILL'); return; } catch { /* 组已不存在 / 无权限：退回杀 shell 本身 */ }
+  }
+  try { child.kill('SIGKILL'); } catch { /* 进程已退出 */ }
+}
+
+/** shell 输出 spill 目录（进程级，退出即删） */
+const SHELL_SPILL_DIR = join(tmpdir(), `auroraagent-shell-${process.pid}`);
+let shellSpillSeq = 0;
+let shellSpillHooked = false;
+function shellSpillPath() {
+  if (!shellSpillHooked) {
+    shellSpillHooked = true;
+    process.on('exit', () => { try { rmSync(SHELL_SPILL_DIR, { recursive: true, force: true }); } catch { /* 清理失败静默 */ } });
+  }
+  mkdirSync(SHELL_SPILL_DIR, { recursive: true });
+  return join(SHELL_SPILL_DIR, `cmd-${++shellSpillSeq}.log`);
+}
+
 const MAX_IMAGE_BYTES = 1.5 * 1024 * 1024; // 工具结果图片（截图）内联进消息序列的体积上限
 const IMAGE_CACHE_MAX = 8;                  // base64 缓存张数（历史每轮都会重放同一张图）
 const IMAGE_DATA_URL_CACHE = new Map();
@@ -436,23 +461,55 @@ export const TOOLS = [
       if (!cmd.trim()) throw new ToolError('command 不能为空', 'bad_args');
       const timeout = Math.min(120, Math.max(5, Number(args.timeout_seconds) || 30)) * 1000;
       mkdirSync(ctx.workspace, { recursive: true });
+      const t0 = Date.now();
       return new Promise((done, fail) => {
-        const child = spawn('/bin/zsh', ['-lc', cmd], { cwd: ctx.workspace, env: sanitizeChildEnv(process.env, ctx?.sanitizeChildEnv !== false) });
+        // 独立进程组（detached）：超时 / 中止时杀整个组，zsh -lc 起的后代
+        // （build、server、sleep &）不会只杀 shell 自己后残留成孤儿——macOS 无进程树工具，
+        // 杀组是最简可靠做法（移植 pi bash.ts 的 killProcessTree 口径）
+        const child = spawn('/bin/zsh', ['-lc', cmd], {
+          cwd: ctx.workspace,
+          env: sanitizeChildEnv(process.env, ctx?.sanitizeChildEnv !== false),
+          detached: true,
+        });
         let out = '';
         let err = '';
         let timedOut = false;
+        let aborted = false;
         const timer = setTimeout(() => {
           timedOut = true;
-          try { child.kill('SIGKILL'); } catch {}
+          killProcessTree(child);
         }, timeout);
+        // 用户中止（turn 级 signal）同样杀组：长命令说停就真停，不留野进程
+        const onAbort = () => { aborted = true; killProcessTree(child); };
+        if (ctx?.signal) {
+          if (ctx.signal.aborted) onAbort();
+          else ctx.signal.addEventListener('abort', onAbort, { once: true });
+        }
         child.stdout.on('data', (d) => { out += d; if (out.length > MAX_OUTPUT * 2) out = out.slice(0, MAX_OUTPUT * 2); });
         child.stderr.on('data', (d) => { err += d; if (err.length > MAX_OUTPUT * 2) err = err.slice(0, MAX_OUTPUT * 2); });
-        child.on('error', (e) => { clearTimeout(timer); fail(new ToolError(`命令启动失败：${e.message}`, 'spawn_error')); });
+        child.on('error', (e) => {
+          clearTimeout(timer);
+          ctx?.signal?.removeEventListener('abort', onAbort);
+          fail(new ToolError(`命令启动失败：${e.message}`, 'spawn_error'));
+        });
         child.on('close', (code) => {
           clearTimeout(timer);
-          const head = `$ ${cmd}\n(cwd: 工作目录, 退出码: ${code ?? 'null'}${timedOut ? ', 已超时终止' : ''})`;
+          ctx?.signal?.removeEventListener('abort', onAbort);
+          const wall = ((Date.now() - t0) / 1000).toFixed(1);
+          const head = `$ ${cmd}\n(cwd: 工作目录, 退出码: ${code ?? 'null'}, 耗时 ${wall}s${timedOut ? ', 已超时终止' : ''}${aborted && !timedOut ? ', 已中止' : ''})`;
           const body = [out ? `stdout:\n${out}` : '', err ? `stderr:\n${err}` : ''].filter(Boolean).join('\n') || '（无输出）';
-          done(truncate(`${head}\n${body}`));
+          const text = `${head}\n${body}`;
+          // 超上限截断的同时把已捕获全文 spill 到临时文件，路径随提示回给模型——
+          // shell 能读绝对路径（read_file 被禁锢在工作目录内读不到它，模型可 shell 取回）。
+          // 进程退出即清理（见 shellSpillPath），不留垃圾文件
+          if (text.length > MAX_OUTPUT) {
+            try {
+              const full = shellSpillPath();
+              writeFileSync(full, text);
+              return done(`${truncate(text)}\n\n[输出超过 ${Math.round(MAX_OUTPUT / 1024)}KB 上限已截断；已捕获部分全文在 ${full}（shell 可直接读取）]`);
+            } catch { /* spill 失败不碍事：截断结果照常回 */ }
+          }
+          done(truncate(text));
         });
       });
     },
@@ -658,6 +715,42 @@ export const TOOLS = [
       return spawn(args.task, args.tasks);
     },
   },
+  {
+    // tool_search：MCP 等外部工具超出阈值时被标 deferred 不进请求（省工具定义 token），
+    // 模型经此检索元数据。AuroraAgent 的 resolveTool 从全量解析执行，命中即可直接调用，
+    // 不需要「激活后下一轮才生效」的状态机（迁移 pi tool-search/tool.ts，见 util/agent/tool-search.mjs）
+    name: 'tool_search',
+    description: TOOL_SEARCH_DESCRIPTION,
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '检索词：功能 / 资源 / 操作的自然语言描述（中文即可）' },
+        limit: { type: 'integer', description: `最多返回几个工具，缺省 ${DEFAULT_TOOL_SEARCH_LIMIT}` },
+      },
+      required: ['query'],
+    },
+    run(args, ctx) {
+      const query = String(args.query || '').trim();
+      if (!query) throw new ToolError('query 不能为空：描述你要找的能力即可', 'bad_args');
+      const want = Number.isInteger(args.limit) && args.limit > 0 ? Math.min(args.limit, 20) : DEFAULT_TOOL_SEARCH_LIMIT;
+      // ctx.allTools 是 Loop 注入的本 turn 全量工具（含未随请求声明的 deferred 外部工具）
+      const all = typeof ctx?.allTools === 'function' ? ctx.allTools() : (Array.isArray(ctx?.allTools) ? ctx.allTools : []);
+      const seen = new Set();
+      const candidates = all.filter((t) => t && t.name && t.deferred === true && !seen.has(t.name) && (seen.add(t.name), true));
+      if (!candidates.length) {
+        return '没有可检索的工具：当前没有「未随请求声明」的外部工具（MCP 工具要么已在声明列表里，要么未连接），直接用可用工具列表中的工具即可。';
+      }
+      const matches = new Bm25Ranker().rank(query, candidates.map(createToolSearchDocument), want);
+      if (!matches.length) return `未检索到与「${query}」匹配的工具（可换更通用的词重试）。`;
+      const byName = new Map(candidates.map((t) => [t.name, t]));
+      const lines = matches.map((m, i) => {
+        const t = byName.get(m.name);
+        const oneLine = String(t.description || '').trim().split(/\r?\n/)[0];
+        return `${i + 1}. ${t.name}：${oneLine}\n参数 Schema：\n${JSON.stringify(t.parameters || {}, null, 2)}`;
+      });
+      return [`命中 ${matches.length} 个工具。可直接按名调用（无需等到下一轮）：`, ...lines].join('\n');
+    },
+  },
 ];
 export function getTool(name) {
   return TOOLS.find((t) => t.name === String(name || '')) || null;
@@ -678,6 +771,19 @@ function objId(o) {
 }
 const convCache = new WeakMap(); // 工具对象 -> { openai, anthropic } 转换结果
 const schemaCache = new Map();   // 缓存键 -> tools[]
+/**
+ * schemaCache 上限：键含 extraTools 各对象的标识，而 code 工具是每 turn 现造一份新对象
+ * （描述要列本 turn 可调用工具，MCP 连接断开也会换）——标识随之每轮一变，无上限的
+ * Map 会在长会话里稳步长胖。到了上限丢最早的一条（换键的成本只是重跑一次转换）。
+ */
+const SCHEMA_CACHE_MAX = 256;
+function schemaCacheSet(key, value) {
+  if (schemaCache.size >= SCHEMA_CACHE_MAX && !schemaCache.has(key)) schemaCache.delete(schemaCache.keys().next().value);
+  schemaCache.set(key, value);
+}
+/** 缓存键的 deferred 标记位：同一批工具对象被 Loop 打 / 摘 deferred 时（toolSearch 开关切换）
+ *  键必须随之变化，否则会服务「未过滤」或「过度过滤」的陈旧 tools[] */
+function deferredMask(extraTools) { return extraTools.map((t) => (t && t.deferred === true ? 'd' : 'a')).join(''); }
 
 function converted(t) {
   let c = convCache.get(t);
@@ -694,18 +800,29 @@ function pickTools(names, extraTools = []) {
 
 /** OpenAI function calling 形状的 tools 参数；extraTools 承载 MCP 等外部工具 */
 export function toolSchemas(names, extraTools = []) {
-  const key = `openai|${names.join(',')}|${extraTools.map(objId).join(',')}`;
+  const key = `openai|${names.join(',')}|${deferredMask(extraTools)}|${extraTools.map(objId).join(',')}`;
   let hit = schemaCache.get(key);
-  if (!hit) { hit = pickTools(names, extraTools).map((t) => converted(t).openai); schemaCache.set(key, hit); }
+  if (!hit) { hit = pickTools(names, extraTools).map((t) => converted(t).openai); schemaCacheSet(key, hit); }
   return hit;
 }
 
 /** Anthropic Messages 形状（input_schema 而非 parameters） */
 export function anthropicToolSchemas(names, extraTools = []) {
-  const key = `anthropic|${names.join(',')}|${extraTools.map(objId).join(',')}`;
+  const key = `anthropic|${names.join(',')}|${deferredMask(extraTools)}|${extraTools.map(objId).join(',')}`;
   let hit = schemaCache.get(key);
-  if (!hit) { hit = pickTools(names, extraTools).map((t) => converted(t).anthropic); schemaCache.set(key, hit); }
+  if (!hit) { hit = pickTools(names, extraTools).map((t) => converted(t).anthropic); schemaCacheSet(key, hit); }
   return hit;
+}
+
+/**
+ * 本 turn 实际可调用的工具对象全集：内置按 toolNames 取，外加 extraTools 全量
+ * （含被 tool_search 标了 deferred 的外部工具——不进请求顶层只为省 token，Loop 侧照样能解析执行，
+ *  因而脚本也该看得见、调得着）。
+ * 与 pickTools 的区别就在 deferred：那条是「进请求」的口径，这条是「调得着」的口径。
+ */
+export function effectiveTools(names, extraTools = []) {
+  const picked = names && names.length ? TOOLS.filter((t) => names.includes(t.name)) : [];
+  return [...picked, ...extraTools];
 }
 
 /** 工具解析：内置优先，其次 extraTools（MCP 工具经 loop 注入） */

@@ -16,7 +16,7 @@ const enNav = [
 
 export default defineConfig({
   title: 'AuroraAgent',
-  description: '本地 Agent 运行时：终端 + 网页双客户端，零依赖后端，macOS 常驻',
+  description: '本地 Agent 运行时：终端 + 网页双客户端，极简依赖，macOS 常驻',
   lang: 'zh-CN',
   cleanUrls: true,
   srcDir: '.',
@@ -24,14 +24,14 @@ export default defineConfig({
     logo: '/icon.svg',
     socialLinks: [{ icon: 'github', link: 'https://github.com/AuroraAeon/AuroraAgent' }],
     search: { provider: 'local' },
-    footer: { message: '零依赖后端 · macOS 本地运行时' },
+    footer: { message: '极简依赖 · macOS 本地运行时' },
   },
   locales: {
     root: {
       label: '简体中文',
       lang: 'zh-CN',
       title: 'AuroraAgent',
-      description: '本地 Agent 运行时：终端 + 网页双客户端，零依赖后端，macOS 常驻',
+      description: '本地 Agent 运行时：终端 + 网页双客户端，极简依赖，macOS 常驻',
       themeConfig: {
         nav: zhNav,
         sidebar: {

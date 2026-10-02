@@ -227,6 +227,10 @@ export async function runTerminalTurn({ store, usage, session, input, inputSkill
       titleMode: TITLE_MODES.includes(session.titleMode) ? session.titleMode : cfg.titleMode,
       agentProxy: cfg.agentProxy,
       ignoreEnabled: cfg.ignore?.enabled !== false, sanitizeChildEnv: cfg.sanitizeChildEnv !== false,
+      // tool_search 阈值（配置段 toolSearch，缺省关）：与 HTTP 面同一套口径
+      toolSearch: cfg.toolSearch,
+      // 代码模式（QuickJS 沙箱脚本）：配置段 codeMode，缺省开（与 HTTP 面同一套口径）
+      codeMode: cfg.codeMode,
       providerFailover: providerFailover !== false && cfg.providerFailover !== false,
       providerFailoverMaxAttempts: providerFailoverMaxAttempts || cfg.providerFailoverMaxAttempts,
       failoverCandidates,

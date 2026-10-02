@@ -13,6 +13,7 @@
  * userinfo、sk- 形态密钥——Key 泄露即安全事故（AGENTS.md 第 3 节），日志也不能例外。
  */
 import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { sanitizeSurrogates } from './text.mjs';
 import { join, dirname } from 'node:path';
 
 /** 环形保留上限：写入后超过该行数即重写，只保留最后 N 行 */
@@ -47,8 +48,8 @@ const SK_KEY_RE = /\bsk-[A-Za-z0-9_-]{16,}/gi;
 
 /**
  * 清洗文本中的凭据（幂等：重复调用结果不变）。
- * 顺序：键值对 → 查询串 → userinfo → Bearer → sk- 密钥；均保留键名只换值，
- * 排障时仍能看出「哪个字段出了问题」，只是看不到值。
+ * 顺序：键值对 → 查询串 → userinfo → Bearer → sk- 密钥 → 未配对代理字符；均保留键名只换值，
+ * 排障时仍能看出「哪个字段出了问题」，只是看不到值。末位的代理清洗防日志乱码与写盘截断。
  */
 export function sanitizeSecrets(text) {
   let out = String(text ?? '');
@@ -62,7 +63,7 @@ export function sanitizeSecrets(text) {
   out = out.replace(URL_USERINFO_RE, `$1${REDACTED}@`);
   out = out.replace(BEARER_RE, `$1 ${REDACTED}`);
   out = out.replace(SK_KEY_RE, REDACTED);
-  return out;
+  return sanitizeSurrogates(out);
 }
 
 /** 按字节边界截断，避免把多字节字符切成乱码 */

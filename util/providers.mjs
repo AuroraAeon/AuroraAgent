@@ -7,6 +7,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { writeFileAtomic } from './atomic.mjs';
+import { withFileLockSync } from './lock.mjs';
 import { join } from 'node:path';
 import { catalogProviders, catalogPresetDraft, SUPPORTED_FORMATS } from './provider-catalog.mjs';
 
@@ -262,7 +263,9 @@ export class ProviderStore {
   #save() {
     const payload = JSON.stringify({ version: 1, providers: this.custom, failoverQueue: this.failoverQueue }, null, 2);
     try {
-      writeFileAtomic(this.path, payload); // tmp + fsync + rename + 0600（util/atomic.mjs）
+      // 跨进程锁（util/lock.mjs）：failoverQueue 与自定义提供方目录都是「读—改—整篇写回」，
+      // web 服务与终端同时保存会互相抹掉对方那一笔。原子写只治半截文件，不治丢更新
+      withFileLockSync(this.path, () => writeFileAtomic(this.path, payload)); // tmp + fsync + rename + 0600（util/atomic.mjs）
     } catch (e) {
       throw new ProviderError(`提供方配置写入失败：${e.message}（请检查数据目录权限）`);
     }

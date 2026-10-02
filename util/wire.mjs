@@ -8,6 +8,7 @@ import { chatUrl, messagesUrl } from './providers.mjs';
 import { toolSchemas, anthropicToolSchemas } from './agent/tools.mjs';
 import { systemBlocksOf, stableSystemTextOf, toAnthropicTurns } from './llm/message.mjs';
 import { toAnthropicTool } from './llm/tool.mjs';
+import { sanitizeSurrogatesDeep } from './text.mjs';
 
 /** 提示缓存开关：提供方声明支持（capacity.supportsPromptCache）且配置档位不是 off。两条都不满足时请求字节与接入前逐字节一致——不支持的线路多发一个字段就是 400，因此「未声明」一律按不支持处理，要开由用户在提供方编辑器里显式勾选。 */
 export function promptCacheEnabled(provider, mode) {
@@ -80,7 +81,11 @@ export async function fetchUpstream(wire, { signal, attempts = 3, onRetry, timeo
   try {
     for (let attempt = 0; ; attempt++) {
       try {
-        return await fetch(wire.url, { method: 'POST', headers: wire.headers, body: JSON.stringify(wire.body), signal: deadline ? deadline.signal : signal });
+        // 序列化之前按值深度清洗未配对代理：模型输出里的 lone surrogate 会让严格解析的上游
+        // 直接 400（stringify 之后再洗是空转——ES2019 起 lone surrogate 已被转成 \ud800
+        // 六字符转义文本，码元正则匹配不到；干净请求零成本快路径返回原串，字节不变）
+        const body = JSON.stringify(sanitizeSurrogatesDeep(wire.body));
+        return await fetch(wire.url, { method: 'POST', headers: wire.headers, body, signal: deadline ? deadline.signal : signal });
       } catch (e) {
         if (attempt >= attempts - 1 || signal?.aborted || e.name !== 'TypeError') throw e;
         onRetry?.(attempt + 1, e);

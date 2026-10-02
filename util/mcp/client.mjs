@@ -8,6 +8,7 @@
  */
 import { spawn } from 'node:child_process';
 import { SseParser } from '../sse.mjs';
+import { isOAuthChallenge, parseWwwAuthenticate } from './oauth.mjs';
 
 const PROTOCOL_VERSION = '2024-11-05';
 const CLIENT_INFO = { name: 'auroraagent', version: '1.0.0' };
@@ -18,6 +19,21 @@ export class McpError extends Error {
     super(message);
     this.name = 'McpError';
     this.code = code;
+  }
+}
+
+/**
+ * MCP 服务器要求 OAuth 授权（401 / 403 + WWW-Authenticate: Bearer ...）。
+ * 与普通 McpError 分开是为了让调用方（registry / 设置页）能据此给出「去授权」入口，
+ * 而不是把它当成又一次连接失败刷出一串红字。
+ */
+export class McpAuthError extends Error {
+  constructor(message, challenge = null) {
+    super(message);
+    this.name = 'McpAuthError';
+    this.code = 401;
+    this.oauth = true;
+    this.challenge = challenge;
   }
 }
 
@@ -98,9 +114,20 @@ export function createStdioTransport({ command, args = [], env = {}, cwd = '' })
 }
 
 /** HTTP 传输：POST JSON-RPC；响应为 JSON 或 SSE 流（取首个带 result/error 的 data 帧） */
-export function createHttpTransport({ url, headers = {} }) {
+export function createHttpTransport({ url, headers = {}, auth = null }) {
   const pending = new Map();
   let nextId = 1;
+  // auth：可选的令牌注入器 { get(): { Authorization: 'Bearer ...' } | null }。
+  // 401 / 403 且带 Bearer 挑战头时抛 McpAuthError（调用方据此走 OAuth 授权流程），
+  // 而不是当成普通连接失败——用户需要的是「去授权」，不是「再试一次」
+  const authHeaders = () => {
+    try { return (auth && typeof auth.get === 'function' ? auth.get() : null) || {}; } catch { return {}; }
+  };
+  const guard = (resp) => {
+    if (!resp.ok && isOAuthChallenge(resp.status, resp.headers.get('www-authenticate'))) {
+      throw new McpAuthError(`MCP 服务器要求授权：${parseWwwAuthenticate(resp.headers.get('www-authenticate'))?.realm || url}`, parseWwwAuthenticate(resp.headers.get('www-authenticate')));
+    }
+  };
   return {
     kind: 'http',
     async request(method, params) {
@@ -108,9 +135,10 @@ export function createHttpTransport({ url, headers = {} }) {
       const body = JSON.stringify({ jsonrpc: '2.0', id, method, params: params || {} });
       const resp = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...headers },
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...headers, ...authHeaders() },
         body,
       });
+      guard(resp);
       if (!resp.ok) throw new McpError(`MCP HTTP 端点返回 ${resp.status}`, resp.status);
       const ctype = resp.headers.get('content-type') || '';
       if (ctype.includes('text/event-stream') && resp.body) {
@@ -151,7 +179,7 @@ export function createHttpTransport({ url, headers = {} }) {
 /** 建连并完成 initialize 握手；返回 { listTools, callTool, close, serverInfo } */
 export async function connectMcp(server) {
   const transport = server.transport === 'http'
-    ? createHttpTransport({ url: server.url, headers: server.headers || {} })
+    ? createHttpTransport({ url: server.url, headers: server.headers || {}, ...(server.auth ? { auth: server.auth } : {}) })
     : createStdioTransport({ command: server.command, args: server.args || [], env: server.env || {}, cwd: server.cwd || '' });
   const result = await transport.request('initialize', {
     protocolVersion: PROTOCOL_VERSION,

@@ -73,18 +73,24 @@ export function assembleMessages({ harness, workspace, records = [], skills = []
   const messages = [{ role: 'system', content: stable }];
   if (volatile) messages.push({ role: 'system', content: volatile });
   const pending = [];
-  // 预扫：有真实 tool_result 的调用 id，其余即悬空调用（中断残留），flush 时补合成结果。
-  // 之所以预扫而非「见到结果就摘掉 pending」：真实结果记录排在 flush 之后，边扫边判会把正常配对误判成悬空。
-  const answered = new Set();
-  for (const r of records) if (r.t === 'tool_result') answered.add(r.id);
+  // 已到达的真实结果（按调用 id 索引）。并行批的转录形态是 tc1,tc2,tr1,tr2——先全部落
+  // tool_call record，再全部回填结果。若「见到第一个结果就整批 flush」，后到的 tr2 会找不到
+  // 配对调用被丢掉，模型从此看不到第二个工具的结果。解法是结果先入缓冲，等整批都到齐
+  // （或撞上 user / assistant / summary 硬边界、转录结束）才成组发出，一条不丢。
+  const arrived = new Map();
   const flushPending = () => {
     if (!pending.length) return;
     const calls = pending.splice(0);
     messages.push({ role: 'assistant', content: '', tool_calls: calls });
     for (const call of calls) {
-      if (answered.has(call.id)) continue;
+      const got = arrived.get(call.id);
+      if (got) {
+        messages.push({ role: 'tool', tool_call_id: call.id, content: toolMessageContent(got.output, got.extra) });
+        continue;
+      }
       messages.push({ role: 'tool', tool_call_id: call.id, content: INTERRUPTED_TOOL_RESULT });
     }
+    arrived.clear();
   };
   for (const r of records) {
     switch (r.t) {
@@ -106,9 +112,9 @@ export function assembleMessages({ harness, workspace, records = [], skills = []
       case 'tool_result': {
         const call = pending.find((p) => p.id === r.id);
         if (!call) break; // 无配对调用（异常数据）时丢弃，保证协议合法
-        flushPending();
-        // 带 extra.image 的工具结果（computer_use 截图）投影成多模态 tool content，模型复盘时看得见画面
-        messages.push({ role: 'tool', tool_call_id: r.id, content: toolMessageContent(r.output, r.extra) });
+        arrived.set(r.id, r);
+        // 整批都到齐才成组：交错回填（并行执行）时先到的结果在这里排队等它的同伴
+        if (pending.every((p) => arrived.has(p.id))) flushPending();
         break;
       }
       default:
@@ -188,7 +194,38 @@ export function planCompaction(records = [], keepTurns = 4, opts = {}) {
  * 跑过哪些命令」这类事实最容易丢，而后续轮次恰恰要靠它们判断该不该再读一遍。
  * 与模型摘要合并进压缩输入——模型负责叙事，这份清单负责事实。
  */
+/** 累计事实的上限（字符）：每次压缩都往上续，不封顶会把压缩输入本身撑成第二个上下文 */
+const FACTS_MAX_CHARS = 4000;
+
+/**
+ * 压缩专用模型配置（配置段 compaction：{ providerId, model }，两者皆空 = 继承当前提供方）。
+ * 解析口径与其它配置段一致：单叶容错 + 钳制，绝不因为一个脏值让整份配置读不出来。
+ * Loop 只拿到 { provider, model }（提供方由 HTTP 面从 ProviderStore 解析后注入）——
+ * context / loop 都不自己发现提供方，那是 providers.mjs 的职责。
+ */
+export function parseCompactionConfig(v) {
+  const o = (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
+  const id = String(o.providerId || '').trim();
+  const model = String(o.model || '').trim();
+  return {
+    providerId: /^[A-Za-z0-9._-]{1,48}$/.test(id) ? id : '',
+    model: model.slice(0, 120),
+  };
+}
+
+/** 从一条 summary 记录里取上次沉淀的事实清单（跨次累积的载体） */
+export function summaryFacts(record) {
+  if (!record || record.t !== 'summary') return '';
+  const raw = typeof record.facts === 'string' ? record.facts.trim() : '';
+  return raw.length > FACTS_MAX_CHARS ? raw.slice(-FACTS_MAX_CHARS) : raw;
+}
+
 export function droppedWorkSummary(head = []) {
+  // 跨次累积（迁移 pi compaction 的 extractFileOperations 读上一次 compaction details 同款口径）：
+  // 上一次压缩落盘时把当时的事实清单写进 summary 记录的 facts 字段，这次它就在 head[0]，
+  // 原样续传到新清单开头——否则「上一轮读过哪些文件」在第二次压缩后就彻底消失，
+  // 后续轮次只能重新读一遍，白花 token 还容易漏。
+  const carried = summaryFacts(head[0]);
   const read = new Set(), changed = new Set(), cmds = [], patterns = [], urls = [], tasks = [], skills = [];
   for (const r of head) {
     if (r.t !== 'tool_call') continue;
@@ -208,6 +245,7 @@ export function droppedWorkSummary(head = []) {
     }
   }
   const lines = [];
+  if (carried) lines.push(`（此前压缩已摘除的工作，原样续传）\n${carried}`);
   const push = (label, arr) => { if (arr.length) lines.push(`- ${label}：${arr.slice(0, 40).join('、')}`); };
   push('读过的文件', [...read]);
   push('改过的文件', [...changed]);
@@ -216,13 +254,14 @@ export function droppedWorkSummary(head = []) {
   push('抓取的链接', urls);
   push('派发的子任务', tasks);
   push('加载过的技能', skills);
-  return lines.join('\n');
+  const out = lines.join('\n');
+  return out.length > FACTS_MAX_CHARS ? out.slice(-FACTS_MAX_CHARS) : out;
 }
 
 /** 总结用的消息序列（无工具、纯文本）。
  *  技能内容是必须持续遵循的规范，压缩时完整保留、不按通用上限截断：
  *  skill 工具结果与带 skill 标记的用户记录（/<技能名> 斜杠注入）都不许被摘丢。 */
-export function compactionMessages(head = []) {
+export function compactionMessages(head = [], { facts = '' } = {}) {
   const transcript = head.map((r) => {
     if (r.t === 'tool_call') return `[调用工具 ${r.name}] ${JSON.stringify(r.args || {})}`;
     if (r.t === 'tool_result') {
@@ -232,7 +271,9 @@ export function compactionMessages(head = []) {
     if (r.t === 'user' && r.skill) return `[用户 /${r.skill} 技能调用] ${String(r.text || '')}`;
     return `[${r.t}] ${String(r.text || '').slice(0, 1000)}`;
   }).join('\n');
-  const work = droppedWorkSummary(head);
+  // facts 由调用方（loop.mjs）算好透传：它要把同一份清单写回 summary 记录，
+  // 压缩输入与落盘记录因此永远是同一份事实，不会出现「摘要说读了 A、清单说读了 B」
+  const work = facts || droppedWorkSummary(head);
   return [
     { role: 'system', content: [
       '你是对话压缩器。把下面的早期对话记录压缩成一份摘要，保留：关键事实与决定、涉及的文件路径、工具执行的结论、未解决的问题。',
