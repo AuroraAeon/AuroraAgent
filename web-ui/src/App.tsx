@@ -791,14 +791,12 @@ export default function App() {
   // 版本更新状态：进页面拉一次（服务端 6 小时缓存，失败静默）；帮助菜单可强制重查
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   useEffect(() => { void checkUpdate().then(setUpdate).catch(() => {}); }, []);
-  const checkUpdateNow = useCallback(() => {
-    void checkUpdate(true).then((r) => {
+  const checkUpdateNow = useCallback(() => checkUpdate(true).then((r) => {
       setUpdate(r);
       if (r.updateAvailable) toast.success(`发现新版本 v${r.latest}`, { description: '点击顶部浮层的更新图标前往发布页' });
       else if (!r.error) toast.success('已是最新版本');
       else toast.error('检查更新失败', { description: r.error });
-    }).catch(() => toast.error('检查更新失败', { description: '网络异常，稍后再试' }));
-  }, []);
+    }).catch(() => { toast.error('检查更新失败', { description: '网络异常，稍后再试' }); }), []);
 
   // 键盘快捷键：Ctrl/Cmd+K 新建会话，Ctrl/Cmd+B 切换侧栏收回态，/ 聚焦输入框（焦点不在可输入元素时）。
   // 弹层打开时只保留聚焦输入（其余让位给对话框自身的按键处理）。
@@ -866,6 +864,7 @@ export default function App() {
             onDelete={removeSession}
             onFork={forkSessionById}
             onOpenSettings={() => setSettingsOpen(true)}
+            onCheckUpdate={checkUpdateNow}
             loading={booting}
             running={running}
             version={settings?.version || '4.0.0'}

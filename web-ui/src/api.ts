@@ -30,8 +30,9 @@ export const getSession = (id: string) => api<{ meta: SessionMeta; records: Sess
 export const deleteSession = (id: string) => api<{ deleted: boolean }>(`/api/agent/sessions/${id}`, { method: 'DELETE' });
 export const patchSession = (id: string, body: { harness?: string; name?: string; model?: string; provider?: string; permissionMode?: string; planMode?: boolean; titleMode?: string; thinking?: boolean }) =>
   api<{ meta: SessionMeta }>(`/api/agent/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(body) }).then(normalizeSessionMetaResult).then((r) => r.meta);
-export const forkSession = (id: string) =>
-  api<{ session: SessionMeta }>(`/api/agent/sessions/${id}/fork`, { method: 'POST' }).then(normalizeSessionResult).then((r) => r.session);
+/** 派生会话；传 from（1-based 序号或记录 id）时从该条拉分支而非整卷复制（p1-1 会话树） */
+export const forkSession = (id: string, from?: number | string) =>
+  api<{ session: SessionMeta }>(`/api/agent/sessions/${id}/fork`, { method: 'POST', ...(from ? { body: JSON.stringify({ from }) } : {}) }).then(normalizeSessionResult).then((r) => r.session);
 /** 用量汇总；默认带统计视图（近 30 天走势与构成），lite=1 只要汇总与最近记录 */
 export const getUsage = (lite = false) => api<UsageSummary>(`/api/usage${lite ? '?lite=1' : ''}`).then(normalizeUsageSummary);
 /** 版本更新检查（默认走 6 小时缓存；force=1 强制重查 GitHub Releases） */

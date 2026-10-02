@@ -15,7 +15,7 @@
  *  （复刻 ZCode DesktopTopOverlay）；侧栏顶部留出 48px 浮层带（.sidebar 的 padding-top），
  *  展开态浮层正好盖住这条带。 */
 import { useEffect, useRef, useState } from 'react';
-import { IconClose, IconCopy, IconGear, IconMessageCirclePlus, IconSearch, IconTrash } from '../icons';
+import { IconClose, IconCopy, IconGear, IconMessageCirclePlus, IconRefresh, IconSearch, IconTrash } from '../icons';
 import { searchSessions } from '../api';
 import { fmtRel } from '../projection';
 import { newSessionLabel } from '../shortcut';
@@ -34,6 +34,8 @@ type Props = {
   onDelete: (id: string) => void;
   onFork: (id: string) => void;
   onOpenSettings: () => void;
+  /** 检查更新：与设置页「检查更新」按钮、顶栏帮助菜单同一 handler（强制重查 + Toast） */
+  onCheckUpdate: () => void | Promise<void>;
   /** 首屏会话列表未回：显示骨架行，别把「加载中」显示成「还没有会话」 */
   loading?: boolean;
   /** 正在运行的会话 id 集合：行左侧 16px 槽位显示灰色加载圈（ZCode leadingIndicator=loading） */
@@ -42,8 +44,9 @@ type Props = {
 };
 
 export function Sidebar({
-  sessions, currentId, onSelect, onNew, newDisabled, onDelete, onFork, onOpenSettings, loading, running, version,
+  sessions, currentId, onSelect, onNew, newDisabled, onDelete, onFork, onOpenSettings, onCheckUpdate, loading, running, version,
 }: Props) {
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [q, setQ] = useState('');
   const [searchOn, setSearchOn] = useState(false);
   const [hits, setHits] = useState<SessionSearchHit[] | null>(null);
@@ -157,11 +160,27 @@ export function Sidebar({
         </nav>
       </div>
       <div className="sb-foot">
-        <button type="button" className="sb-foot-row" onClick={onOpenSettings} title="设置">
-          <IconGear size={16} />
-          <span className="sb-foot-label">设置</span>
+        <div className="sb-foot-row">
+          <button type="button" className="sb-foot-main" onClick={onOpenSettings} title="设置">
+            <IconGear size={16} />
+            <span className="sb-foot-label">设置</span>
+          </button>
           <span className="sb-ver">v{version}</span>
-        </button>
+          <button
+            type="button"
+            className="sb-upd"
+            aria-label="检查更新"
+            title="检查更新"
+            disabled={checkingUpdate}
+            onClick={(ev) => {
+              ev.stopPropagation();
+              setCheckingUpdate(true);
+              void Promise.resolve(onCheckUpdate()).finally(() => setCheckingUpdate(false));
+            }}
+          >
+            <IconRefresh size={13} className={checkingUpdate ? 'sb-upd-spin' : undefined} />
+          </button>
+        </div>
       </div>
     </aside>
   );

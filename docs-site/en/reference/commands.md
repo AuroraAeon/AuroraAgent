@@ -18,7 +18,7 @@
 
 ## Terminal slash commands
 
-`/new` `/sessions` `/model` `/harness` `/think` `/temp` `/max` `/key` `/plan` `/goal` `/queue` `/cron` `/hooks` `/checkpoint` `/rules` `/btw` `/mcp` `/help` `/quit`; every skill gets `/<skill-name>`.
+`/new` `/sessions` `/model` `/harness` `/think` `/temp` `/max` `/key` `/plan` `/goal` `/queue` `/cron` `/hooks` `/checkpoint` `/rules` `/update` `/btw` `/mcp` `/help` `/quit`; every skill gets `/<skill-name>`.
 
 - `/goal` family (one parser for the terminal and the web Composer): `/goal` (no argument shows status) / `/goal <objective>` (create; rewrites the text when a goal is unfinished, accepts a trailing `budget=50K`) / `/goal budget=50K` (change the budget, `clear` removes the cap; the legacy `/goal budget 50000` is equivalent) / `/goal edit` (fill the objective back for another pass) / `/goal clear` (remove; `cancel` / `delete` are aliases) / `/goal pause|resume|stop` / `/goal help`: goal-mode user operations (also accepted while a turn is generating on the web, routed straight to the goal REST surface), see the [Goal Mode guide](/en/guide/goal-mode)
 - `/queue`: message queue (messages sent while a turn is generating line up automatically and are relayed after the previous one settles). `/queue` lists waiting messages (position + summary), `/queue send <n>` sends one now, `/queue drop <n>` removes one, `/queue clear` clears the queue; see the [Message Queue guide](/en/guide/message-queue)
@@ -26,6 +26,7 @@
 - `/hooks`: event hooks (experimental, gated by `AURORAAGENT_EXPERIMENTAL_HOOKS=1`). A bare `/hooks` lists discovered hooks, `/hooks events` shows the ten events, `/hooks test <event>` triggers one manually; see [Event Hooks](/en/reference/hooks)
 - `/checkpoint`: checkpoints (a workspace snapshot is taken automatically at the start of every turn). A bare `/checkpoint` lists, `/checkpoint diff <turn>` previews the files that would change, `/checkpoint restore <turn> [chat]` rolls back (the conversation is trimmed only with `chat`), `/checkpoint clean` clears them; see [Checkpoints & Rollback](/en/reference/checkpoints)
 - `/rules`: rules (project conventions injected into the system prompt conditionally). A bare `/rules` lists, `/rules on <name>` enables, `/rules off <name>` disables; see [Rules](/en/reference/rules)
+- `/update`: check for a new version (compares the local version against the latest GitHub release, always a forced re-check that bypasses the 6-hour cache). When a newer version exists it shows the release date and a link to the release page; downloading and installing stay manual (notify only, never auto-install). The web entry points are the "Check for updates" button in Settings → General → Service → Version and the top-bar help menu
 - `/btw <question>`: side conversation that inherits the current session history, never persisted and absent from the session list; `Ctrl+/` toggles, `Ctrl+C` on an empty side prompt discards
 
 ## Runtime tools (model side)

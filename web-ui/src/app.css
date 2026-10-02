@@ -189,12 +189,28 @@ html { font-size: var(--ui-font-size, 14px); }
 
 /* 栏脚：panelRow 形态的设置入口（dsh sidebar.settings 槽位） */
 .sb-foot { flex:none; display:flex; flex-direction:column; padding-top:8px; }
+/* 栏脚：panelRow 形态设置入口（36px / 圆角 8px / padding 7px 8px）+ 版本号旁常驻更新按钮 */
 .sb-foot-row {
   display:flex; align-items:center; gap:8px; width:100%; min-height:36px; border:0; border-radius:8px;
-  background:none; color:var(--dim); font:inherit; font-size:1rem; padding:7px 8px; cursor:pointer; text-align:left;
+  background:none; color:var(--dim); font:inherit; font-size:1rem; padding:7px 8px; text-align:left;
 }
-.sb-foot-row:hover { background:var(--sidebar-hover); color:var(--text); }
-.sb-ver { margin-left:auto; color:var(--faint); font-size:0.7857rem; }
+/* 行只是容器：设置按钮与更新按钮并列。负边距把设置按钮的 hover 衬底撑满整行 */
+.sb-foot-main {
+  flex:1; min-width:0; display:flex; align-items:center; gap:8px; border:0; border-radius:8px;
+  background:none; color:var(--dim); font:inherit; font-size:1rem; margin:-7px -8px; padding:7px 8px;
+  cursor:pointer; text-align:left;
+}
+.sb-foot-main:hover { background:var(--sidebar-hover); color:var(--text); }
+.sb-ver { flex:none; color:var(--faint); font-size:0.7857rem; }
+/* 常驻更新按钮：版本号旁，任何页面都能一键检查（与设置页 / 帮助菜单入口同 handler） */
+.sb-upd {
+  flex:none; display:inline-flex; align-items:center; justify-content:center;
+  width:26px; height:26px; border:0; border-radius:7px; background:none; color:var(--faint); cursor:pointer;
+}
+.sb-upd:hover { background:var(--sidebar-hover); color:var(--text); }
+.sb-upd:disabled { opacity:.55; cursor:default; }
+.sb-upd-spin { animation:spin .7s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .sb-upd-spin { animation:none; } }
 /* ---------- 工作台 Header（像素级复刻 ZCode WorkspaceHeader + Sections） ---------- */
 /* ZCode 规格原文：header = relative w-full shrink-0 h-12 border-b；
    内行 = flex h-12 flex-1 min-w-0 items-center justify-between gap-2 overflow-hidden p-2；
@@ -1324,46 +1340,92 @@ html[data-code-wrap="on"] .md pre { white-space:pre-wrap; overflow-x:visible; wo
 .pv-pick-id { color:var(--faint); font-size:0.8214rem; font-family:ui-monospace,Menlo,Consolas,monospace; }
 .pv-pick-cap { margin-left:auto; color:var(--dim); font-size:0.7857rem; flex:none; }
 
-/* ---------- 通知（toast.tsx，零依赖；右下角视口、四级语义、悬停暂停计时） ---------- */
+/* ---------- 通知（toast.tsx：popover=manual 常驻 top layer + sonner 式实底卡 + 倒计时条 + 划走） ---------- */
+/* 设计语言对齐 sonner（shadcn/ui 同款）：实底面板 + 1px 细边 + 单层轻影——不玻璃、不光晕、无彩底；
+   四级语义只靠 16px 图标的本色传达（与 sonner 默认态同构，错误另有 role=alert）；
+   卡片底部 2px 中性倒计时条是本产品增量，悬停 / 聚焦冻结与 store 暂停同源同窗口。
+   位置：顶部居中，与底部 Composer 按钮、跳转胶囊互不遮挡；top layer 由浏览器托管，
+   模态 dialog 连 ::backdrop 也盖不住，省掉旧实现「找最上层打开的 dialog 当 portal 宿主」那套 */
 .toast-viewport {
-  position:fixed; right:16px; bottom:16px; z-index:60;
-  display:flex; flex-direction:column; gap:8px; width:min(360px, calc(100vw - 32px));
+  position:fixed; top:56px; left:50%; transform:translateX(-50%); z-index:60;
+  width:min(400px, calc(100vw - 32px));
+  display:none;                          /* popover 关态：UA display:none 与作者态双重保证 */
+  flex-direction:column; gap:14px;       /* 与 sonner 的 GAP=14 同节奏 */
+  margin:0; padding:0; border:0; background:transparent;
   pointer-events:none;
 }
+.toast-viewport:popover-open { display:flex; }
+/* 老浏览器既没有 :popover-open 也没有 top-layer 升降：退回 fixed 常显，通知不能因此消失 */
+@supports not selector(:popover-open) { .toast-viewport { display:flex; } }
+/* 悬停 / 聚焦整栈冻结计时，进度条一并停住并提亮——用户看得见「寿命被按了暂停」 */
+.toast-viewport.is-paused .toast-progress { animation-play-state:paused; opacity:.8; }
+
 .toast {
-  pointer-events:auto; display:flex; align-items:flex-start; gap:9px;
-  padding:10px 10px 10px 11px; border-radius:12px; font-size:0.9286rem;
-  background:var(--panel); border:1px solid var(--panel-line);
+  --toast-ink:var(--dim);
+  --leave-x:0px; --leave-y:-8px;
+  pointer-events:auto; position:relative; overflow:hidden; touch-action:pan-y;
+  display:flex; align-items:flex-start; gap:10px;
+  padding:13px 14px; border-radius:10px;
+  background:var(--panel);
+  border:1px solid var(--panel-line);
   box-shadow:var(--shadow-card);
   animation:toast-in .22s var(--ease);
 }
-@keyframes toast-in { from { opacity:0; transform:translateY(8px) scale(.98); } to { opacity:1; transform:none; } }
-@media (prefers-reduced-motion: reduce) { .toast { animation:none; } }
-.toast-icon { flex:none; display:flex; align-items:center; justify-content:center; width:18px; height:18px; margin-top:1px; }
-.toast-body { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
-.toast-title { display:flex; align-items:center; gap:6px; font-weight:600; line-height:1.45; word-break:break-word; }
-.toast-repeat { color:var(--faint); font-size:0.7857rem; font-weight:500; }
-.toast-desc { color:var(--dim); font-size:0.8571rem; line-height:1.55; word-break:break-word; }
-.toast-success .toast-icon { color:var(--ok-ink); }
-.toast-error .toast-icon { color:var(--danger-ink); }
-.toast-warning .toast-icon { color:var(--accent-hi); }
-.toast-info .toast-icon { color:var(--think); }
-.toast-success { border-color:var(--ok-line); }
-.toast-error { border-color:var(--danger-line); }
-.toast-warning { border-color:var(--accent-line); }
-.toast-action {
-  flex:none; align-self:center; padding:4px 9px; border-radius:7px; font-size:0.8571rem; cursor:pointer;
-  background:var(--accent-soft); color:var(--accent-hi); border:1px solid var(--accent-line);
+.toast:hover { border-color:var(--line-strong); }
+/* 进场：轻微上浮 + 缩放，220ms 收尾（sonner 用 400ms 偏慢，通知要快） */
+@keyframes toast-in { from { opacity:0; transform:translateY(-8px) scale(.97); } to { opacity:1; transform:none; } }
+.toast.is-leaving {
+  animation:none; opacity:0;
+  transform:translate3d(var(--leave-x), var(--leave-y), 0) scale(.96);
+  transition:opacity .2s ease-in, transform .2s ease-in;   /* 与 LEAVE_MS=200 对齐 */
 }
-.toast-action:hover { background:var(--accent-line); color:var(--accent-ink); }
-.toast-close { flex:none; align-self:flex-start; color:var(--faint); padding:2px; border-radius:6px; cursor:pointer; }
+.toast.is-dragging { animation:none; transition:none; cursor:grabbing; }
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation:none; }
+  .toast.is-leaving { transition:opacity .12s linear; }
+}
+.toast-icon {
+  flex:none; width:16px; height:16px; margin-top:1px;    /* 与 500 字重标题视觉居中对齐 */
+  display:flex; align-items:center; justify-content:center;
+  color:var(--toast-ink);
+}
+.toast-body { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.toast-title { display:flex; align-items:center; gap:6px; font-size:0.9286rem; font-weight:500; line-height:1.5; color:var(--text); word-break:break-word; }
+.toast-repeat { color:var(--faint); font-size:0.7857rem; font-weight:500; }
+.toast-desc { color:var(--dim); font-size:0.8571rem; line-height:1.5; word-break:break-word; }
+.toast-acts { display:flex; gap:6px; margin-top:5px; }
+.toast-success { --toast-ink:var(--ok); }
+.toast-error { --toast-ink:var(--danger); }
+.toast-warning { --toast-ink:var(--warn); }
+.toast-info { --toast-ink:var(--accent); }
+.toast-loading { --toast-ink:var(--faint); }
+.toast-action {
+  flex:none; height:24px; padding:0 10px; border-radius:6px; font-size:0.8571rem; font-weight:500;
+  display:inline-flex; align-items:center; cursor:pointer;
+  background:var(--text); color:var(--panel); border:0;   /* 实底反色（sonner data-button） */
+  transition:opacity .15s var(--ease);
+}
+.toast-action:hover { opacity:.85; }
+.toast-close {
+  flex:none; width:22px; height:22px; display:grid; place-items:center; border-radius:7px;
+  border:0; background:transparent;                       /* UA 默认按钮样式会留下灰底 + outset 边，必须显式清 */
+  color:var(--faint); cursor:pointer;
+  transition:color .15s var(--ease), background .15s var(--ease);
+}
 .toast-close:hover { color:var(--text); background:var(--surface-hover); }
+/* 倒计时条：中性色、低存在感；到期前悬停会冻结（与 store 的暂停同源同窗口） */
+.toast-progress {
+  position:absolute; left:0; right:0; bottom:0; height:2px;
+  background:var(--faint); opacity:.45; transform-origin:0 50%;
+  animation:toast-life var(--toast-life, 4s) linear both;
+}
+@keyframes toast-life { from { transform:scaleX(1); } to { transform:scaleX(0); } }
 .toast-spin {
-  width:13px; height:13px; border-radius:50%; display:inline-block;
-  border:2px solid var(--line-strong); border-top-color:var(--accent);
+  width:15px; height:15px; border-radius:50%; display:inline-block;
+  border:2px solid var(--panel-line); border-top-color:currentColor;
   animation:spin .7s linear infinite;
 }
-@keyframes spin { to { transform:rotate(360deg); } }
+@keyframes spin { to { transform:rotate(360deg); } }   /* 侧栏更新态等共用同一关键帧，勿删 */
 @media (prefers-reduced-motion: reduce) { .toast-spin { animation-duration:1.6s; } }
 
 /* ---------- 崩溃兜底页（error-boundary.tsx） ---------- */

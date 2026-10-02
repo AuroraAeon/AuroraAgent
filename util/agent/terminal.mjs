@@ -5,6 +5,7 @@
  * 与网页共用同一套 Agent Loop（loop.mjs）与会话 / 账本数据目录，两端可交替使用。
  */
 import { createInterface } from 'node:readline';
+import { readFileSync } from 'node:fs';
 import { SessionStore } from './session.mjs';
 import { GoalStore } from './goal/store.mjs';
 import { GOAL_STATUS_LABELS, GOAL_WAIT_LABELS } from './goal/types.mjs';
@@ -41,7 +42,10 @@ import { parseCheckpointArg, formatCheckpointLines, formatCheckpointDiffLines } 
 import { trimRecordsToTurn } from './checkpoint-restore.mjs';
 import { discoverRules } from './rules.mjs';
 import { parseRulesArg, formatRuleLines, formatRuleToggleLines, ruleCandidatePaths } from './rules-cmd.mjs';
+import { checkUpdate } from '../update.mjs';
+import { formatUpdateLines } from './update-cmd.mjs';
 
+const VERSION = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version; // 版本唯一来源（与 web.mjs 同源）
 const BASE = process.env.AURORAAGENT_BASE_URL || 'https://api.longcat.chat';
 const KEY_PAGE = 'https://longcat.chat/platform/api_keys';
 const MODEL_RE = /^[A-Za-z0-9._:-]{1,80}$/;
@@ -583,6 +587,18 @@ export async function runTerminal({ argv = [] } = {}) {
     { name: 'hooks', argHint: '[list|events|test <事件名>]', summary: '事件钩子：脚本在 turn 各阶段自动触发（实验特性，无参列出）', run: cmdHooks },
     { name: 'checkpoint', argHint: '[list|diff <轮次>|restore <轮次> [chat]|clean]', summary: '检查点：每轮开始时自动拍工作区快照，可整体回滚（无参列出）', run: cmdCheckpoint },
     { name: 'rules', argHint: '[list|on <名称>|off <名称>]', summary: '规则：AGENTS.md 等项目约定按条件注入系统提示（无参列出）', run: cmdRules },
+    { name: 'update', summary: '检查新版本（查 GitHub Releases，只告知不自动安装）', run: () => {
+      const p = painter();
+      console.log(p.dim('正在检查 GitHub Releases…'));
+      void checkUpdate({ current: VERSION, dataDir, force: true })
+        .then((r) => {
+          const lines = formatUpdateLines(r);
+          // 首行按结论上色（有更新用成功色、失败用警告色），其余行弱化
+          console.log('  ' + (r.ok === false ? p.warning(lines[0]) : r.updateAvailable ? p.success(lines[0]) : p.dim(lines[0])));
+          for (const line of lines.slice(1)) console.log('  ' + p.dim(line));
+        })
+        .catch((e) => { console.log(p.warning(`检查更新失败：${e?.message || String(e)}`)); });
+    } },
     { name: 'btw', argHint: '<问题>', summary: '侧边对话：继承当前会话历史开聊，不落盘不进会话列表；Ctrl+/ 切换、Ctrl+C 丢弃', run: async (arg) => {
       const q = String(arg || '').trim();
       if (!q) { console.log(painter().warning('用法: /btw <问题>（侧边对话，继承当前会话历史，不落盘）')); return; }
